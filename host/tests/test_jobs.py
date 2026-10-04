@@ -1,0 +1,186 @@
+import threading
+from pathlib import Path
+
+import pytest
+
+from config import ConfigStore
+from jobs import Archive, JobRunner
+from ytdlp import Engine, ResolveError, StreamResult, VideoRef
+
+URL = "https://www.youtube.com/watch?v={}"
+
+
+def item(vid="v1", title="標題"):
+    return {"url": URL.format(vid), "id": vid, "title": title}
+
+
+class Harness:
+    """JobRunner wired to a fake yt-dlp that writes the -o target and prints a done line."""
+
+    def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None):
+        self.out = tmp_path / "out"
+        self.events, self.calls = [], []
+        self.height, self.codec, self.fail = height, codec, fail or {}
+        self.runner = JobRunner(Engine(Path("yt-dlp")), self.events.append, stream=self.stream,
+                                resolve_fn=resolve_fn or (lambda e, u, limit=None: []),
+                                sleep=lambda s: None, delay=0)
+
+    def stream(self, cmd, on_line, cancel):
+        self.calls.append(cmd)
+        vid = cmd[-1].split("v=")[-1]
+        if vid in self.fail:
+            return StreamResult(1, self.fail[vid], False)
+        Path(cmd[cmd.index("-o") + 1].replace("%%", "%")).write_text("x", encoding="utf-8")
+        on_line("[ytdl-progress]512|1024|NA|100|1")
+        on_line(f"[ytdl-done]{vid}|{self.height}|{self.codec}")
+        return StreamResult(0, "", False)
+
+    def run(self, items, job_id="j", quality=1080, title_override=None):
+        self.runner.start(job_id, items, quality, self.out, title_override)
+        self.runner.join(10)
+        return self
+
+    def of(self, kind):
+        return [e for e in self.events if e["type"] == kind]
+
+    @property
+    def summary(self):
+        return self.of("done")[-1]["summary"]
+
+
+def test_success_names_file_by_title_and_records(tmp_path):
+    h = Harness(tmp_path).run([item()])
+    done = h.of("item_done")[0]
+    assert done["file"].endswith("標題.mp4") and done["height"] == 1080 and done["skipped"] is False
+    assert h.of("progress")[0]["percent"] == 50.0
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False}
+    assert Archive(h.out).mapping() == {"v1": "標題.mp4"}
+
+
+def test_rerun_skips_downloaded(tmp_path):
+    h = Harness(tmp_path).run([item()]).run([item()], job_id="j2")
+    assert h.of("item_done")[-1]["skipped"] is True
+    assert len(h.calls) == 1
+
+
+def test_deleted_file_is_redownloaded(tmp_path):
+    h = Harness(tmp_path).run([item()])
+    (h.out / "標題.mp4").unlink()
+    h.run([item()], job_id="j2")
+    assert len(h.calls) == 2 and h.of("item_done")[-1]["skipped"] is False
+
+
+def test_failure_does_not_stop_batch(tmp_path):
+    h = Harness(tmp_path, fail={"v1": "ERROR: Private video. Sign in"}).run([item("v1", "甲"), item("v2", "乙")])
+    assert h.of("item_failed")[0]["code"] == "private"
+    assert h.of("item_done")[0]["file"].endswith("乙.mp4")
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 1, "cancelled": False}
+
+
+def test_placeholder_titles_fail_without_download(tmp_path):
+    h = Harness(tmp_path).run([item("p1", "[Private video]"), item("d1", "[Deleted video]")])
+    assert [e["code"] for e in h.of("item_failed")] == ["private", "unavailable"]
+    assert h.calls == []
+
+
+def test_duplicate_ids_downloaded_once(tmp_path):
+    h = Harness(tmp_path).run([item(), item()])
+    assert len(h.calls) == 1 and h.summary["ok"] == 1
+
+
+def test_lower_height_than_requested_is_success(tmp_path):
+    h = Harness(tmp_path, height=720).run([item()], quality=1080)
+    assert h.of("item_done")[0]["height"] == 720 and h.summary["ok"] == 1
+
+
+def test_bad_url_fails(tmp_path):
+    h = Harness(tmp_path).run([{"url": "https://evil.com/x", "id": None, "title": None}])
+    assert h.of("item_failed")[0]["code"] == "bad_url" and h.calls == []
+
+
+def test_missing_title_is_resolved(tmp_path):
+    resolver = lambda e, urls, limit=None: [VideoRef("v9", "解析標題", URL.format("v9"))]
+    h = Harness(tmp_path, resolve_fn=resolver).run([{"url": URL.format("v9")}])
+    assert h.of("item_done")[0]["file"].endswith("解析標題.mp4")
+
+
+def test_resolve_failure_fails_item(tmp_path):
+    def resolver(e, urls, limit=None):
+        raise ResolveError("network", "網路連線失敗")
+
+    h = Harness(tmp_path, resolve_fn=resolver).run([{"url": URL.format("v9")}])
+    assert h.of("item_failed")[0]["code"] == "network"
+
+
+def test_title_override_applies_to_single_item(tmp_path):
+    h = Harness(tmp_path).run([item()], title_override="自訂")
+    assert h.of("item_done")[0]["file"].endswith("自訂.mp4")
+
+
+def test_title_override_ignored_for_multiple_items(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "甲"), item("v2", "乙")], title_override="自訂")
+    assert sorted(Path(e["file"]).name for e in h.of("item_done")) == ["乙.mp4", "甲.mp4"]
+
+
+def test_cancel_stops_remaining_items(tmp_path):
+    h = Harness(tmp_path)
+
+    def cancelling(cmd, on_line, cancel):
+        h.calls.append(cmd)
+        h.runner.cancel()
+        return StreamResult(-15, "", True)
+
+    h.runner._stream = cancelling
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert h.summary["cancelled"] is True and len(h.calls) == 1
+
+
+def test_busy_when_job_running(tmp_path):
+    h = Harness(tmp_path)
+    entered, gate = threading.Event(), threading.Event()
+    original = h.stream
+
+    def blocking(cmd, on_line, cancel):
+        entered.set()
+        gate.wait(5)
+        return original(cmd, on_line, cancel)
+
+    h.runner._stream = blocking
+    h.runner.start("j1", [item()], 1080, h.out)
+    assert entered.wait(5)
+    with pytest.raises(RuntimeError):
+        h.runner.start("j2", [item("v2")], 1080, h.out)
+    gate.set()
+    h.runner.join(10)
+
+
+def test_archive_corrupt_file_is_empty(tmp_path):
+    (tmp_path / ".ytdl-archive.json").write_text("{broken", encoding="utf-8")
+    archive = Archive(tmp_path)
+    assert archive.mapping() == {}
+    archive.record("a", "f.mp4")
+    assert Archive(tmp_path).mapping() == {"a": "f.mp4"}
+
+
+def test_archive_lookup_requires_existing_file(tmp_path):
+    archive = Archive(tmp_path)
+    archive.record("a", "f.mp4")
+    assert archive.lookup("a") is None
+    (tmp_path / "f.mp4").write_text("x")
+    assert archive.lookup("a") == "f.mp4"
+
+
+def test_archive_not_recorded_on_failure(tmp_path):
+    h = Harness(tmp_path, fail={"v1": "ERROR: Video unavailable"}).run([item()])
+    assert Archive(h.out).mapping() == {}
+
+
+def test_config_store(tmp_path):
+    path = tmp_path / "config.json"
+    assert ConfigStore(path).output_dir == Path.home() / "Downloads" / "YT下載"
+    target = tmp_path / "a" / "b"
+    assert ConfigStore(path).set_output_dir(str(target)) == target and target.is_dir()
+    assert ConfigStore(path).output_dir == target
+    for bad in ("", "   ", None, 5):
+        with pytest.raises(ValueError):
+            ConfigStore(path).set_output_dir(bad)
