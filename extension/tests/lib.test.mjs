@@ -4,6 +4,8 @@ import { HOST_NAME } from "../lib/constants.js";
 import { parseUrlLines } from "../lib/urls.js";
 import { installerFor, classifyConnectError } from "../lib/platform.js";
 import { emptyProgress, applyEvent } from "../lib/events.js";
+import { createRequestIds } from "../lib/ids.js";
+import { formatEta, itemMeta } from "../lib/format.js";
 
 test("HOST_NAME is the registered native host name", () => {
   assert.equal(HOST_NAME, "com.ytdl.batch_downloader");
@@ -78,4 +80,27 @@ test("applyEvent done sets summary, ignores unknown events, never mutates", () =
   assert.deepEqual(after.summary, summary);
   assert.equal(JSON.stringify(before), snapshot);
   assert.equal(applyEvent(before, { type: "mystery" }), before);
+});
+
+test("createRequestIds never collides across popup instances", () => {
+  const a = createRequestIds();
+  const b = createRequestIds();
+  const ids = [a(), a(), b(), b()];
+  assert.equal(new Set(ids).size, 4);
+  assert.ok(ids.every((id) => typeof id === "string"));
+});
+
+test("formatEta", () => {
+  assert.equal(formatEta(75), "1:15");
+  assert.equal(formatEta(3725), "1:02:05");
+  assert.equal(formatEta(0), "0:00");
+  assert.equal(formatEta(null), "");
+});
+
+test("itemMeta shows percent, speed and eta while downloading", () => {
+  assert.equal(itemMeta({ status: "downloading", percent: 50, speed: 1048576, eta: 75 }), "50% 1.0 MB/s · 剩餘 1:15");
+  assert.equal(itemMeta({ status: "done", height: 1080 }), "完成 · 1080p");
+  assert.equal(itemMeta({ status: "skipped" }), "已下載過，略過");
+  assert.equal(itemMeta({ status: "failed", reason: "私人影片" }), "私人影片");
+  assert.equal(itemMeta({ status: "queued" }), "排隊中");
 });

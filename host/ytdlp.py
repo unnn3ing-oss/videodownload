@@ -10,9 +10,9 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
-from quality import format_selector
+from quality import FORMAT_SORT, format_selector
 
 PROGRESS_PREFIX = "[ytdl-progress]"
 DONE_PREFIX = "[ytdl-done]"
@@ -75,6 +75,7 @@ def build_download_args(engine: Engine, url: str, quality: int, target: Path) ->
     return engine.base_args() + [
         "--no-playlist",
         "-f", format_selector(quality),
+        "-S", FORMAT_SORT,
         "--merge-output-format", "mp4",
         "-o", str(target).replace("%", "%%"),
         "--progress", "--newline",
@@ -165,15 +166,30 @@ def run_capture(cmd: list[str]) -> tuple[int, str, str]:
                               errors="replace", timeout=600, **_popen_kwargs())
     except subprocess.TimeoutExpired:
         return 124, "", "timed out"
+    except OSError as exc:  # missing, blocked by antivirus/AppLocker, not executable
+        return 127, "", str(exc)
     return done.returncode, done.stdout, done.stderr
+
+
+def _is_single_video(url: str) -> bool:
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    path = parts.path.strip("/")
+    if host == "youtu.be":
+        return bool(path)
+    return (path == "watch" and "v" in parse_qs(parts.query)) or path.split("/")[0] in ("shorts", "live", "embed")
 
 
 def resolve(engine: Engine, urls: list[str], limit: int | None = None,
             run: Callable[[list[str]], tuple[int, str, str]] = run_capture) -> list[VideoRef]:
     refs: list[VideoRef] = []
+    failed: list[str] = []
+    first_error: ResolveError | None = None
     seen: set[str] = set()
     for url in urls:
         cmd = engine.base_args() + ["--flat-playlist", "--dump-json"]
+        if _is_single_video(url):
+            cmd.append("--no-playlist")  # a watch URL with &list= means this video, not the whole list
         if limit:
             cmd += ["--playlist-items", f"1:{limit}"]
         cmd += ["--", normalize_url(url)]
@@ -187,14 +203,20 @@ def resolve(engine: Engine, urls: list[str], limit: int | None = None,
             if isinstance(entry, dict):
                 entries.append(entry)
         if code != 0 and not entries:
-            raise ResolveError(*classify_error(err))
+            failed.append(url)
+            first_error = first_error or ResolveError(*classify_error(err))
+            continue
         for entry in entries:
             vid = entry.get("id")
             if not vid or vid in seen:
                 continue
             seen.add(vid)
             refs.append(VideoRef(vid, entry.get("title") or vid, f"https://www.youtube.com/watch?v={vid}"))
-    return refs[:limit] if limit else refs
+    if not refs and first_error:
+        raise first_error
+    refs = refs[:limit] if limit else refs
+    # Unresolvable URLs stay in the list without id/title; the job reports each one as a failed item.
+    return refs + [VideoRef("", "", url) for url in failed]
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:

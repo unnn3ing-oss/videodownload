@@ -10,6 +10,8 @@ PAYLOAD='@@PAYLOAD_B64@@'
 
 step() { printf '\n==> %s\n' "$1"; }
 fail() { printf '\n安裝失敗：%s\n請截圖這個視窗，並聯絡提供工具的同事。\n' "$1"; exit 1; }
+# Any command that fails without its own message still stops with a visible reason.
+trap 'fail "第 $LINENO 行執行失敗，原因請看上面的訊息"' ERR
 
 step "檢查 python3（需要 3.9 以上）"
 PY="$(command -v python3 || true)"
@@ -19,6 +21,7 @@ fi
 echo "    $PY"
 
 TMP="$(mktemp -d)"
+trap 'rm -rf -- "$TMP"' EXIT
 mkdir -p "$HOME_DIR/host" "$HOME_DIR/bin" "$NM_DIR"
 
 step "寫入本機小程式"
@@ -26,7 +29,8 @@ printf '%s' "$PAYLOAD" | "$PY" -c 'import base64, io, sys, zipfile; zipfile.ZipF
 
 step "下載 yt-dlp 並驗證校驗碼"
 curl -fL --retry 3 -o "$HOME_DIR/bin/yt-dlp" "@@URL_YTDLP_MAC@@" || fail "yt-dlp 下載失敗"
-EXPECTED="$(curl -fsSL "@@URL_YTDLP_SUMS@@" | grep -E '[[:space:]]\*?yt-dlp_macos$' | awk '{print $1}' | head -n 1)"
+SUMS="$(curl -fsSL "@@URL_YTDLP_SUMS@@")" || fail "無法取得 yt-dlp 的校驗碼清單"
+EXPECTED="$(printf '%s\n' "$SUMS" | grep -E '[[:space:]]\*?yt-dlp_macos$' | awk '{print $1}' | head -n 1 || true)"
 ACTUAL="$(shasum -a 256 "$HOME_DIR/bin/yt-dlp" | awk '{print $1}')"
 [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || fail "yt-dlp 校驗碼不符，檔案可能損毀，請重新執行"
 chmod +x "$HOME_DIR/bin/yt-dlp"
@@ -72,7 +76,10 @@ with open(path, "w", encoding="utf-8") as fh:
 PYEOF
 
 step "自我檢查"
-echo "    yt-dlp $("$HOME_DIR/bin/yt-dlp" --version)" || fail "yt-dlp 無法執行"
+YTDLP_VERSION="$("$HOME_DIR/bin/yt-dlp" --version)" || fail "yt-dlp 無法執行"
+echo "    yt-dlp $YTDLP_VERSION"
+"$HOME_DIR/bin/deno" --version >/dev/null 2>&1 || fail "Deno 無法執行"
+"$HOME_DIR/bin/ffmpeg" -version >/dev/null 2>&1 || fail "ffmpeg 無法執行（Apple Silicon 上的 Intel 版需要 Rosetta：softwareupdate --install-rosetta）"
 "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import host; print("    host ok")' "$HOME_DIR/host" || fail "本機小程式無法載入"
 
 printf '\n安裝完成！請回到 Chrome，打開擴充功能並按「啟動」。\n'

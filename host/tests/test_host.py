@@ -199,3 +199,21 @@ def test_subprocess_end_to_end(tmp_path):
     finally:
         watchdog.cancel()
         proc.kill()
+
+
+def test_resolve_worker_exception_replies_error(tmp_path, monkeypatch):
+    def boom(engine, urls, limit):
+        raise OSError("blocked by antivirus")
+
+    monkeypatch.setattr(host_mod, "resolve", boom)
+    h, events = new_host(tmp_path)
+    h.handle({"type": "resolve", "reqId": 9, "urls": [URL]})
+    h.wait(10)
+    assert events[0]["type"] == "error" and events[0]["reqId"] == 9
+
+
+def test_unrunnable_engine_does_not_break_ready(tmp_path):
+    home = make_home(tmp_path)
+    (home / "bin" / "yt-dlp").chmod(0o644)  # exists but cannot be executed
+    h = Host(home, [].append)
+    assert h.ready_message()["ytdlpVersion"] is None

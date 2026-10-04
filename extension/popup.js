@@ -1,6 +1,8 @@
 import { parseUrlLines } from "./lib/urls.js";
 import { installerFor } from "./lib/platform.js";
 import { applyEvent, emptyProgress } from "./lib/events.js";
+import { createRequestIds } from "./lib/ids.js";
+import { itemMeta } from "./lib/format.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -14,14 +16,14 @@ const STATE_TEXT = {
 let status = { state: "stopped", ready: null, progress: emptyProgress(), busy: false };
 let resolved = null; // { key, items }
 let filenameDirty = false;
-let nextReq = 1;
+const nextId = createRequestIds();
 const waiters = new Map();
 let resolveTimer = null;
 
 const send = (message) => chrome.runtime.sendMessage(message);
 
 function request(message, timeoutMs = 180000) {
-  const reqId = nextReq++;
+  const reqId = nextId();
   return new Promise((resolveFn, rejectFn) => {
     const timer = setTimeout(() => {
       waiters.delete(reqId);
@@ -47,21 +49,6 @@ function note(text) {
   el.hidden = !text;
 }
 
-function formatSpeed(bytesPerSecond) {
-  return bytesPerSecond ? `${(bytesPerSecond / 1048576).toFixed(1)} MB/s` : "";
-}
-
-function itemMeta(item) {
-  switch (item.status) {
-    case "queued": return "排隊中";
-    case "downloading": return `${item.percent == null ? "" : `${Math.round(item.percent)}% `}${formatSpeed(item.speed)}`.trim();
-    case "done": return `完成${item.height ? ` · ${item.height}p` : ""}`;
-    case "skipped": return "已下載過，略過";
-    case "failed": return item.reason ?? "失敗";
-    default: return "";
-  }
-}
-
 function renderStatus() {
   const el = $("status");
   el.dataset.state = status.state;
@@ -75,18 +62,19 @@ function renderStatus() {
     text += r.ytdlpVersion ? `（yt-dlp ${r.ytdlpVersion}）` : "";
     if (problems.length) text += `；${problems.join("；")}`;
   }
+  if (status.state === "stopped" && status.detail) text += `（上次連線中斷：${status.detail}）`;
   el.textContent = text;
 }
 
 function renderItems() {
   const list = $("items");
   list.replaceChildren();
-  for (const item of Object.values(status.progress.items)) {
+  for (const [id, item] of Object.entries(status.progress.items)) {
     const li = document.createElement("li");
     li.className = item.status ?? "";
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = item.title ?? "";
+    title.textContent = item.title || id;
     li.append(title);
     if (item.status === "downloading" || item.status === "done") {
       const bar = document.createElement("progress");
@@ -122,7 +110,7 @@ function renderControls() {
   if (running && status.ready?.outputDir && document.activeElement !== $("outdir")) {
     $("outdir").value = status.ready.outputDir;
   }
-  const single = resolved?.items.length === 1;
+  const single = resolved?.items.length === 1 && Boolean(resolved.items[0].id);
   $("filename").disabled = !single;
   if (!single) {
     $("filename").value = "";
@@ -170,13 +158,15 @@ async function resolveNow() {
     note(error.message);
     return null;
   }
-  if (event.type === "error") {
-    note(event.message);
+  if (event.type !== "resolved") {
+    note(event.type === "error" ? event.message : "收到非預期的回應，請再試一次");
     resolved = null;
     renderControls();
     return null;
   }
-  note(`找到 ${event.items.length} 支影片`);
+  const unresolved = event.items.filter((i) => !i.id).length;
+  note(unresolved ? `找到 ${event.items.length - unresolved} 支影片；另有 ${unresolved} 個網址無法解析，下載時會標示原因`
+                  : `找到 ${event.items.length} 支影片`);
   const previous = resolved?.items.length === 1 ? resolved.items[0].id : null;
   resolved = { key, items: event.items };
   if (event.items.length === 1) {
@@ -212,7 +202,7 @@ async function deploy() {
     link.click();
   }
   note(info.os === "mac"
-    ? `已下載「${name}」。請解壓縮後，對 install-mac.command 按右鍵選「打開」執行一次，完成後回來按「啟動」。`
+    ? `已下載「${name}」。請解壓縮後，對 install-mac.command 按右鍵選「打開」執行一次（macOS 15 以上若被擋，請到「系統設定 → 隱私權與安全性」按「強制打開」，或在終端機執行 bash 加上這個檔案），完成後回來按「啟動」。`
     : `已下載「${name}」。請到下載資料夾雙擊執行一次（若出現 SmartScreen，請按「其他資訊」→「仍要執行」），完成後回來按「啟動」。`);
 }
 
@@ -226,8 +216,8 @@ async function startDownload() {
   const titleOverride = typed && typed !== items[0].title ? typed : undefined;
   try {
     const event = await request({ type: "download", items, quality: Number($("quality").value), titleOverride });
-    if (event.type === "error") note(event.message);
-    else note("下載中…");
+    if (event.type === "started") note("下載中…");
+    else note(event.type === "error" ? event.message : "收到非預期的回應，請再試一次");
   } catch (error) {
     note(error.message);
   }
@@ -268,7 +258,7 @@ $("start").addEventListener("click", async () => {
   await send({ type: "start" });
 });
 $("download").addEventListener("click", startDownload);
-$("cancel").addEventListener("click", () => send({ type: "cancel", reqId: nextReq++ }));
+$("cancel").addEventListener("click", () => send({ type: "cancel", reqId: nextId() }));
 $("urls").addEventListener("input", scheduleResolve);
 $("limit").addEventListener("input", scheduleResolve);
 $("filename").addEventListener("input", () => { filenameDirty = true; });

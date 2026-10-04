@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -10,9 +11,11 @@ from typing import Callable
 
 from naming import resolve_target
 from quality import parse_quality
-from security import is_allowed_url
+from security import is_allowed_url, safe_output_path
 from ytdlp import (Engine, ResolveError, build_download_args, classify_error, parse_done_line,
                    parse_progress_line, resolve, stream_download)
+
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 PLACEHOLDER_TITLES = {
     "[private video]": ("private", "這是私人影片，沒有權限下載"),
@@ -108,8 +111,13 @@ class JobRunner:
                 if self._cancel.is_set():
                     summary["cancelled"] = True
                     break
-                outcome = self._one(job_id, it, quality, output_dir, archive, seen, fail,
-                                    len(items) == 1 and title_override or None, downloaded_any)
+                try:
+                    outcome = self._one(job_id, it, quality, output_dir, archive, seen, fail,
+                                        len(items) == 1 and title_override or None, downloaded_any)
+                except Exception as exc:  # one bad item must never end the batch
+                    fail(str(it.get("id") or it.get("url") or "?") if isinstance(it, dict) else "?",
+                         "unknown", f"內部錯誤：{exc}")
+                    outcome = "failed"
                 if outcome == "ok":
                     summary["ok"] += 1
                     downloaded_any = True
@@ -139,6 +147,9 @@ class JobRunner:
                 fail(item_id, "unavailable", "找不到這支影片")
                 return "failed"
             vid, title = vid or refs[0].id, title or refs[0].title
+        if not isinstance(vid, str) or not _VIDEO_ID.fullmatch(vid) or not isinstance(title, str):
+            fail(str(item_id), "bad_id", "影片資料不正確，已略過")
+            return "failed"
         if vid in seen:
             return "duplicate"
         seen.add(vid)
@@ -153,7 +164,8 @@ class JobRunner:
                         "skipped": True})
             return "skipped"
         try:
-            target = resolve_target(output_dir, override or title, vid, "mp4", archive.mapping())
+            target = safe_output_path(
+                output_dir, resolve_target(output_dir, override or title, vid, "mp4", archive.mapping()).name)
         except ValueError as exc:
             fail(vid, "bad_path", f"輸出路徑太長：{exc}")
             return "failed"
@@ -186,7 +198,10 @@ class JobRunner:
         if result.returncode != 0:
             fail(vid, *classify_error(result.stderr))
             return "failed"
-        archive.record(vid, target.name)
+        try:
+            archive.record(vid, target.name)
+        except OSError:
+            pass  # file is on disk; a locked record file only means a rerun cannot skip it
         self._emit({"type": "item_done", "jobId": job_id, "itemId": vid, "file": str(target),
                     "height": info.height if info else None, "codec": info.codec if info else None,
                     "skipped": False})

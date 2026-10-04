@@ -123,6 +123,9 @@ class Host:
             except ResolveError as exc:
                 self._error(msg, exc.code, exc.message)
                 return
+            except Exception as exc:
+                self._error(msg, "internal", f"無法執行下載引擎：{exc}")
+                return
             self._reply(msg, {"type": "resolved", "items": [
                 {"id": r.id, "title": r.title, "url": r.url} for r in refs]})
 
@@ -160,7 +163,11 @@ class Host:
             return
 
         def work() -> None:
-            code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
+            try:
+                code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
+            except Exception as exc:
+                self._error(msg, "update_failed", f"更新失敗：{exc}")
+                return
             if code != 0:
                 self._error(msg, "update_failed", f"更新失敗：{(err or out).strip()[-200:]}")
                 return

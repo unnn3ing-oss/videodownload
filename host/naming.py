@@ -8,14 +8,19 @@ _ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL",
              *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 MAX_NAME = 200
-MAX_PATH = 250
+MAX_PATH = 240  # leaves room for yt-dlp temp names (".f251-drc.webm.part") under Windows' 259
+MAX_COMPONENT_BYTES = 255  # common file-system limit (ext4, many NAS shares)
+TEMP_SUFFIX_BYTES = 16
 
 
-def sanitize_filename(name: str, max_len: int = MAX_NAME) -> str:
+def sanitize_filename(name: str, max_len: int = MAX_NAME, max_bytes: int | None = None) -> str:
     cleaned = _ILLEGAL.sub("_", name)
     if cleaned.split(".")[0].strip().upper() in _RESERVED:
         cleaned = "_" + cleaned
-    return cleaned[:max_len].rstrip(" .").lstrip(" ")
+    cleaned = cleaned[:max_len]
+    while max_bytes is not None and len(cleaned.encode("utf-8")) > max_bytes:
+        cleaned = cleaned[:-1]
+    return cleaned.rstrip(" .").lstrip(" ")
 
 
 def resolve_target(directory: Path, title: str, video_id: str, ext: str = "mp4",
@@ -25,8 +30,13 @@ def resolve_target(directory: Path, title: str, video_id: str, ext: str = "mp4",
     avail = min(MAX_NAME, MAX_PATH - len(str(directory)) - 1 - len(suffix) - len(tail))
     if avail < 1:
         raise ValueError("output directory path is too long")
-    base = sanitize_filename(title, avail) or video_id
+    max_bytes = MAX_COMPONENT_BYTES - TEMP_SUFFIX_BYTES - len(suffix.encode("utf-8")) - len(tail.encode("utf-8"))
+    base = sanitize_filename(title, avail, max_bytes) or video_id
     candidate = directory / f"{base}{tail}"
-    if candidate.exists() and (known or {}).get(video_id) != candidate.name:
+    try:
+        taken = candidate.exists()
+    except OSError as exc:
+        raise ValueError(f"cannot use this path: {exc}") from exc
+    if taken and (known or {}).get(video_id) != candidate.name:
         candidate = directory / f"{base}{suffix}{tail}"
     return candidate

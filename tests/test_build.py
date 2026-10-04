@@ -2,6 +2,8 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -106,3 +108,68 @@ def test_committed_installers_are_current():
     out = ROOT / "extension" / "installers"
     assert (out / "install-windows.cmd").read_bytes() == build.render_windows().encode("utf-8")
     assert (out / "install-mac.zip").read_bytes() == build.render_mac()
+
+
+CURL_STUB = """#!/bin/bash
+out=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2;;
+    --retry) shift 2;;
+    -*) shift;;
+    *) url="$1"; shift;;
+  esac
+done
+case "$url" in
+  *SHA2-256SUMS) if [ -f "$STUB_DIR/sums_ok" ]; then cat "$STUB_DIR/sums"; else exit 22; fi;;
+  *yt-dlp_macos) cp "$STUB_DIR/ytdlp" "$out";;
+  *deno*) cp "$STUB_DIR/deno.zip" "$out";;
+  *) exit 22;;
+esac
+"""
+
+
+def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n"):
+    for tool in ("shasum", "unzip", "python3"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} not installed")
+    home, stub, bin_dir = tmp_path / "home", tmp_path / "stub", tmp_path / "bin"
+    for d in (home, stub, bin_dir):
+        d.mkdir()
+    ytdlp = stub / "ytdlp"
+    ytdlp.write_text("#!/bin/sh\n" + ytdlp_body)
+    (stub / "sums").write_text(f"{hashlib.sha256(ytdlp.read_bytes()).hexdigest()}  yt-dlp_macos\n")
+    if sums_ok:
+        (stub / "sums_ok").write_text("")
+    with zipfile.ZipFile(stub / "deno.zip", "w") as z:
+        info = zipfile.ZipInfo("deno")
+        info.external_attr = (0o100000 | 0o755) << 16
+        z.writestr(info, "#!/bin/sh\necho deno 2\n")
+    for name, body in (("curl", CURL_STUB), ("ffmpeg", "#!/bin/sh\necho ffmpeg\n")):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    script = tmp_path / "install-mac.command"
+    script.write_text(mac_script(build.render_mac()), encoding="utf-8")
+    env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub)}
+    proc = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=120)
+    return proc, home
+
+
+def test_mac_installer_happy_path(tmp_path):
+    proc, home = run_mac_installer(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "安裝完成" in proc.stdout
+    manifest = home / "Library/Application Support/Google/Chrome/NativeMessagingHosts" / f"{build.HOST_NAME}.json"
+    assert json.loads(manifest.read_text(encoding="utf-8"))["allowed_origins"] == [
+        f"chrome-extension://{build.extension_id(KEY)}/"]
+    assert os.access(home / "Library/Application Support/YTDownloader/host.sh", os.X_OK)
+
+
+def test_mac_installer_reports_checksum_fetch_failure(tmp_path):
+    proc, _ = run_mac_installer(tmp_path, sums_ok=False)
+    assert proc.returncode != 0 and "安裝失敗" in proc.stdout and "安裝完成" not in proc.stdout
+
+
+def test_mac_installer_reports_unrunnable_ytdlp(tmp_path):
+    proc, _ = run_mac_installer(tmp_path, ytdlp_body="exit 3\n")
+    assert proc.returncode != 0 and "安裝失敗" in proc.stdout and "安裝完成" not in proc.stdout

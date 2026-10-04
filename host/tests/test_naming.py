@@ -54,9 +54,36 @@ def test_resolve_empty_title_uses_id(tmp_path):
 def test_total_path_limit():
     d = Path("/" + "d" * 200)
     r = resolve_target(d, "字" * 300, "abcdefghijk")
-    assert len(str(r)) <= 250 and r.name.endswith(".mp4")
+    assert len(str(r)) <= 240 and r.name.endswith(".mp4")
 
 
 def test_directory_too_long_raises():
     with pytest.raises(ValueError):
         resolve_target(Path("/" + "d" * 245), "title", "abcdefghijk")
+
+
+def test_name_is_capped_by_utf8_bytes(tmp_path):
+    r = resolve_target(tmp_path, "字" * 100, "abcdefghijk")
+    assert len(r.name.encode("utf-8")) <= 255 - 16  # room for yt-dlp's ".f251-drc.webm.part"
+
+
+def test_temp_files_fit_windows_max_path_even_on_collision(tmp_path):
+    deep = tmp_path / ("d" * 40) / ("e" * 40) / ("f" * 40)
+    deep.mkdir(parents=True)
+    title = "字" * 300
+    first = resolve_target(deep, title, "abcdefghijk")
+    first.touch()
+    second = resolve_target(deep, title, "lmnopqrstuv")  # same title, other video: " [id]" suffix
+    assert second != first
+    for path in (first, second):
+        temp = str(path)[: -len(".mp4")] + ".f251-drc.webm.part"
+        assert len(temp) <= 259
+
+
+def test_oserror_from_exists_becomes_valueerror(tmp_path, monkeypatch):
+    def boom(self):
+        raise OSError(36, "File name too long")
+
+    monkeypatch.setattr(Path, "exists", boom)
+    with pytest.raises(ValueError):
+        resolve_target(tmp_path, "x", "vid")

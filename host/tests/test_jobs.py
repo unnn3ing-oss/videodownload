@@ -184,3 +184,41 @@ def test_config_store(tmp_path):
     for bad in ("", "   ", None, 5):
         with pytest.raises(ValueError):
             ConfigStore(path).set_output_dir(bad)
+
+
+def test_oserror_on_one_item_does_not_stop_batch(tmp_path, monkeypatch):
+    import jobs
+
+    real = jobs.resolve_target
+
+    def flaky(directory, title, vid, ext="mp4", known=None):
+        if vid == "v1":
+            raise OSError(36, "File name too long")
+        return real(directory, title, vid, ext, known)
+
+    monkeypatch.setattr(jobs, "resolve_target", flaky)
+    h = Harness(tmp_path).run([item("v1", "甲"), item("v2", "乙")])
+    assert h.of("item_failed")[0]["itemId"] == "v1"
+    assert h.of("item_done")[0]["file"].endswith("乙.mp4")
+    assert h.summary["failed"] == 1 and h.summary["ok"] == 1
+
+
+def test_non_string_title_fails_item_not_job(tmp_path):
+    h = Harness(tmp_path).run([{"url": URL.format("v1"), "id": "v1", "title": 5}, item("v2", "乙")])
+    assert h.of("item_failed")[0]["itemId"] == "v1"
+    assert h.summary["ok"] == 1
+
+
+@pytest.mark.parametrize("bad_id", ["../../x", "a/b", "a\\b", "x" * 65])
+def test_bad_ids_are_rejected(tmp_path, bad_id):
+    h = Harness(tmp_path).run([{"url": URL.format("v1"), "id": bad_id, "title": "..."}])
+    assert h.of("item_failed")[0]["code"] == "bad_id" and h.calls == []
+
+
+def test_archive_record_failure_still_reports_done(tmp_path, monkeypatch):
+    def boom(self, vid, name):
+        raise PermissionError("locked by another process")
+
+    monkeypatch.setattr(Archive, "record", boom)
+    h = Harness(tmp_path).run([item()])
+    assert h.of("item_done")[0]["skipped"] is False and h.summary["ok"] == 1

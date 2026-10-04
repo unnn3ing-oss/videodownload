@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from quality import format_selector
+from quality import FORMAT_SORT, format_selector
 from ytdlp import (DoneInfo, Engine, Progress, ResolveError, StreamResult, VideoRef,
                    build_download_args, classify_error, normalize_url, parse_done_line,
-                   parse_progress_line, resolve, stream_download)
+                   parse_progress_line, resolve, run_capture, stream_download)
 
 
 def test_build_args():
@@ -17,6 +17,7 @@ def test_build_args():
                             "https://youtu.be/x", 1080, Path("/o/t.mp4"))
     assert a[0] == "yt-dlp" and "--ignore-config" in a and "--no-playlist" in a
     assert a[a.index("-f") + 1] == format_selector(1080)
+    assert a[a.index("-S") + 1] == FORMAT_SORT
     assert a[a.index("--merge-output-format") + 1] == "mp4"
     assert a[a.index("-o") + 1] == "/o/t.mp4"
     assert a[a.index("--js-runtimes") + 1] == "deno:/dn/deno"
@@ -135,3 +136,40 @@ def test_stream_cancel():
     result, _ = collect([sys.executable, "-c", "import time;time.sleep(30)"], cancel)
     assert time.monotonic() - started < 5
     assert result.cancelled is True and result.returncode != 0
+
+
+def test_resolve_partial_failure_keeps_other_urls():
+    def run(cmd):
+        if cmd[-1].endswith("bad"):
+            return 1, "", "ERROR: Private video"
+        return 0, json.dumps({"id": "a1", "title": "T1"}), ""
+
+    got = resolve(Engine(Path("yt-dlp")), [f"{ROOT}/watch?v=ok", f"{ROOT}/watch?v=bad"], run=run)
+    assert got == [VideoRef("a1", "T1", f"{ROOT}/watch?v=a1"), VideoRef("", "", f"{ROOT}/watch?v=bad")]
+
+
+def test_resolve_all_urls_failing_raises():
+    run, _ = fake_run([], rc=1, err="ERROR: Video unavailable")
+    with pytest.raises(ResolveError) as exc:
+        resolve(Engine(Path("yt-dlp")), [f"{ROOT}/watch?v=a", f"{ROOT}/watch?v=b"], run=run)
+    assert exc.value.code == "unavailable"
+
+
+@pytest.mark.parametrize("url,single", [
+    (f"{ROOT}/watch?v=abc&list=PL1", True),
+    (f"{ROOT}/watch?v=abc", True),
+    ("https://youtu.be/abc?list=PL1", True),
+    (f"{ROOT}/shorts/abc", True),
+    (f"{ROOT}/playlist?list=PL1", False),
+    (f"{ROOT}/@abc", False),
+    (f"{ROOT}/@abc/videos", False),
+])
+def test_resolve_no_playlist_only_for_single_video_urls(url, single):
+    run, calls = fake_run([{"id": "a1", "title": "T1"}])
+    resolve(Engine(Path("yt-dlp")), [url], run=run)
+    assert ("--no-playlist" in calls[0]) is single
+
+
+def test_run_capture_missing_executable_does_not_raise():
+    code, out, err = run_capture(["/nonexistent/yt-dlp-xyz", "--version"])
+    assert code != 0 and out == "" and err
