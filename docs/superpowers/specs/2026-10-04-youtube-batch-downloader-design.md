@@ -68,7 +68,7 @@ Chrome 擴充功能 (MV3)
 **擴充功能 → host**
 - `ping`
 - `resolve { urls[], limit? }`：展開播放清單／頻道，回傳 `{ id, title, url }[]`
-- `download { items[{ url, title? }], quality: 720|1080, outputDir?, limit? }`
+- `download { items[{ url, id?, title? }], quality: 720|1080, titleOverride? }`（輸出資料夾只由 `set_config` 決定，上限 `limit` 只用在 `resolve`）
 - `cancel { jobId }`
 - `get_config` / `set_config { outputDir }`
 - `update_engine`
@@ -79,6 +79,8 @@ Chrome 擴充功能 (MV3)
 - `item_done { itemId, file, height, codec }`
 - `item_failed { itemId, reason, code }`
 - `done { jobId, summary }`
+
+每個請求可帶 `reqId`，host 的直接回覆都會帶回。直接回覆型別：`pong`、`started { jobId }`、`resolved { items[{ id, title, url }] }`、`config { outputDir }`、`engine_updated { ytdlpVersion }`、`error { code, message }`；錯誤代碼：`bad_json`、`unknown_type`、`bad_url`、`bad_quality`、`bad_path`、`busy`、`engine_missing`、`update_failed`、`internal`，以及 `resolve` 失敗時沿用下載錯誤分類的代碼。`cancel` 的 `jobId` 可省略（同一時間只有一個工作）。
 
 單則訊息保持在 1 MB 以內（Chrome 對 host→擴充功能的限制）。
 

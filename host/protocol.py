@@ -13,6 +13,10 @@ class ProtocolError(Exception):
     pass
 
 
+class BadMessage(ProtocolError):
+    """The body was unusable but framing is intact: the stream can keep being read."""
+
+
 def read_message(stream: BinaryIO) -> dict | None:
     """Return the next message, or None on a clean EOF before any header byte."""
     header = stream.read(4)
@@ -29,9 +33,9 @@ def read_message(stream: BinaryIO) -> dict | None:
     try:
         msg = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
-        raise ProtocolError(f"invalid JSON: {exc}") from exc
+        raise BadMessage(f"invalid JSON: {exc}") from exc
     if not isinstance(msg, dict):
-        raise ProtocolError("message is not a JSON object")
+        raise BadMessage("message is not a JSON object")
     return msg
 
 

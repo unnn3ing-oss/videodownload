@@ -67,3 +67,15 @@ def test_incoming_over_limit_raises():
 def test_outgoing_over_limit_raises():
     with pytest.raises(ProtocolError):
         write_message(io.BytesIO(), {"x": "a" * MAX_OUT})
+
+
+def test_bad_json_is_distinguishable_from_framing_errors():
+    from protocol import BadMessage
+
+    with pytest.raises(BadMessage):
+        read_message(frame(b"{nope"))
+    with pytest.raises(BadMessage):
+        read_message(frame(b"[1]"))
+    with pytest.raises(ProtocolError) as exc:
+        read_message(frame(b"abc", declared=10))
+    assert not isinstance(exc.value, BadMessage)
