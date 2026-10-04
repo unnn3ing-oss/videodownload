@@ -1,0 +1,21 @@
+:root { color-scheme: light dark; font-family: system-ui, "Noto Sans TC", sans-serif; font-size: 14px; }
+body { width: 420px; margin: 0; padding: 12px; box-sizing: border-box; }
+header, main, footer { display: grid; gap: 8px; margin-bottom: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row input[type="text"] { flex: 1; }
+textarea, input[type="text"], input[type="number"], select { width: 100%; box-sizing: border-box; padding: 4px 6px; }
+input[type="number"] { width: 5em; }
+button { padding: 5px 12px; cursor: pointer; }
+button.link { background: none; border: none; text-decoration: underline; padding: 0; justify-self: start; }
+.status { font-weight: 600; padding: 6px 8px; border-radius: 4px; background: Canvas; border: 1px solid GrayText; }
+.status[data-state="running"] { border-color: #2e7d32; }
+.status[data-state="not_installed"], .status[data-state="forbidden"] { border-color: #c62828; }
+.note, .summary { padding: 6px 8px; border-radius: 4px; background: color-mix(in srgb, Highlight 15%, Canvas); }
+.invalid { margin: 0; padding-left: 18px; color: #c62828; }
+.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.items li { display: grid; gap: 2px; }
+.items .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.items .meta { font-size: 12px; color: GrayText; }
+.items .failed .meta { color: #c62828; }
+.items .warn { color: #ef6c00; }
+progress { width: 100%; }
