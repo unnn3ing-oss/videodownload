@@ -96,7 +96,7 @@ Chrome 擴充功能 (MV3)
 **批量與續傳**
 - 單支失敗只記錄，不中斷整批。
 - 輸出資料夾內有隱藏的內部紀錄檔（影片 ID 對應檔名）。已下載且檔案仍在的影片會跳過並回報「已下載過」；檔案被刪除則重新下載。這不是使用者要的 manifest，僅供續跑使用。
-- 預設低併發並加間隔，降低被限流的機率。
+- 一次一個工作，工作內逐支下載，支與支之間間隔 2 秒，降低被限流的機率。
 
 **錯誤分類**：私人、已下架、地區限制、要求登入或驗證（提示改用住宅或公司網路，不重試）、網路中斷、引擎需更新、磁碟空間不足。
 
@@ -113,12 +113,12 @@ Chrome 擴充功能 (MV3)
 
 由 `build.py` 產生，使用者只需雙擊一次。內容：
 1. 把 host 程式碼寫入使用者目錄（Windows：`%LOCALAPPDATA%\YTDownloader`；Mac：`~/Library/Application Support/YTDownloader`）。
-2. 取得依賴：獨立 Python（host 只用標準函式庫，不需要 pip）、yt-dlp 獨立執行檔、ffmpeg 靜態版本、JS 執行環境（見第 10 節）。
+2. 取得依賴：Python（host 只用標準函式庫，不需要 pip；Windows 下載內嵌版，Mac 要求系統 `python3` 3.9 以上，沒有時提示執行 `xcode-select --install`）、yt-dlp 獨立執行檔、ffmpeg 靜態版本、JS 執行環境（見第 10 節）。
 3. 登錄 Native Messaging：Windows 寫入 `HKCU\Software\Google\Chrome\NativeMessagingHosts\<名稱>` 並指向 host 啟動批次檔；Mac 寫入 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/<名稱>.json`。
 4. 結束時顯示成功或失敗原因。
 
 - Windows：`install-windows.cmd`（內含 PowerShell 腳本）。
-- Mac：`install-mac.command`；可執行權限與 Gatekeeper 提示記錄在 README。
+- Mac：`install-mac.zip`，內含保留執行權限的 `install-mac.command`（Chrome 下載的單一檔案會遺失執行權限，所以包成 zip）；Gatekeeper 提示記錄在 README。
 - `build.py` 產生的安裝檔放入擴充功能資料夾；測試檢查安裝檔內嵌的 host 程式碼雜湊與原始碼一致，避免版本漂移。
 
 ## 8. 專案結構
@@ -134,6 +134,8 @@ host/
   protocol.py              # 訊息編解碼
   quality.py               # 畫質 → yt-dlp 格式
   naming.py                # 檔名清理與衝突處理
+  security.py              # 網址白名單、輸出路徑檢查
+  config.py                # 輸出資料夾設定的讀寫
   jobs.py                  # 佇列、進度、取消、續傳紀錄
   ytdlp.py                 # 呼叫 yt-dlp，解析輸出
   tests/
@@ -165,7 +167,7 @@ README 會附冒煙測試步驟：安裝 → 啟動 → 下載一支公開短片
 
 | 風險／待查證 | 說明 | 處理 |
 |---|---|---|
-| 新版 yt-dlp 需要 JS 執行環境 | 據我所知近期 YouTube 提取需要外部 JS 執行環境（如 Deno）；未在本次查證 | 實作計畫階段查證最新 yt-dlp 文件，必要時安裝檔一併取得並以參數指定；`ready.jsRuntimeOk` 回報狀態 |
+| 新版 yt-dlp 需要 JS 執行環境 | 已查證（2026-10-04）：下載 YouTube 需要外部 JS 執行環境，預設 Deno；獨立執行檔已內含 yt-dlp-ejs | 安裝檔一併取得 Deno，並以 `--js-runtimes deno:<路徑>` 指定；`ready.jsRuntimeOk` 回報狀態 |
 | 公司 IT 管控 | 可能禁止開發人員模式擴充功能、腳本執行、Native Messaging，或防毒軟體攔截 yt-dlp | README 列出，需要時請 IT 協助 |
 | Windows SmartScreen／Mac Gatekeeper | 瀏覽器下載的安裝檔會有安全性提示 | README 附圖文步驟 |
 | 開發人員模式提醒 | Chrome 啟動時可能提示停用此類擴充功能 | 無法避免；企業政策自架為日後選項 |
