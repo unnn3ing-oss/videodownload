@@ -1,11 +1,12 @@
 // Owns the Native Messaging connection and the download list, so downloads keep running whether or not the
 // side panel or the web page is open. Both are only views of the list held here.
-import { HOST_NAME, WEB_ORIGIN, WEB_PATH } from "./lib/constants.js";
+import { HOST_NAME } from "./lib/constants.js";
 import { classifyConnectError, installerFor } from "./lib/platform.js";
 import { checkLatest } from "./lib/updater.js";
 import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
 import { classifySender, isAllowed } from "./lib/messages.js";
+import { injectBridge } from "./lib/inject.js";
 
 let port = null;
 let status = { state: "stopped", ready: null, detail: null };
@@ -224,15 +225,7 @@ chrome.runtime.onConnect.addListener((connection) => {
 });
 
 // After an install, reload or update, give web pages that are already open a working bridge.
-async function injectBridge() {
-  try {
-    const tabs = await chrome.tabs.query({ url: `${WEB_ORIGIN}${WEB_PATH}*` });
-    for (const tab of tabs) {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["bridge.js"] }).catch(() => {});
-    }
-  } catch { /* no matching tabs or no access: the content script covers pages opened later */ }
-}
-chrome.runtime.onInstalled.addListener(() => { injectBridge(); });
+chrome.runtime.onInstalled.addListener(() => { injectBridge(chrome); });
 
 // Clicking the toolbar icon opens the side panel (there is no popup).
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});

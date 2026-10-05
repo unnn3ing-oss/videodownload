@@ -53,3 +53,21 @@ export function registerNativeHost({ userData, wrapperPath, extId }) {
 export const shotter = (page) => async (name) => {
   if (process.env.E2E_SHOTS) await page.screenshot({ path: path.join(process.env.E2E_SHOTS, `${name}.png`), fullPage: true });
 };
+
+// Serve the repository's files as if GitHub Pages hosted them at https://unnn3ing-oss.github.io/videodownload/
+// (the extension's content script matches that address).
+export const PAGES_URL = "https://unnn3ing-oss.github.io/videodownload/";
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png" };
+export async function servePages(context, repoRoot = root) {
+  await context.route(`${PAGES_URL}**`, (route) => {
+    const { pathname } = new URL(route.request().url());
+    let rel = decodeURIComponent(pathname.slice("/videodownload/".length));
+    if (rel === "" || rel.endsWith("/")) rel += "index.html";
+    const file = path.resolve(repoRoot, rel);
+    if (!file.startsWith(repoRoot + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+    }
+    return route.fulfill({ status: 200, contentType: TYPES[path.extname(file)] ?? "application/octet-stream", body: fs.readFileSync(file) });
+  });
+}

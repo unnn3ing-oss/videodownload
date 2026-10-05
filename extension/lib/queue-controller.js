@@ -15,7 +15,7 @@ const TIMEOUT = { resolve: 180000, meta: 90000, save_cover: 30000, download: 200
 const fail = (error) => ({ ok: false, error });
 
 // deps.host: { connected(), version(), request(message, timeoutMs) -> Promise<event>, send(message) }
-export function createController({ host, save, notify, fetchFn = fetch, downloads, now = Date.now, initial = null }) {
+export function createController({ host, save, notify, fetchFn = fetch, downloads, now = Date.now, initial = null, retryDelayMs = 400 }) {
   let state = createState(initial);
   const sentIds = new Set(); // video ids the host already has in its current job
   const resolving = new Set(); // uids with a resolve request in flight
@@ -71,15 +71,21 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     starting = true;
     stopRequested = false;
     try {
-      const event = await host.request({
-        type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
-      }, TIMEOUT.download);
-      if (event.type === "started") {
-        sentIds.clear();
-        items.forEach((i) => sentIds.add(i.id));
-        commit(markRunning(state, true));
-      } else if (event.code !== "busy") {
-        return fail(event.message ?? "無法開始下載");
+      // "busy" while we think nothing runs means the host is still wrapping up the previous job: wait a moment.
+      for (let attempt = 0; ; attempt += 1) {
+        const event = await host.request({
+          type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
+        }, TIMEOUT.download);
+        if (event.type === "started") {
+          sentIds.clear();
+          items.forEach((i) => sentIds.add(i.id));
+          commit(markRunning(state, true));
+          break;
+        }
+        if (event.code !== "busy") return fail(event.message ?? "無法開始下載");
+        if (state.running) break; // a job really is running: its events will update the list
+        if (attempt >= 2) return fail(event.message ?? "無法開始下載");
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
     } catch (error) {
       return fail(error.message);

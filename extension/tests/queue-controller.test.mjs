@@ -48,6 +48,7 @@ function setup(hostOptions, extra = {}) {
     downloads: { download: async (options) => { downloaded.push(options); return 1; } },
     now: () => clock.t,
     initial: extra.initial ?? null,
+    retryDelayMs: 0,
   });
   return { host, ctl, saved, notified, downloaded, clock };
 }
@@ -114,6 +115,23 @@ test("start is idempotent: two screens pressing it at once send one download", a
   assert.deepEqual([first.ok, second.ok], [true, true]);
   assert.equal((await ctl.start()).ok, true);
   assert.equal(host.of("download").length, 1);
+});
+
+test("start tries again when the host says it is busy only because its last job is still wrapping up", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  let calls = 0;
+  host.replies.download = () => (++calls < 3 ? { type: "error", code: "busy", message: "已有下載工作進行中" } : { type: "started", jobId: "j" });
+  assert.deepEqual(await ctl.start(), { ok: true });
+  assert.equal(host.of("download").length, 3);
+  assert.equal(ctl.getState().running, true);
+});
+
+test("start gives up with the host's message when it stays busy", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  host.replies.download = { type: "error", code: "busy", message: "已有下載工作進行中" };
+  assert.deepEqual(await ctl.start(), { ok: false, error: "已有下載工作進行中" });
+  assert.equal(ctl.getState().running, false);
+  assert.equal((await ctl.start()).ok, false, "and it can be tried again later");
 });
 
 test("start explains why it cannot run", async () => {
