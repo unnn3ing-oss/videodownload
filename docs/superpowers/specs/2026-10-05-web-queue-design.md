@@ -11,6 +11,12 @@
 - 按「增加」就在下方清單多一欄，欄位有預抓好的**影片標題**、**影片封面**、**X（從清單刪除）**。
 - 「開始全部下載」依**加入順序（最早到最晚）**一支一支下載；每支之間有**冷卻間隔**；**即時進度**顯示在該支的欄位內。
 - 網頁版要有「部署到 Chrome 插件」按鈕（照 QuickPatterntool）。部署完成後自動偵測並連線。
+- **複製內文**：每列後方有按鈕，一鍵複製「`【影片標題】`＋換行＋說明欄前三個 hashtag」，例如：
+  ```
+  【影片標題文字】
+  #標籤一 #標籤二 #標籤三
+  ```
+- **下載封面**：滑鼠移到封面縮圖上時，縮圖變成反灰並顯示下載符號，點一下就下載該影片的**原尺寸**封面圖片。
 - 預設值：下載途中新增的影片自動接在後面；冷卻間隔預設 10 秒；拿掉「單支影片自訂檔名」欄位（檔名固定為影片標題）。
 - 影片下載仍完全在使用者自己的電腦上（Chrome → 本機小程式 → yt-dlp → YouTube），GitHub 與網頁伺服器不參與。
 
@@ -33,7 +39,7 @@
 
 ```
 queue = {
-  items: [{ uid, id, url, title, duration|null, status, percent, speed, eta, file, height, error }],
+  items: [{ uid, id, url, title, duration|null, tags: string[]|null, status, percent, speed, eta, file, height, error }],
   running: boolean,
   settings: { quality: 720|1080, cooldownSec: 3..60 (預設 10), limit: 1..1000 (預設 50) },
   cooldown: { until: epochMs, nextId } | null,
@@ -46,7 +52,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 ### 畫面 → 背景的訊息（兩個畫面共用）
 
-`queue_get`、`queue_add {url}`、`queue_remove {uid}`、`queue_retry {uid}`、`queue_start`、`queue_stop`、`settings_set {quality?, cooldownSec?, limit?}`；既有的 `start`（連線本機小程式）、`set_output_dir` 保留。背景程式廣播 `queue_state`（完整狀態，最多每 200 ms 一次）與既有的 `status`。
+`queue_get`、`queue_add {url}`、`queue_remove {uid}`、`queue_retry {uid}`、`queue_start`、`queue_stop`、`queue_copy_text {uid}`（回覆 `{ ok, text, tagCount }`）、`queue_download_cover {uid}`（回覆 `{ ok, url }` 或錯誤原因）、`settings_set {quality?, cooldownSec?, limit?}`；既有的 `start`（連線本機小程式）、`set_output_dir` 保留。背景程式廣播 `queue_state`（完整狀態，最多每 200 ms 一次）與既有的 `status`。
 
 ## 3. 增加、刪除、重試
 
@@ -58,6 +64,22 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
   - 執行中被移除的等待項目，也要從本機小程式的待辦移除（新訊息 `remove`，§4）。
 - **重試**：失敗的列有「重試」，把它改回 `waiting`（執行中則同時 `enqueue`）。
 
+## 3.5 列內動作：複製內文、下載封面
+
+每列由左到右：封面（可點）｜序號與標題、進度、狀態｜複製內文｜X。
+
+**複製內文**
+- 格式：`【標題】` 換行 `#一 #二 #三`；標題取清單上的標題。說明欄沒有 hashtag 時只複製第一行，並提示「說明欄沒有 hashtag」；不足三個就有幾個複製幾個。
+- hashtag 規則（純函式 `extension/lib/copytext.js`，可測）：在說明欄文字中依出現順序取前三個不重複的 `#` 開頭詞，接受中文、英文、數字、底線；網址裡的 `#` 片段（例如 `…/watch?v=x#t=30`）不算。
+- 說明欄不在批量解析的資料裡，所以在**第一次按下時**才向本機小程式取得（新訊息 `meta`，§4），取回的 hashtag 存在該列（`tags`）供之後直接使用。取得需要幾秒，按鈕顯示「擷取中…」，完成後顯示「已複製」。
+- 寫入剪貼簿使用「以 Promise 提供內容的 `ClipboardItem`」，這樣即使網路等待超過瀏覽器的使用者操作時效，網頁版仍能寫入；側邊面板另有 `clipboardWrite` 權限。本機小程式未連線時提示「請先連線本機小程式」。
+
+**下載封面**
+- 封面是 `<button>`：滑鼠移過（或鍵盤聚焦）時縮圖反灰並出現下載符號，點擊即下載，不影響整列。觸控裝置不顯示 hover，改為封面角落常駐一個小下載符號。
+- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，用背景程式的 `HEAD` 請求找出第一個存在的（YouTube 並非每支影片都有最高解析度，會自動退而求其次）。
+- 以 `chrome.downloads.download` 存到瀏覽器的下載資料夾，檔名為「影片標題.jpg」（非法字元換成 `_`、過長截短，同名自動加序號）。網頁版透過橋接請背景程式下載，不碰 CORS。
+- 需要新增 `https://i.ytimg.com/*` 的 `host_permissions`。找不到任何封面時，該列提示「找不到封面圖片」。
+
 ## 4. 下載、冷卻與進度（本機小程式）
 
 沿用既有 `download` 工作，做以下變更（本機小程式版本升為 0.2.0）：
@@ -67,6 +89,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 | `download { items, quality, cooldownSec }` | `cooldownSec`（0–300，缺省 2 以相容舊版）。每支「實際下載」之間等待冷卻；已下載過而略過的不冷卻。等待可被取消。 |
 | `enqueue { items }` | 工作執行中，把新項目接到待辦尾端，回 `enqueued { count }`；沒有執行中的工作則回 `error not_running`，背景程式改送 `download`。 |
 | `remove { itemId }` | 待辦中 → 移除；正在下載 → 只取消那一支並繼續；回 `removed`。 |
+| `meta { url }` | 取得單支影片的說明欄（`yt-dlp --skip-download --no-playlist --dump-json`），回 `meta { id, title, description }`；失敗回 `error`。在背景執行緒進行，不影響進行中的下載。 |
 | `cancel`（既有） | 取消整個工作；背景程式把尚未完成的項目退回 `waiting`。 |
 
 新事件：`cooldown { jobId, seconds, nextId }`（開始冷卻時送一次，畫面自己倒數）、`item_removed { itemId }`。既有的 `started`、`progress`、`item_done`、`item_failed`、`done` 不變。
@@ -88,7 +111,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 **與擴充功能的橋接**（不使用 `externally_connectable`，避免網頁已開啟時裝擴充功能還要重新整理）：
 - 擴充功能新增內容腳本 `bridge.js`，只注入 `https://unnn3ing-oss.github.io/videodownload/*`；`host_permissions` 加入該網址，新增 `scripting` 權限。
 - 擴充功能安裝／重新載入（`onInstalled`）時，用 `chrome.scripting.executeScript` 把 `bridge.js` 注入已開啟的符合分頁，網頁不需重新整理（此行為為推論，需在真的 Chrome 驗證；若不成立，網頁偵測到橋接遺失時提示「請重新整理」）。
-- 網頁 ↔ `bridge.js`：`window.postMessage`，檢查 `event.source === window` 與來源網址；`bridge.js` 只轉送白名單：`ping`、`queue_*`、`settings_set`、`start`、`set_output_dir`、`deploy_installer`，其餘一律丟棄（`update_*` 只限側邊面板）。
+- 網頁 ↔ `bridge.js`：`window.postMessage`，檢查 `event.source === window` 與來源網址；`bridge.js` 只轉送白名單：`ping`、`queue_*`（含 `queue_copy_text`、`queue_download_cover`）、`settings_set`、`start`、`set_output_dir`、`deploy_installer`，其餘一律丟棄（`update_*` 只限側邊面板）。
 - `bridge.js` 對背景程式開一條長連線（`chrome.runtime.connect`），背景程式把 `queue_state` 與 `status` 推給它，再轉給網頁。
 - 信任模型：能控制 Pages 網址內容的人 ＝ 能推 `main` 的人，與自動更新相同；不接受 localhost 或其他來源。
 
@@ -102,7 +125,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 ## 6. 側邊面板
 
-- 以相同的清單列（較窄：封面 88 px）取代現有「網址框＋預覽＋進度清單」；保留「目前分頁 → 加入」、狀態徽章、設定與工具、版本與更新。
+- 以相同的清單列（較窄：封面 88 px，複製內文與 X 為圖示按鈕）取代現有「網址框＋預覽＋進度清單」；保留「目前分頁 → 加入」、狀態徽章、設定與工具、版本與更新。
 - 拿掉：單支檔名欄位、「最多下載 N 支」輸入列（改在設定裡）、先前的預覽流程與 `viewRows`／`resolved` 邏輯；`progress.js` 的 `seedProgress`／`previewItems` 刪除，`overallProgress` 視需要保留。
 
 ## 7. 錯誤與邊界
@@ -115,16 +138,18 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 ## 8. 測試
 
-- **單元（node）**：`queue.js`——增加與去重、解析展開、事件對應（進度、完成、略過、失敗、冷卻、結束）、開始的內容與順序、停止、移除（含下載中）、重試、重啟還原、清單上限。
-- **本機小程式（pytest）**：冷卻（含可取消、略過不冷卻）、`enqueue`（含與結束的競態）、`remove`（待辦／下載中）、`resolve` 回傳 `duration`、舊參數相容。
+- **單元（node）**：`copytext.js`（hashtag 擷取：中英文、重複、不足三個、沒有、網址片段、標題格式）；封面網址挑選（以假 fetch 驗證順序與退而求其次）；檔名清理；`queue.js`——增加與去重、解析展開、事件對應（進度、完成、略過、失敗、冷卻、結束）、開始的內容與順序、停止、移除（含下載中）、重試、重啟還原、清單上限。
+- **本機小程式（pytest）**：冷卻（含可取消、略過不冷卻）、`enqueue`（含與結束的競態）、`remove`（待辦／下載中）、`resolve` 回傳 `duration`、`meta`（成功、失敗、說明欄很長）、舊參數相容。
 - **端對端（Playwright，沿用既有慣例）**：
   - 側邊面板：增加 → 骨架 → 標題與封面出現；刪除；開始 → 依序下載、冷卻倒數、列內進度；下載途中新增與刪除。
   - 網頁版（以 route 攔截讓本地檔案充當 Pages 網址）：偵測擴充功能、重新載入擴充功能後不需重新整理即重新連線、與側邊面板看到同一份清單、部署流程（OPFS 當資料夾、假的 GitHub）、窄寬度無橫向捲動。
-  - 假的下載引擎（`stub_ytdlp.py`）擴充：依網址的 `v=` 回傳不同影片 ID 與標題。
+  - 複製內文：按下後剪貼簿內容符合格式（含「說明欄沒有 hashtag」的情況）；封面：滑鼠移上去時縮圖反灰並出現下載符號，點擊後觸發下載（以假的 `i.ytimg.com` 回應驗證所選尺寸與檔名）。
+  - 假的下載引擎（`stub_ytdlp.py`）擴充：依網址的 `v=` 回傳不同影片 ID 與標題，並支援 `--dump-json` 回傳含 hashtag 的說明欄。
 
 ## 9. 尚未驗證（需使用者在真實環境確認）
 
-- 真實 YouTube 的下載與冷卻效果、`duration` 欄位是否存在。
+- 真實 YouTube 的下載與冷卻效果、`duration` 欄位是否存在、說明欄的 hashtag 是否完整取得。
+- 各影片實際有哪一種封面尺寸（最高解析度不一定存在）；`i.ytimg.com` 的 `HEAD` 請求在真實 Chrome 的行為。
 - 擴充功能安裝後的內容腳本注入、網頁是否免重新整理即偵測。
 - GitHub Pages 實際啟用後的網址與行為；Chrome 資料夾選擇器的限制。
 - 背景程式在長時間下載中是否持續存活（原生連線通常會維持其存活，屬推論）。
@@ -140,3 +165,4 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 2. 開始後依加入順序下載，欄位內即時顯示進度，每支之間依設定冷卻並顯示倒數。
 3. 兩個畫面同時開啟時，清單與進度一致；關閉任一畫面不中斷下載。
 4. 網頁版部署完成後，不需手動操作即顯示已連線。
+5. 每列的「複製內文」得到 `【標題】` 加前三個 hashtag；滑鼠移到封面會反灰並顯示下載符號，點擊即下載原尺寸封面。
