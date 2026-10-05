@@ -58,7 +58,7 @@
 - `update_rolled_back {}`
 - `error { code }` 新增代碼：`update_bad_file`（檔名不合規）、`update_download_failed`、`update_hash_mismatch`、`update_selfcheck_failed`、`update_install_failed`（含 `rolledBack: true`）、`update_nothing_staged`、`busy`（有下載工作進行中時拒絕）。
 
-`ready` 訊息新增 `version`（小程式版本）。
+沿用既有的 `ready.hostVersion` 回報小程式版本（不新增欄位）。
 
 ## 6. 更新流程（面板的「更新到最新版」）
 

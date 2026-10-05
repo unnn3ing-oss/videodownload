@@ -14,7 +14,7 @@ Chrome 擴充功能加本機小程式，用來把**公司 YouTube 頻道的公�
 
 ### 1. 載入擴充功能（Windows、Mac 相同）
 
-1. 取得這個專案的 `extension` 資料夾。
+1. 下載 [release.zip](https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/release.zip)（最新發佈版），解壓縮到一個**固定、之後不會搬動**的位置，裡面有 `extension` 資料夾。
 2. Chrome 開啟 `chrome://extensions`，右上角打開「開發人員模式」。
 3. 按「載入未封裝項目」，選擇 `extension` 資料夾。
 4. 把擴充功能釘選到工具列。之後點工具列上的圖示，就會在視窗右側開啟**側邊面板**，切換分頁也不會消失。（Chrome 啟動時可能提示「停用開發人員模式擴充功能」，請選保留。）
@@ -36,6 +36,16 @@ Chrome 擴充功能加本機小程式，用來把**公司 YouTube 頻道的公�
 ### 3. 啟動
 
 回到 Chrome，打開擴充功能，按**「啟動」**。狀態顯示「已啟動」就可以使用。
+
+## 更新
+
+擴充功能會每 6 小時自動檢查一次是否有新版本；有的話，工具列圖示會出現「新」，面板標題旁會出現「有新版本」。
+
+1. 打開側邊面板，展開下方的**「設定與工具」→「版本與更新」**（點標題旁的「有新版本」會直接跳到這裡）。也可以隨時按「檢查更新」手動檢查。
+2. 先按「啟動」（更新本機小程式需要它連著），下載進行中時不能更新，等下載結束再按。
+3. 按**「更新到最新版」**。**第一次**按鈕會寫「選擇擴充功能資料夾並更新」：請選到你當初載入的那個 `extension` 資料夾（Chrome 不允許選磁碟根目錄，也不允許選「下載」「文件」等系統資料夾本身，請選 `extension` 這一層）。選好後 Chrome 會記住，之後不用再選。
+4. 每個檔案都會和 GitHub 上登錄的雜湊值逐一比對，全部吻合才會寫入；本機小程式也會先備份舊版、更新後自我檢查，失敗會自動還原。
+5. 更新完成後擴充功能會自動重新載入，**再按一次「啟動」**即可。
 
 ## 使用
 
@@ -67,6 +77,21 @@ Chrome 擴充功能加本機小程式，用來把**公司 YouTube 頻道的公�
 | 顯示「YouTube 要求登入或驗證」 | 這是 YouTube 對該網路的限制。請改用住宅或公司網路，不要用雲端或 VPN |
 | Windows 安裝時 yt-dlp 無法執行 | 可能缺少 Visual C++ 執行階段，或被防毒軟體攔截 |
 | 公司電腦無法安裝 | IT 可能限制了開發人員模式擴充功能、腳本執行或 Native Messaging，需請 IT 協助 |
+| 更新後本機小程式無法啟動 | 把 `<安裝目錄>/backup/host/` 裡的檔案複製回 `<安裝目錄>/host/`（只保留上一版的備份），或重新按「下載部署」再執行一次安裝檔 |
+| 檢查更新顯示「GitHub 暫時限制查詢次數」 | 同一個網路一小時內查詢太多次，稍後再試即可 |
+| 檢查更新顯示「尚未發佈：找不到 release 分支」 | 維護者還沒推送過 `release` 分支 |
+| 選擇資料夾時被 Chrome 拒絕 | 不要選磁碟根目錄或「下載」「文件」「桌面」資料夾本身，請選擴充功能所在的 `extension` 那一層 |
+
+## 維護者：發版
+
+更新會追蹤 GitHub 上獨立的 `release` 分支（開發分支的內容不會影響同事）。每次要讓同事收到更新時：
+
+1. 同步更新 `extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION`，兩者必須相同（測試強制）；**不要動 `manifest.json` 的 `key`**，否則擴充功能識別碼改變，更新會被拒絕。
+2. 跑完測試：`python -m pytest`，並執行 `python build.py` 重新產生安裝檔、把 `extension/installers/` 一併提交。
+3. 確定要發佈的 commit 後：`git push origin <commit>:release`。
+4. 同事的擴充功能最多 6 小時內會發現新版本（或按「檢查更新」立即檢查）。
+
+**安全提醒**：這套更新沒有數位簽章，信任來源就是 `release` 分支本身；能推送到該分支的人，就能影響所有同事的電腦。請對 `release` 分支開啟 GitHub 分支保護（限制誰能推送），並對所有有推送權限的 GitHub 帳號啟用雙重驗證。
 
 ## 開發
 
@@ -75,6 +100,7 @@ pip install -r requirements-dev.txt
 python -m pytest                          # host 與建置腳本測試
 node --test extension/tests/*.test.mjs    # 擴充功能純邏輯測試
 npm i --no-save playwright-core@1.56.1    # e2e 需要（Chromium 位置可用 PW_CHROMIUM 指定）
+node extension/tests/e2e/update.e2e.mjs     # 自我更新的端對端測試（假 GitHub、假資料夾）；環境變數同上
 node extension/tests/e2e/sidepanel.e2e.mjs  # 無頭 Chromium 端對端測試（假引擎）；結束碼 2 代表無法啟動瀏覽器；設 E2E_SHOTS=資料夾 會順便截圖，E2E_SCHEME=dark 測深色模式
 python build.py                           # 修改 host 程式碼後重新產生安裝檔，並提交 extension/installers/
 ```
