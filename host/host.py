@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Callable
 
+import selfupdate
 from config import ConfigStore
 from jobs import JobRunner
 from protocol import BadMessage, ProtocolError, read_message, write_message
@@ -16,7 +17,8 @@ from security import is_allowed_url
 from version import VERSION
 from ytdlp import Engine, ResolveError, resolve, run_capture
 
-HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine"}
+HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
+           "update_check", "update_stage", "update_commit", "update_rollback"}
 MAX_LIMIT = 1000
 
 
@@ -156,6 +158,64 @@ class Host:
                               override if isinstance(override, str) and override.strip() else None)
         except RuntimeError:
             self._error(msg, "busy", "已有下載工作進行中")
+
+    # -- self-update of the host's own files (the extension coordinates it) -------------------
+    def _update_error(self, msg: dict, exc: selfupdate.UpdateError) -> None:
+        payload = {"type": "error", "code": exc.code, "message": exc.message}
+        if exc.rolled_back:
+            payload["rolledBack"] = True
+        self._reply(msg, payload)
+
+    def _busy(self, msg: dict) -> bool:
+        if self.runner.running:
+            self._error(msg, "busy", "下載進行中，請等下載結束再更新")
+            return True
+        return False
+
+    def _on_update_check(self, msg: dict) -> None:
+        try:
+            files = selfupdate.validate_files(msg.get("files"))
+        except selfupdate.UpdateError as exc:
+            self._update_error(msg, exc)
+            return
+        changed = selfupdate.changed_files(self.home / "host", files)
+        self._reply(msg, {"type": "update_status", "changed": changed, "total": len(files)})
+
+    def _on_update_stage(self, msg: dict) -> None:
+        if self._busy(msg):
+            return
+        commit, files = msg.get("commit"), msg.get("files")
+
+        def work() -> None:
+            try:
+                count = selfupdate.stage(self.home, commit, files)
+            except selfupdate.UpdateError as exc:
+                self._update_error(msg, exc)
+                return
+            except Exception as exc:
+                self._error(msg, "internal", f"更新失敗：{exc}")
+                return
+            self._reply(msg, {"type": "update_staged", "count": count})
+
+        self._background(work)
+
+    def _on_update_commit(self, msg: dict) -> None:
+        if self._busy(msg):
+            return
+        try:
+            count = selfupdate.commit_update(self.home)
+        except selfupdate.UpdateError as exc:
+            self._update_error(msg, exc)
+            return
+        self._reply(msg, {"type": "update_applied", "count": count})
+
+    def _on_update_rollback(self, msg: dict) -> None:
+        try:
+            selfupdate.rollback_update(self.home)
+        except selfupdate.UpdateError as exc:
+            self._update_error(msg, exc)
+            return
+        self._reply(msg, {"type": "update_rolled_back"})
 
     def _on_update_engine(self, msg: dict) -> None:
         if not self._engine_present():
