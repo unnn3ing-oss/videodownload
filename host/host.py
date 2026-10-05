@@ -13,9 +13,9 @@ from jobs import JobRunner
 from protocol import BadMessage, ProtocolError, read_message, write_message
 from quality import parse_quality
 from security import is_allowed_url
+from version import VERSION
 from ytdlp import Engine, ResolveError, resolve, run_capture
 
-HOST_VERSION = "0.1.0"
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine"}
 MAX_LIMIT = 1000
 
@@ -63,7 +63,7 @@ class Host:
         return out.strip() if code == 0 and out.strip() else None
 
     def ready_message(self) -> dict:
-        return {"type": "ready", "hostVersion": HOST_VERSION, "ytdlpVersion": self._version(),
+        return {"type": "ready", "hostVersion": VERSION, "ytdlpVersion": self._version(),
                 "ffmpegOk": self.engine.ffmpeg_dir is not None,
                 "jsRuntimeOk": self.engine.js_runtime is not None,
                 "outputDir": str(self.config.output_dir)}
