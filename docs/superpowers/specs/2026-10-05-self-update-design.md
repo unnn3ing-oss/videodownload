@@ -2,131 +2,122 @@
 
 日期：2026-10-05
 狀態：待使用者審閱
-前置文件：`2026-10-04-youtube-batch-downloader-design.md`（本文件擴充其第 4、5、7 節）
+前置文件：`2026-10-04-youtube-batch-downloader-design.md`（本文件擴充其第 4、5 節）
 
 ## 1. 目的與已確認的決定
 
-**先釐清**：影片下載仍然完全在使用者自己的電腦上執行（Chrome → 本機小程式 → yt-dlp → YouTube），GitHub 不參與。本文件的 GitHub 只用來存放「工具本身的更新包」，GitHub Actions 只在維護者發新版時於 GitHub 伺服器上打包與簽章，使用者的電腦不會用到；更新時本機小程式只下載更新包，不上傳任何東西。
+**先釐清**：影片下載仍然完全在使用者自己的電腦上執行（Chrome → 本機小程式 → yt-dlp → YouTube），GitHub 不參與。本文件的 GitHub 只用來存放「工具本身的程式碼」，更新時只下載檔案，不上傳任何東西。
 
-**目的**：側邊面板能顯示目前版本、發現新版時提示，並讓使用者按一下就更新擴充功能與本機小程式，不必重新下載資料夾。
+**目的**：側邊面板能顯示更新狀態，發現新版時提示，並讓使用者按一下就更新擴充功能與本機小程式，不必重新下載資料夾。
 
 **使用者已確認**
-- 範圍：面板內一鍵更新整個工具（擴充功能 + host），失敗自動還原。
-- 更新來源：這個 repo（`unnn3ing-oss/videodownload`）的公開 GitHub Release；由使用者在 GitHub 設定中把 repo 改成公開。
-- 信任方式：更新包以 Ed25519 簽章，私鑰存在 GitHub Actions secret，公鑰內建在 host。
-- 發版方式：推版本標籤（`vX.Y.Z`）後，由 GitHub Actions 自動測試、打包、簽章、建立 Release。
+- 更新方式照使用者的「圖片套版產生器」（`QuickPatterntool`）：不用 Release、不用 GitHub Actions、不用簽章；擴充功能自己比對 GitHub 上的檔案，使用者只需選一次擴充功能資料夾，更新後自動重新載入。
+- 追蹤的不是 `main`，而是獨立的 `release` 分支：維護者把測試過的版本推到 `release`，同事才會收到更新，避免做到一半的程式碼直接送出。
+- repo 已經公開。
 
-**不在範圍**：自動（不經使用者按鈕）更新、Chrome 商店發佈、Linux、更新 yt-dlp（沿用既有的「更新下載引擎」）、由 Claude 代為公開 repo／建立標籤／建立 Release／設定 secret（這些是對外動作，由使用者親自執行）。
+**不在範圍**：Release／Actions／簽章、自動（不經使用者按鈕）套用更新、Chrome 商店、Linux、更新 yt-dlp（沿用既有的「更新下載引擎」）、由 Claude 代為建立或推送遠端的 `release` 分支（對外動作，由使用者決定與執行）。
 
-## 2. 為什麼要改安裝位置（已發現的限制）
+**參考的實際做法**（讀 `QuickPatterntool/updater.js` 與 `README.md` 得知，未實際執行）：向 GitHub 取得被追蹤分支最新 commit 的檔案清單與每個檔案的 git blob SHA → 與擴充功能自己目前的檔案比對 → 有差異的檔案才下載（網址固定在該 commit，內容不會變）→ 重新計算 blob SHA 確認與清單一致 → 以 File System Access API 寫回使用者選定的資料夾 → `chrome.runtime.reload()`。
 
-- 以「載入未封裝項目」安裝的擴充功能無法修改自己的檔案；host 也不知道擴充功能資料夾在哪裡。
-- 因此擴充功能必須放在 host 能寫入、且位置固定的資料夾：安裝檔把擴充功能一起安裝到 `<安裝目錄>/extension`（Windows：`%LOCALAPPDATA%\YTDownloader\extension`；Mac：`~/Library/Application Support/YTDownloader/extension`），使用者從那裡載入一次。
-- 擴充功能識別碼由 manifest 的 `key` 固定，從不同資料夾載入識別碼不變，Native Messaging 登錄不受影響。
+## 2. 與圖片套版產生器的差異（本專案多出來的部分）
 
-**對既有安裝檔的影響**：`build.py` 產生的安裝檔內嵌內容，除了 `host/*.py`，還要加入 `extension/**`（排除 `tests/` 與 `installers/`，避免安裝檔裡再包安裝檔）；安裝檔把它解到 `<安裝目錄>/extension` 並寫入 `managed.json`。因此從安裝目錄載入的擴充功能資料夾裡沒有安裝檔：此時「下載部署」與「重新下載安裝檔」改成在新分頁開啟 Release 頁面（`https://github.com/unnn3ing-oss/videodownload/releases/latest`），由使用者下載最新安裝檔。
+圖片套版只有擴充功能的 JS 檔，所以一次授權資料夾就夠了。本專案還有本機小程式（Python 檔案，裝在 `<安裝目錄>/host`），瀏覽器的資料夾授權寫不到那裡，所以：
 
-**第一次安裝流程（新）**：到 GitHub Release 頁面下載安裝檔 → 執行 → 從 `<安裝目錄>/extension` 載入未封裝項目 → 啟動。
+- **擴充功能的檔案**：由擴充功能自己更新（同圖片套版）。
+- **小程式的檔案**：由小程式自己更新（同樣的比對與驗證方法），擴充功能負責協調，讓兩邊一起完成。
+- 擴充功能不用搬家：維持目前的做法（從任何資料夾載入，「下載部署」按鈕用擴充功能內附的安裝檔），不需要新的安裝位置或標記檔。
 
-**已經用舊方式安裝的人（目前的測試版）**：搬一次家，改從 `<安裝目錄>/extension` 載入，之後就能一鍵更新。
+## 3. 發佈與初次安裝
 
-**如何判斷是否可更新**：安裝檔在 `<安裝目錄>/extension` 寫入 `managed.json`。擴充功能讀取自己的 `managed.json`：讀得到才表示是從安裝目錄載入，才開放更新；讀不到時，面板顯示「目前不是從安裝資料夾載入，無法自動更新。請改從 `<安裝目錄>/extension` 載入」（安裝目錄由 host 的 `ready` 訊息提供）。
+**發版（維護者）**：跑完測試後，把確定的 commit 推到遠端 `release` 分支（`git push origin <commit>:release`）。出貨前同步更新 `extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION`，兩者必須相同（測試強制）。已提交的安裝檔必須是最新的（既有測試已強制）。建議對 `release` 分支開啟 GitHub 分支保護（限制誰能推送），並對 GitHub 帳號啟用雙重驗證。
 
-## 3. 發佈
+**初次安裝（新同事）**：下載 `https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/release.zip` → 解壓縮 → 從 `extension` 資料夾載入未封裝項目 → 面板內「下載部署」→ 執行安裝檔 → 「啟動」。之後的更新全部在面板內完成。
 
-**更新包** `ytdl-update-X.Y.Z.zip`：
-- `release.json`：`{ "version": "X.Y.Z" }`
-- `host/*.py`（不含測試）
-- `extension/**`（不含 `tests/`、`installers/`）
+**追蹤設定**：擴充功能 `extension/lib/update-config.js` 與小程式 `host/update_config.py` 各有一份 `OWNER`、`REPO`、`BRANCH`（`release`），測試確保兩份一致。
 
-**Release 附件**：`ytdl-update-X.Y.Z.zip`、`ytdl-update-X.Y.Z.zip.sig`（對 zip 位元組的 Ed25519 簽章）、`install-windows.cmd`、`install-mac.zip`（給第一次安裝的人）。
+## 4. 比對規則
 
-**版本號**：`extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION` 必須相同，測試強制；標籤 `vX.Y.Z` 必須等於它們。
+- **擴充功能檔案**：repo 中 `extension/` 之下的檔案，去掉前綴後對應到擴充功能資料夾的相對路徑；排除 `extension/tests/`。包含 `extension/installers/`（讓「下載部署」取得的安裝檔也是最新的）。
+- **小程式檔案**：repo 中 `host/` 最上層的 `*.py`（檔名限 `^[A-Za-z0-9_]+\.py$`）；排除 `host/tests/`。
+- **相等判斷**：git blob SHA（`sha1("blob <位元組數>\0" + 內容)`）。文字檔另以換行正規化（CRLF → LF）再比一次，換行不同不算有差異（同圖片套版）。
+- **API 次數**：只有擴充功能呼叫 GitHub API（取得 commit 與檔案樹，每次檢查 2 次）；小程式不呼叫 API，改由擴充功能把小程式檔案的清單（路徑、SHA、大小）傳給它。避免辦公室多人共用同一個對外 IP 時超過未登入的每小時 60 次限制。下載檔案走 `raw.githubusercontent.com`（不受 API 次數限制）。
+- **檢查頻率**：背景以 `chrome.alarms` 每 6 小時檢查一次（只比對擴充功能檔案），有新版時工具列圖示顯示「新」；面板開啟時若距上次檢查超過 6 小時也會檢查；手動「檢查更新」不受限制。
 
-**發版流程（維護者）**：`python tools/bump_version.py X.Y.Z` → 提交 → 推標籤 `vX.Y.Z` → `.github/workflows/release.yml` 執行 pytest 與 JS 測試 → `tools/make_release.py` 打包並用 secret `UPDATE_SIGNING_KEY` 簽章 → 用 `gh release create` 建立 Release（`permissions: contents: write`）。
+## 5. 協定（擴充既有 Native Messaging 訊息）
 
-**金鑰**：`tools/gen_update_key.py` 在使用者本機產生金鑰對，印出私鑰（填入 GitHub secret）並把公鑰寫入 `host/update_key.py`。私鑰絕不進 repo，也不經過 Claude。在公鑰設定之前，`PUBLIC_KEY_HEX` 為空字串，host 拒絕更新並顯示「尚未設定更新金鑰」。
+**擴充功能 → 小程式**
+- `update_check { files: [{ path, sha, size }] }`：小程式回覆有差異的檔名。
+- `update_stage { commit, files: [{ path, sha, size }] }`：只傳有差異的檔案。小程式從 `https://raw.githubusercontent.com/<OWNER>/<REPO>/<commit>/host/<path>` 下載到 `<安裝目錄>/update/staging/`，逐一驗證 blob SHA，並做更新前自我檢查。
+- `update_commit {}`：把 staging 的檔案換進 `host/`，舊檔備份到 `<安裝目錄>/backup/host/`。
+- `update_rollback {}`：從備份還原。
 
-## 4. 協定（擴充既有 Native Messaging 訊息）
+**小程式 → 擴充功能**
+- `update_status { changed: [path], total }`
+- `update_staged { count }`
+- `update_applied { count }`：新程式碼已就位，下次啟動生效。
+- `update_rolled_back {}`
+- `error { code }` 新增代碼：`update_bad_file`（檔名不合規）、`update_download_failed`、`update_hash_mismatch`、`update_selfcheck_failed`、`update_install_failed`（含 `rolledBack: true`）、`update_nothing_staged`、`busy`（有下載工作進行中時拒絕）。
 
-**擴充功能 → host**
-- `check_update`
-- `apply_update`
+`ready` 訊息新增 `version`（小程式版本）。
 
-**host → 擴充功能**
-- `update_info { current, latest, available, notes, publishedAt }`：`notes` 為 Release 說明前 500 字，面板以純文字顯示。
-- `update_progress { stage: "download"|"verify"|"install", percent? }`
-- `update_applied { version }`：新程式碼已就位，需要重新載入擴充功能。
-- `error { code }` 新增代碼：`update_check_failed`、`no_release`、`update_key_missing`、`update_bad_signature`、`update_not_newer`、`update_bad_package`、`update_key_changed`、`update_selfcheck_failed`、`update_install_failed`（含 `rolledBack: true`）、`busy`（有下載工作進行中時拒絕更新）。
+## 6. 更新流程（面板的「更新到最新版」）
 
-`ready` 訊息新增 `version`（host 版本）與 `installDir`。
+1. **（使用者操作當下）取得資料夾**：若擴充功能檔案有差異，立即取得之前選過的資料夾；權限過期就重新要求；第一次則以 `showDirectoryPicker` 請使用者選擴充功能資料夾。選到的資料夾必須有 `manifest.json` 且名稱相同。這一步一定要在按鈕點擊後馬上做，過了瀏覽器的使用者操作時效就不能再叫出選擇視窗。
+2. 擴充功能下載有差異的檔案到記憶體，逐一驗證 blob SHA；任何一個不符就中止，不寫入任何東西。
+3. 小程式 `update_stage`：下載、驗證、自我檢查（以目前的 Python 直譯器在子行程中匯入 staging 的程式確認可載入）。失敗就中止，現有安裝不動。
+4. 小程式 `update_commit`：以逐檔 `os.replace` 換入，先備份舊檔；任何一步失敗就從備份還原並回報 `rolledBack: true`。
+5. 擴充功能把檔案寫進選定的資料夾。**`manifest.json` 最後寫**，且新的 `key` 必須與目前相同（識別碼不得改變，否則 Native Messaging 白名單失效，不相同就在第 2 步中止）。
+6. 寫入失敗：送出 `update_rollback` 還原小程式，並顯示錯誤。擴充功能檔案是逐檔比對的，重新按一次更新會從剩下的差異繼續，結果收斂。
+7. 全部成功：呼叫 `chrome.runtime.reload()`；舊的小程式行程隨連線關閉而結束，下次「啟動」使用新程式碼。
 
-**網路**：由 host 以 `urllib` 對 `https://api.github.com/repos/unnn3ing-oss/videodownload/releases/latest` 發出請求（附 User-Agent），只接受 HTTPS，使用系統憑證驗證，永不關閉憑證驗證。測試用途可以環境變數 `YTDL_UPDATE_API` 改指向本機假伺服器；即使被改指向，簽章驗證仍必須通過。
+**需要小程式在執行中**：更新必須在小程式已啟動時進行（要更新它的檔案）。未啟動時，面板只顯示「有新版本」並提示先按「啟動」。
 
-## 5. 更新流程（host 的 `apply_update`）
+**已知限制（如實說明）**：若新版通過自我檢查卻在實際啟動時失敗，擴充功能無法自行還原（壞掉的是小程式本身）。處理方式：把 `backup/host/` 的檔案手動複製回 `host/`，或重新執行安裝檔，README 會說明。
 
-1. 下載 zip 與 `.sig` 到 `<安裝目錄>/update/`（大小上限 50 MB）。
-2. **驗簽**：用內建公鑰驗證 `.sig` 對 zip 位元組的 Ed25519 簽章。失敗即中止。
-3. **檢查 zip 安全**：只允許 `release.json`、`host/`、`extension/` 三個最上層項目；拒絕絕對路徑、`..`、符號連結；檔案數量與解壓後大小設上限。
-4. **檢查版本**：`release.json` 的版本必須等於 Release 標籤，且嚴格大於目前版本（拒絕重放舊的已簽包與降版）。
-5. 解壓到 `<安裝目錄>/update/staging/`。
-6. **更新前自我檢查**：`manifest.json` 為合法 JSON，且 `key` 與目前相同（識別碼不得改變，否則 Native Messaging 白名單會失效）；用目前的 Python 直譯器在子行程中匯入 staging 的 host 確認可載入。
-7. **替換**：把現有 `host/` 與 `extension/` 移到 `<安裝目錄>/backup/<目前版本>/`，再把 staging 的對應資料夾移進來。整個資料夾改名失敗時（例如 Windows 檔案被占用），改成逐檔覆蓋；任何一步失敗都從備份還原並回報 `rolledBack: true`。
-8. 只保留上一版的備份；清除 staging。
-9. 回報 `update_applied`。面板隨即呼叫 `chrome.runtime.reload()`；舊 host 行程在連線關閉後結束，下次啟動使用新程式碼。
+## 7. 側邊面板
 
-**已知限制（如實說明）**：若新版通過自我檢查卻在實際啟動時失敗，擴充功能無法自行還原（損壞的是 host 本身）。處理方式：重新執行最新的安裝檔，或把 `backup/<版本>/` 的內容手動複製回去，README 會說明。
+- 標題旁：有新版時顯示「有新版本」徽章，點擊捲到更新卡片。
+- 「設定與工具」新增「版本與更新」區：目前版本、最新版本的日期與說明（commit 訊息第一行）、`檢查更新`、有新版時的 `更新到最新版`（第一次顯示「選擇擴充功能資料夾並更新」）、進度文字（下載、驗證、寫入）。
+- 有下載工作進行中、或小程式未啟動時停用更新鈕並說明原因。
+- 所有來自 GitHub 的文字一律以 `textContent` 顯示。
+- 新增權限：`alarms`；host 權限新增 `https://api.github.com/*`、`https://raw.githubusercontent.com/*`。
 
-## 6. 側邊面板
-
-- 標題旁：有新版時顯示「有新版本 vX.Y.Z」徽章，點擊捲到更新卡片。
-- 「設定與工具」新增「版本與更新」區：目前版本、最新版本、`檢查更新`、有新版時的 `立即更新` 與更新說明。
-- 自動檢查：面板開啟且已啟動時檢查，兩次之間至少間隔 6 小時（時間戳存在 `chrome.storage.local`）；手動按鈕不受限制。
-- 更新中：顯示「下載中 → 驗證中 → 安裝中 → 重新載入中」；有下載工作進行中時停用更新鈕。
-- 擴充功能無法確認自己是否來自安裝目錄時，不顯示 `立即更新`，改顯示第 2 節的搬家提示。
-- 所有來自 Release 的文字（版本、說明）一律以 `textContent` 顯示。
-
-## 7. 安全
+## 8. 安全
 
 | 威脅 | 對策 |
 |---|---|
-| Release 檔案被竄改、網路中間人 | Ed25519 簽章驗證；公鑰內建 |
-| 重放舊的已簽包、降版 | 版本必須與標籤相同且嚴格大於目前版本 |
-| 惡意 zip（路徑逃逸、符號連結） | 路徑與類型白名單、數量與大小上限 |
-| 更新後識別碼改變導致連不上 | 自我檢查要求 manifest `key` 不變 |
-| 把更新來源導向其他伺服器 | 倉庫與網域固定；就算改 API 位址，沒有簽章仍會被拒 |
-| 憑證驗證失敗（例如部分 Mac 的 Python） | 顯示明確錯誤與處理說明；永不關閉驗證 |
+| 下載內容損毀或與清單不一致 | 重新計算 git blob SHA，與清單比對；任何不符就整個中止 |
+| 惡意檔名（路徑逃逸） | 擴充功能端：只寫入選定資料夾之內，拒絕絕對路徑、`..`、`.git`；小程式端：檔名白名單 `^[A-Za-z0-9_]+\.py$`、只換入 `host/` 最上層 |
+| 更新後識別碼改變導致連不上 | `manifest.json` 的 `key` 不得改變 |
+| 更新後小程式無法載入 | 換入前在子行程中匯入驗證 |
+| 寫到別的資料夾 | 選取的資料夾必須有同名的 `manifest.json` |
+| 有人把更新來源改指向別處 | 倉庫、分支、網域寫死在程式碼中，不接受訊息或設定覆蓋 |
 
-**殘餘風險（使用者已選擇的方案）**：私鑰存在 GitHub Actions secret。能修改 workflow 或取得 secret 的人（例如 GitHub 帳號被盜）仍可簽出惡意更新。若要排除這個風險，需改為離線簽章（每次發版多一步手動操作）。
+**殘餘風險（與圖片套版產生器相同的信任程度）**：能推送到 `release` 分支的人（例如 GitHub 帳號被盜），就能影響所有同事的電腦；沒有簽章可擋。對策是分支保護與雙重驗證（見第 3 節），而不是程式碼。
 
-**Python 標準函式庫沒有 Ed25519**：驗證端以純 Python 實作 RFC 8032 的簽章驗證（約 60 行，只做驗證不做簽章），以官方測試向量與 `cryptography` 套件產生的簽章交叉驗證。簽章端（只在 CI 與測試）使用 `cryptography`。
-
-## 8. 測試與驗證
+## 9. 測試與驗證
 
 **可在開發環境測試**
-- Ed25519 驗證：RFC 8032 官方測試向量；與 `cryptography` 隨機產生的金鑰、訊息交叉驗證；竄改訊息、竄改簽章、長度錯誤皆被拒。
-- 版本比較、標籤與版本一致性。
-- zip 安全檢查：`..`、絕對路徑、符號連結、非預期最上層項目、過大。
-- 更新流程整合測試（本機 HTTP 假伺服器模擬 GitHub API 與附件）：成功替換並留下備份；錯誤簽章、版本不更新、`key` 被改、新 host 無法匯入、替換中途失敗，皆不留下半套檔案且已還原。
-- `make_release.py`：zip 內容、簽章可被 host 驗證、版本一致性檢查。
-- 面板端對端測試（假更新伺服器）：出現徽章與說明、更新進度、`update_applied` 後擴充功能重新載入、非安裝目錄時顯示搬家提示。
+- 擴充功能端（node）：git blob SHA（已知向量）、換行正規化、路徑對應與排除規則、拒絕不安全路徑、以假的 GitHub 回應計算差異、以記憶體中的假資料夾測試套用（驗證失敗時不寫入任何檔案、`manifest.json` 最後寫入、重試會收斂、`key` 改變被拒）。
+- 小程式端（pytest）：blob SHA、檔名白名單、以本機 HTTP 假伺服器模擬 raw 下載；雜湊不符、下載失敗、自我檢查失敗皆不改動現有檔案；換入、備份、還原；有下載工作進行中時拒絕；JS 與 Python 兩份追蹤設定一致；版本號一致。
+- 面板端對端（無頭 Chromium）：以 `context.route` 攔截 GitHub 請求，並用瀏覽器的私有檔案系統（OPFS）代替「選到的資料夾」，驗證徽章、檢查、更新進度、更新後呼叫重新載入。
 
 **無法在開發環境驗證（需要使用者）**
-- 真實 GitHub Actions 的執行、真實 Release 的建立與下載。
-- Windows／Mac 真機上的資料夾替換與檔案占用行為。
+- 真實 GitHub 的比對與下載（尚未有 `release` 分支）。
+- 真實的資料夾選擇視窗：Chrome 會拒絕某些系統資料夾（例如磁碟根目錄、使用者的「下載」「文件」資料夾本身），擴充功能放在這些位置時無法授權，需要搬到一般子資料夾。
+- Windows／Mac 真機上的檔案替換與占用行為。
 - Chrome 在真機上重新載入未封裝擴充功能。
 
-## 9. 使用者要做的一次性設定
+## 10. 使用者要做的一次性設定
 
-1. 在 GitHub 把 repo 改成公開。
-2. 在本機執行 `python tools/gen_update_key.py`，把印出的私鑰設為 repo secret `UPDATE_SIGNING_KEY`，並提交寫入的公鑰。
-3. 推第一個版本標籤，確認 Release 與附件出現。
-4. 依 README 冒煙測試：從新安裝檔安裝 → 發一個更高版本 → 面板一鍵更新。
+1. 決定哪個 commit 是第一個正式版本（目前功能還在 `claude/youtube-video-downloader-4gvj18` 分支，尚未合併到任何預設分支），並推送成遠端 `release` 分支。
+2. 對 `release` 分支開啟分支保護、對 GitHub 帳號啟用雙重驗證（建議）。
+3. 依 README 冒煙測試：從 `release.zip` 安裝 → 推一個更高版本到 `release` → 面板檢查更新、一鍵更新。
 
-## 10. 成功標準
+## 11. 成功標準
 
-1. 從 Release 的安裝檔安裝後，擴充功能能從 `<安裝目錄>/extension` 載入並正常運作。
-2. 發佈更高版本後，面板在開啟時顯示新版本徽章與說明；按「立即更新」後，擴充功能與 host 都換成新版並重新載入。
-3. 簽章錯誤、版本不更新、識別碼被改、新版無法匯入、替換中途失敗的更新都不會改動現有安裝。
+1. 從 `release.zip` 初次安裝後，擴充功能與小程式都能正常運作。
+2. 維護者推新版本到 `release` 後，工具列圖示與面板在 6 小時內（或按「檢查更新」立即）顯示有新版本；按「更新到最新版」後，擴充功能與小程式都換成新版並重新載入。
+3. 雜湊不符、檔名不合規、識別碼被改、新版小程式無法載入、替換中途失敗的更新，都不會改動現有安裝，或能完整還原。
 4. 有下載工作進行中時不會更新。
-5. 第 8 節標明的「無法在開發環境驗證」的項目，由使用者依第 9 節冒煙測試確認，開發端不宣稱已驗證。
+5. 第 9 節標明「無法在開發環境驗證」的項目，由使用者依第 10 節冒煙測試確認，開發端不宣稱已驗證。
