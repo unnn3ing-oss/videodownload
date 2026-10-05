@@ -84,7 +84,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 **下載封面（依連線狀態分兩層）**
 - 封面是 `<button>`：滑鼠移過（或鍵盤聚焦）時縮圖反灰並出現下載符號，點擊即下載，不影響整列。觸控裝置不顯示 hover，改為封面角落常駐一個小下載符號。
-- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，用背景程式的 `HEAD` 請求找出第一個存在的（YouTube 並非每支影片都有最高解析度，會自動退而求其次），再由**背景程式（Chrome 的網路）下載圖片位元組**（上限 8 MiB），以新訊息 `save_cover` 交給本機小程式，由小程式寫進**影片的存放資料夾**。小程式不自己連網，避免 Python 在 macOS 憑證、公司網路或代理下失敗。
+- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，依序以 `GET` 請求，取第一個回應成功、檔頭為 JPEG 且不超過 8 MiB 的（YouTube 並非每支影片都有最高解析度，會自動退而求其次），再由**背景程式（Chrome 的網路）下載圖片位元組**（上限 8 MiB），以新訊息 `save_cover` 交給本機小程式，由小程式寫進**影片的存放資料夾**。小程式不自己連網，避免 Python 在 macOS 憑證、公司網路或代理下失敗。
 - 需要新增 `https://i.ytimg.com/*` 的 `host_permissions`。本機小程式未連線時提示「請先連線本機小程式」；找不到任何封面時提示「找不到封面圖片」。
 - **檔名規則**（`naming.py` 新增 `cover_name`）：
   1. 取影片標題，先去掉所有標點符號、符號與空白（Unicode 類別 P、S、Z），再取**前六個字**（以字元計，中英文都算一個字）。例如「颱風假放不放？氣象署最新預測」→「颱風假放不放」；「【獨家】直擊跨年」→「獨家直擊跨年」；不足六字就全取；去完是空的則改用影片 ID。
@@ -165,8 +165,8 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 ## 9. 尚未驗證（需使用者在真實環境確認）
 
 - 真實 YouTube 的下載與冷卻效果、`duration` 欄位是否存在、說明欄的 hashtag 是否完整取得。
-- 各影片實際有哪一種封面尺寸（最高解析度不一定存在）；`i.ytimg.com` 的 `HEAD` 與圖片下載在真實 Chrome 的行為。
-- 擴充功能安裝後的內容腳本注入、網頁是否免重新整理即偵測。
+- 各影片實際有哪一種封面尺寸（最高解析度不一定存在）；`i.ytimg.com` 的圖片下載在真實 Chrome 的行為。
+- 擴充功能安裝或重新載入後，對已開啟網頁的內容腳本注入、網頁是否免重新整理即偵測。自動測試只驗證了注入函式的邏輯與「重複注入不會讓回應加倍」；用 `--load-extension` 載入的擴充功能呼叫 `chrome.runtime.reload()` 後，這個 Chromium 會把它停用，無法端對端測試重新載入。
 - GitHub Pages 實際啟用後的網址與行為；Chrome 資料夾選擇器的限制。
 - 背景程式在長時間下載中是否持續存活（原生連線通常會維持其存活，屬推論）。
 
