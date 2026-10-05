@@ -1,0 +1,142 @@
+# 批量下載清單與網頁版 設計規格
+
+日期：2026-10-05　狀態：待使用者審閱
+
+## 1. 目標與已確認事項
+
+**目標**：把「貼網址 → 預覽 → 開始下載」改成「增加 → 排隊 → 依序下載」的批量清單，並提供與側邊面板同一份清單的網頁版（放在 GitHub Pages）。
+
+**使用者已確認**
+- 介面採設計稿 **C「控制台」**（左側設定流程＋右側密集清單）；側邊面板一起改。
+- 按「增加」就在下方清單多一欄，欄位有預抓好的**影片標題**、**影片封面**、**X（從清單刪除）**。
+- 「開始全部下載」依**加入順序（最早到最晚）**一支一支下載；每支之間有**冷卻間隔**；**即時進度**顯示在該支的欄位內。
+- 網頁版要有「部署到 Chrome 插件」按鈕（照 QuickPatterntool）。部署完成後自動偵測並連線。
+- 預設值：下載途中新增的影片自動接在後面；冷卻間隔預設 10 秒；拿掉「單支影片自訂檔名」欄位（檔名固定為影片標題）。
+- 影片下載仍完全在使用者自己的電腦上（Chrome → 本機小程式 → yt-dlp → YouTube），GitHub 與網頁伺服器不參與。
+
+**不在範圍**：每支重新命名、拖曳排序、單支暫停／續傳、同時多支下載（一律依序）、登入或 cookies、Chrome 以外的瀏覽器。
+
+## 2. 架構：一份清單，三個畫面
+
+```
+網頁版 ──postMessage──▶ bridge.js(內容腳本) ──▶┐
+側邊面板 ─────────runtime.sendMessage────────▶ background.js(清單的唯一保管者) ──native──▶ host.py ─▶ yt-dlp
+                         ◀── queue_state 廣播 ──┘                                   ◀── 事件 ──┘
+```
+
+- **background.js** 保管清單（`chrome.storage.local` 的 `queue`，節流寫入），處理「增加、移除、重試、開始、停止、設定」，把本機小程式的事件翻成清單狀態，再廣播給所有畫面。
+- **側邊面板與網頁版**只是兩個畫面：看到同一份清單與進度；關閉任何一個都不影響下載。
+- 清單邏輯是純函式（`extension/lib/queue.js`），可單元測試；background 只負責接線與持久化。
+- 本機小程式負責「依序下載＋冷卻」（見 §4），因此即使畫面關閉、背景程式休眠，一次下載工作仍會跑完。
+
+### 清單狀態
+
+```
+queue = {
+  items: [{ uid, id, url, title, duration|null, status, percent, speed, eta, file, height, error }],
+  running: boolean,
+  settings: { quality: 720|1080, cooldownSec: 3..60 (預設 10), limit: 1..1000 (預設 50) },
+  cooldown: { until: epochMs, nextId } | null,
+}
+status ∈ fetching | waiting | downloading | done | skipped | failed
+```
+- 「冷卻中」不是獨立狀態：`cooldown.nextId` 指到的那一支顯示「冷卻中，N 秒後開始」。
+- 封面不存檔：`https://i.ytimg.com/vi/<id>/mqdefault.jpg`，由畫面用 `<img>` 直接載入。
+- 啟動時還原：背景程式重啟後，`downloading` 的項目退回 `waiting`（本機小程式隨之結束，下載會中止，重按開始即可從中斷處續傳）。
+
+### 畫面 → 背景的訊息（兩個畫面共用）
+
+`queue_get`、`queue_add {url}`、`queue_remove {uid}`、`queue_retry {uid}`、`queue_start`、`queue_stop`、`settings_set {quality?, cooldownSec?, limit?}`；既有的 `start`（連線本機小程式）、`set_output_dir` 保留。背景程式廣播 `queue_state`（完整狀態，最多每 200 ms 一次）與既有的 `status`。
+
+## 3. 增加、刪除、重試
+
+- **增加**：背景程式立刻插入一列 `fetching`（骨架動畫），送 `resolve` 給本機小程式；回來後把該列換成實際的項目：單一影片 → 一列；播放清單或頻道 → 依 `limit` 展開成多列。已在清單的影片 ID（失敗的除外）不重複加入，並提示「已在清單中」。解析失敗 → 該列變 `failed`（顯示原因，可刪可重試）。
+- **標題與時長**：沿用 `resolve`；本機小程式額外回傳 `duration`（秒，抓不到則為 null）。
+- **刪除（X）**：
+  - 等待中／已完成／失敗 → 直接從清單移除。
+  - 正在下載中 → 只中止**這一支**，工作繼續下一支（先冷卻）。
+  - 執行中被移除的等待項目，也要從本機小程式的待辦移除（新訊息 `remove`，§4）。
+- **重試**：失敗的列有「重試」，把它改回 `waiting`（執行中則同時 `enqueue`）。
+
+## 4. 下載、冷卻與進度（本機小程式）
+
+沿用既有 `download` 工作，做以下變更（本機小程式版本升為 0.2.0）：
+
+| 訊息 | 說明 |
+|---|---|
+| `download { items, quality, cooldownSec }` | `cooldownSec`（0–300，缺省 2 以相容舊版）。每支「實際下載」之間等待冷卻；已下載過而略過的不冷卻。等待可被取消。 |
+| `enqueue { items }` | 工作執行中，把新項目接到待辦尾端，回 `enqueued { count }`；沒有執行中的工作則回 `error not_running`，背景程式改送 `download`。 |
+| `remove { itemId }` | 待辦中 → 移除；正在下載 → 只取消那一支並繼續；回 `removed`。 |
+| `cancel`（既有） | 取消整個工作；背景程式把尚未完成的項目退回 `waiting`。 |
+
+新事件：`cooldown { jobId, seconds, nextId }`（開始冷卻時送一次，畫面自己倒數）、`item_removed { itemId }`。既有的 `started`、`progress`、`item_done`、`item_failed`、`done` 不變。
+
+實作要點：`JobRunner` 改用待辦佇列（加鎖），工作結束的判定與 `enqueue` 互斥，避免「剛好結束時新增」的競態；每支下載有自己的取消旗標，整體取消同時觸發。
+
+背景程式的對應：
+- `queue_start`：把所有 `waiting` 依序送出 `download`；`started` 後 `running = true`。
+- `progress` → 該列 `downloading`＋百分比、速度、剩餘時間；`item_done` → `done`（`skipped` 則顯示「已下載過」）；`item_failed` → `failed`＋原因；`cooldown` → 設定 `queue.cooldown`；`done` → `running = false`、`cooldown = null`。
+- 執行中新增 → `enqueue`；收到 `not_running` → 改送 `download`。
+- 本機小程式版本低於 0.2.0（沒有冷卻與 `enqueue`）時，畫面提示「請先更新本機小程式」，並停用開始（更新機制已會一併更新）。
+
+## 5. 網頁版
+
+**位置**：repo 根目錄 `index.html` ＋ `web/`（樣式與腳本）＋ `.nojekyll`，以 GitHub Pages 從 `main` 根目錄發佈：`https://unnn3ing-oss.github.io/videodownload/`。啟用 Pages 由使用者在 repo Settings → Pages 操作一次。
+
+**版面**：設計稿 C。左側「設定流程」時間軸（4 步）＋「下載設定」（解析度、冷卻間隔、存放資料夾、展開上限）；右側「增加」輸入列＋清單（共幾支、完成、速度、剩餘；冷卻中顯示「N 秒後開始第 X 支」）。窄螢幕時側欄移到上方。
+
+**與擴充功能的橋接**（不使用 `externally_connectable`，避免網頁已開啟時裝擴充功能還要重新整理）：
+- 擴充功能新增內容腳本 `bridge.js`，只注入 `https://unnn3ing-oss.github.io/videodownload/*`；`host_permissions` 加入該網址，新增 `scripting` 權限。
+- 擴充功能安裝／重新載入（`onInstalled`）時，用 `chrome.scripting.executeScript` 把 `bridge.js` 注入已開啟的符合分頁，網頁不需重新整理（此行為為推論，需在真的 Chrome 驗證；若不成立，網頁偵測到橋接遺失時提示「請重新整理」）。
+- 網頁 ↔ `bridge.js`：`window.postMessage`，檢查 `event.source === window` 與來源網址；`bridge.js` 只轉送白名單：`ping`、`queue_*`、`settings_set`、`start`、`set_output_dir`、`deploy_installer`，其餘一律丟棄（`update_*` 只限側邊面板）。
+- `bridge.js` 對背景程式開一條長連線（`chrome.runtime.connect`），背景程式把 `queue_state` 與 `status` 推給它，再轉給網頁。
+- 信任模型：能控制 Pages 網址內容的人 ＝ 能推 `main` 的人，與自動更新相同；不接受 localhost 或其他來源。
+
+**部署流程（網頁自動偵測）**：
+1. 部署擴充功能（QuickPatterntool 做法）：「選擇資料夾並寫入」— 網頁用 GitHub API 取得 `main` 的檔案樹，逐檔以 blob SHA 驗證後寫入所選的**空資料夾或已是此擴充功能的資料夾**，`manifest.json` 最後寫入；或「改下載 ZIP」。沿用 `extension/lib` 的 `update-rules`、`gitsha`、`updater`（下載與驗證）。
+2. 在 Chrome 載入：說明＋「複製 chrome://extensions」。網頁每 2 秒送 `ping`，擴充功能一出現就自動打勾。
+3. 部署本機小程式：「下載安裝檔」→ 網頁送 `deploy_installer`，由背景程式依系統下載內建安裝檔（與側邊面板的「下載部署」共用同一段程式）。
+4. 連線：偵測到擴充功能後，網頁每 3 秒自動送 `start` 嘗試連線本機小程式；安裝完成後即自動變成「已連線」，不必按「啟動」（按鈕保留為備用）。側邊面板開啟時也自動嘗試連線一次。
+
+未連線時，「增加」仍可用（清單會標示「等待連線」），但「開始全部下載」停用並說明原因。
+
+## 6. 側邊面板
+
+- 以相同的清單列（較窄：封面 88 px）取代現有「網址框＋預覽＋進度清單」；保留「目前分頁 → 加入」、狀態徽章、設定與工具、版本與更新。
+- 拿掉：單支檔名欄位、「最多下載 N 支」輸入列（改在設定裡）、先前的預覽流程與 `viewRows`／`resolved` 邏輯；`progress.js` 的 `seedProgress`／`previewItems` 刪除，`overallProgress` 視需要保留。
+
+## 7. 錯誤與邊界
+
+- 沒有網路／YouTube 要求登入等：沿用既有的失敗原因文字，顯示在該列。
+- 本機小程式中途斷線：`running = false`，未完成項目退回 `waiting`，畫面顯示「連線中斷」。
+- 同一支影片重複貼：不重複加入。
+- 網址不是 YouTube：輸入列下方顯示錯誤，不加入。
+- 清單上限 500 列；超過時拒絕新增並提示。
+
+## 8. 測試
+
+- **單元（node）**：`queue.js`——增加與去重、解析展開、事件對應（進度、完成、略過、失敗、冷卻、結束）、開始的內容與順序、停止、移除（含下載中）、重試、重啟還原、清單上限。
+- **本機小程式（pytest）**：冷卻（含可取消、略過不冷卻）、`enqueue`（含與結束的競態）、`remove`（待辦／下載中）、`resolve` 回傳 `duration`、舊參數相容。
+- **端對端（Playwright，沿用既有慣例）**：
+  - 側邊面板：增加 → 骨架 → 標題與封面出現；刪除；開始 → 依序下載、冷卻倒數、列內進度；下載途中新增與刪除。
+  - 網頁版（以 route 攔截讓本地檔案充當 Pages 網址）：偵測擴充功能、重新載入擴充功能後不需重新整理即重新連線、與側邊面板看到同一份清單、部署流程（OPFS 當資料夾、假的 GitHub）、窄寬度無橫向捲動。
+  - 假的下載引擎（`stub_ytdlp.py`）擴充：依網址的 `v=` 回傳不同影片 ID 與標題。
+
+## 9. 尚未驗證（需使用者在真實環境確認）
+
+- 真實 YouTube 的下載與冷卻效果、`duration` 欄位是否存在。
+- 擴充功能安裝後的內容腳本注入、網頁是否免重新整理即偵測。
+- GitHub Pages 實際啟用後的網址與行為；Chrome 資料夾選擇器的限制。
+- 背景程式在長時間下載中是否持續存活（原生連線通常會維持其存活，屬推論）。
+
+## 10. 使用者一次性設定
+
+1. 在 GitHub repo 的 Settings → Pages，來源選 `main` 分支、根目錄。
+2. 驗收後，把功能分支併入 `main`，同事即可由網頁版或 `main.zip` 取得，既有安裝者從面板更新。
+
+## 11. 成功標準
+
+1. 在側邊面板與網頁版按「增加」，清單出現含標題與封面的新列；X 可刪除。
+2. 開始後依加入順序下載，欄位內即時顯示進度，每支之間依設定冷卻並顯示倒數。
+3. 兩個畫面同時開啟時，清單與進度一致；關閉任一畫面不中斷下載。
+4. 網頁版部署完成後，不需手動操作即顯示已連線。
