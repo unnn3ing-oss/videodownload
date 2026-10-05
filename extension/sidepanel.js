@@ -5,9 +5,9 @@ import { createRequestIds } from "./lib/ids.js";
 import { itemMeta } from "./lib/format.js";
 import { classifyTabUrl } from "./lib/page.js";
 import { overallProgress, previewItems, seedProgress } from "./lib/progress.js";
-import { UpdateError, checkLatest, runUpdate } from "./lib/updater.js";
+import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
-import { getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
+import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -456,6 +456,8 @@ async function applyUpdate() {
       hostChanged,
       getFolder: () => getFolder(name),
       pickFolder: () => pickFolder(name),
+      proveFolder: proveLoadedFolder,
+      forgetFolder,
       hostApi: {
         stage: (commit, files, contents) => hostUpdateRequest({ type: "update_stage", commit, files, contents }),
         commit: () => hostUpdateRequest({ type: "update_commit" }),

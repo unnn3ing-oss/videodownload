@@ -139,6 +139,31 @@ export async function verifyFolder(dir, expectedName) {
   if (name !== expectedName) throw new UpdateError(`這個資料夾不是「${expectedName}」的擴充功能資料夾`);
 }
 
+// Several unzipped copies of the extension can carry the same name. An unpacked extension is served from
+// its own folder, so a probe file written into the chosen folder is readable at its URL only in the loaded copy.
+export async function proveLoadedFolder(dir, { fetchFn = fetch, getUrl = (path) => chrome.runtime.getURL(path) } = {}) {
+  const name = `ytdl-probe-${crypto.randomUUID()}.txt`;
+  const token = crypto.randomUUID();
+  const wrong = new UpdateError("這個資料夾不是目前載入的擴充功能資料夾（可能有多份解壓縮的副本）。請到 chrome://extensions 查看載入的位置，再選擇那個資料夾");
+  try {
+    try {
+      const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
+      await writable.write(new TextEncoder().encode(token));
+      await writable.close();
+    } catch (error) {
+      throw new UpdateError(`無法寫入所選資料夾：${error.message}`);
+    }
+    let served = null;
+    try {
+      const response = await fetchFn(getUrl(name), { cache: "no-store" });
+      if (response.ok) served = await response.text();
+    } catch { /* not readable: handled below */ }
+    if (served !== token) throw wrong;
+  } finally {
+    await dir.removeEntry(name).catch(() => {});
+  }
+}
+
 async function writeOne(dir, path, bytes) {
   try {
     const parts = path.split("/");
@@ -168,13 +193,21 @@ export async function writeFiles(dir, downloads, onProgress = () => {}) {
 // Order matters: nothing local changes until every download is verified; the host is swapped before
 // the extension files so a failed write can still roll the host back.
 export async function runUpdate({
-  info, hostChanged = [], getFolder, pickFolder, fetchFn = fetch, hostApi, reload, currentKey, expectedName,
+  info, hostChanged = [], getFolder, pickFolder, proveFolder = null, forgetFolder = null, fetchFn = fetch, hostApi, reload, currentKey, expectedName,
   onProgress = () => {}, repo = UPDATE_REPO,
 }) {
   let dir = null;
   if (info.extChanged.length > 0) {
     dir = (await getFolder()) ?? (await pickFolder());
     if (!dir) throw new UpdateError("尚未選擇擴充功能資料夾");
+    if (proveFolder) {
+      try {
+        await proveFolder(dir);
+      } catch (error) {
+        await forgetFolder?.();
+        throw error;
+      }
+    }
   }
   const downloads = dir ? await downloadAll(info.extChanged, { sha: info.sha, repo, fetchFn, onProgress }) : [];
   assertSameKey(downloads, currentKey);

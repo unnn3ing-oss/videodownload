@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { gitBlobSha } from "../lib/gitsha.js";
 import {
-  UpdateError, assertSameKey, checkLatest, downloadAll, runUpdate, shouldCheck, verifyFolder, writeFiles,
+  UpdateError, assertSameKey, checkLatest, downloadAll, proveLoadedFolder, runUpdate, shouldCheck, verifyFolder, writeFiles,
 } from "../lib/updater.js";
 import { summarizeCheck } from "../lib/update-state.js";
 
@@ -51,6 +51,7 @@ function fakeDir({ files = {}, failOn = null, onWrite = () => {} } = {}) {
         },
       };
     },
+    async removeEntry(name) { store.delete(prefix + name); },
     async getDirectoryHandle(name) { dirs.add(prefix + name); return make(`${prefix}${name}/`); },
   });
   return { ...make(""), store, dirs };
@@ -166,6 +167,26 @@ test("writeFiles writes manifest.json last and creates directories", async () =>
   await assert.rejects(writeFiles(fakeDir(), [{ path: "../evil.js", bytes: enc("x") }]), /不安全/);
 });
 
+// The extension is served from the folder it was loaded from: a probe written there must be readable at its own URL.
+test("proveLoadedFolder accepts the loaded folder and removes its probe", async () => {
+  const dir = fakeDir();
+  const served = async (url) => {
+    const name = new URL(url).pathname.slice(1);
+    return dir.store.has(name) ? { ok: true, text: async () => dir.store.get(name) } : { ok: false, status: 404 };
+  };
+  await proveLoadedFolder(dir, { fetchFn: served, getUrl: (name) => `chrome-extension://x/${name}` });
+  assert.equal(dir.store.size, 0);
+});
+
+test("proveLoadedFolder rejects another copy of the folder and still removes its probe", async () => {
+  const dir = fakeDir();
+  const notServed = async () => ({ ok: false, status: 404 });
+  await assert.rejects(proveLoadedFolder(dir, { fetchFn: notServed, getUrl: (name) => `chrome-extension://x/${name}` }),
+    /不是目前載入的/);
+  assert.equal(dir.store.size, 0);
+  await assert.rejects(proveLoadedFolder(dir, { fetchFn: async () => { throw new Error("x"); }, getUrl: (name) => name }), /不是目前載入的/);
+});
+
 // ---- runUpdate ---------------------------------------------------------------------------------
 async function updateSetup({ tamper = false, tamperHost = false, failOn = null, extra = {} } = {}) {
   const calls = [];
@@ -233,6 +254,15 @@ test("runUpdate rolls the host back and does not reload when writing fails", asy
   const { calls, deps } = await updateSetup({ failOn: "lib/a.js" });
   await assert.rejects(runUpdate(deps), /寫入 lib\/a\.js 失敗/);
   assert.deepEqual(calls, ["getFolder", "stage", "commit", "rollback"]);
+});
+
+test("runUpdate forgets the saved folder and stops when it is not the loaded copy", async () => {
+  const { calls, deps } = await updateSetup({ extra: {
+    proveFolder: async () => { throw new UpdateError("不是目前載入的資料夾"); },
+    forgetFolder: async () => { calls.push("forget"); },
+  } });
+  await assert.rejects(runUpdate(deps), /不是目前載入的/);
+  assert.deepEqual(calls, ["getFolder", "forget"]);
 });
 
 test("runUpdate falls back to picking a folder when none was saved", async () => {

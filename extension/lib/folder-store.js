@@ -31,6 +31,15 @@ async function withStore(mode, action) {
 const loadHandle = () => withStore("readonly", (store) => store.get(KEY));
 const saveHandle = (handle) => withStore("readwrite", (store) => store.put(handle, KEY));
 
+const deleteHandle = () => withStore("readwrite", (store) => store.delete(KEY));
+
+// Forget the saved folder so the next update asks the user to pick again.
+export async function forgetFolder() {
+  try {
+    await deleteHandle();
+  } catch { /* nothing saved */ }
+}
+
 export async function hasSavedFolder() {
   try {
     return Boolean(await loadHandle());

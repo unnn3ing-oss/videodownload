@@ -47,7 +47,7 @@
 
 **擴充功能 → 小程式**
 - `update_check { files: [{ path, sha, size }] }`：小程式回覆有差異的檔名。
-- `update_stage { commit, files: [{ path, sha, size }] }`：只傳有差異的檔案。小程式從 `https://raw.githubusercontent.com/<OWNER>/<REPO>/<commit>/host/<path>` 下載到 `<安裝目錄>/update/staging/`，逐一驗證 blob SHA，並做更新前自我檢查。
+- `update_stage { commit, files: [{ path, sha, size }], contents?: { <path>: <base64> } }`：只傳有差異的檔案。檔案內容優先由擴充功能下載後以 `contents` 帶入（沿用 Chrome 已可用的 TLS 與代理設定，避免 Python 在公司網路或 macOS 憑證環境下連不上）；沒有帶 `contents` 時，小程式才從 `https://raw.githubusercontent.com/<OWNER>/<REPO>/<commit>/host/<path>` 下載。兩種來源都寫到 `<安裝目錄>/update/staging/`，逐一驗證 blob SHA，並做更新前自我檢查。擴充功能也在換入前先確認所選資料夾就是目前載入的那一份（寫入探針檔、以擴充功能自己的網址讀回）。
 - `update_commit {}`：把 staging 的檔案換進 `host/`，舊檔備份到 `<安裝目錄>/backup/host/`。
 - `update_rollback {}`：從備份還原。
 
@@ -64,7 +64,7 @@
 
 1. **（使用者操作當下）取得資料夾**：若擴充功能檔案有差異，立即取得之前選過的資料夾；權限過期就重新要求；第一次則以 `showDirectoryPicker` 請使用者選擴充功能資料夾。選到的資料夾必須有 `manifest.json` 且名稱相同。這一步一定要在按鈕點擊後馬上做，過了瀏覽器的使用者操作時效就不能再叫出選擇視窗。
 2. 擴充功能下載有差異的檔案到記憶體，逐一驗證 blob SHA；任何一個不符就中止，不寫入任何東西。
-3. 小程式 `update_stage`：下載、驗證、自我檢查（以目前的 Python 直譯器在子行程中匯入 staging 的程式確認可載入）。失敗就中止，現有安裝不動。
+3. 小程式 `update_stage`：驗證、自我檢查（以目前的 Python 直譯器在子行程中匯入 staging 的程式確認可載入）。失敗就中止，現有安裝不動。
 4. 小程式 `update_commit`：以逐檔 `os.replace` 換入，先備份舊檔；任何一步失敗就從備份還原並回報 `rolledBack: true`。
 5. 擴充功能把檔案寫進選定的資料夾。**`manifest.json` 最後寫**，且新的 `key` 必須與目前相同（識別碼不得改變，否則 Native Messaging 白名單失效，不相同就在第 2 步中止）。
 6. 寫入失敗：送出 `update_rollback` 還原小程式，並顯示錯誤。擴充功能檔案是逐檔比對的，重新按一次更新會從剩下的差異繼續，結果收斂。

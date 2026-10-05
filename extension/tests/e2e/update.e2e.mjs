@@ -48,6 +48,19 @@ try {
   await page.addInitScript((extName) => {
     window.__reloaded = false;
     chrome.runtime.reload = () => { window.__reloaded = true; };
+    // The picked folder (OPFS) stands in for the loaded extension folder, so it also has to serve the probe file.
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = String(input);
+      const name = /\/(ytdl-probe-[^/?#]+)$/.exec(url)?.[1];
+      if (!name) return realFetch(input, init);
+      try {
+        const dir = await navigator.storage.getDirectory();
+        return new Response(await (await (await dir.getFileHandle(name)).getFile()).text());
+      } catch {
+        return new Response("", { status: 404 });
+      }
+    };
     window.showDirectoryPicker = async () => {
       const dir = await navigator.storage.getDirectory();
       try {
