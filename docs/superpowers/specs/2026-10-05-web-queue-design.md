@@ -16,7 +16,8 @@
   【影片標題文字】
   #標籤一 #標籤二 #標籤三
   ```
-- **下載封面**：滑鼠移到封面縮圖上時，縮圖變成反灰並顯示下載符號，點一下就下載該影片的**原尺寸**封面圖片。
+- **下載封面**：滑鼠移到封面縮圖上時，縮圖變成反灰並顯示下載符號，點一下就把該影片的**原尺寸**封面存到**影片的存放資料夾**，檔名是影片標題的**前六個字**，例如「颱風假放不放.jpg」。
+- **重複影片**：清單裡網址（影片 ID）或影片標題相同的影片，後加入的那一筆顯示「重複下載」，暫停並略過（不會下載），避免同名影片互相覆蓋。
 - 預設值：下載途中新增的影片自動接在後面；冷卻間隔預設 10 秒；拿掉「單支影片自訂檔名」欄位（檔名固定為影片標題）。
 - 影片下載仍完全在使用者自己的電腦上（Chrome → 本機小程式 → yt-dlp → YouTube），GitHub 與網頁伺服器不參與。
 
@@ -39,12 +40,13 @@
 
 ```
 queue = {
-  items: [{ uid, id, url, title, duration|null, tags: string[]|null, status, percent, speed, eta, file, height, error }],
+  items: [{ uid, id, url, title, duration|null, tags: string[]|null, status, dupOf|null, percent, speed, eta, file, height, error }],
   running: boolean,
   settings: { quality: 720|1080, cooldownSec: 3..60 (預設 10), limit: 1..1000 (預設 50) },
   cooldown: { until: epochMs, nextId } | null,
 }
 status ∈ fetching | waiting | downloading | done | skipped | failed
+`dupOf`：重複判定的結果（見 §3），非 null 的項目一律顯示「重複下載」，不會被送去下載。
 ```
 - 「冷卻中」不是獨立狀態：`cooldown.nextId` 指到的那一支顯示「冷卻中，N 秒後開始」。
 - 封面不存檔：`https://i.ytimg.com/vi/<id>/mqdefault.jpg`，由畫面用 `<img>` 直接載入。
@@ -52,12 +54,17 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 ### 畫面 → 背景的訊息（兩個畫面共用）
 
-`queue_get`、`queue_add {url}`、`queue_remove {uid}`、`queue_retry {uid}`、`queue_start`、`queue_stop`、`queue_copy_text {uid}`（回覆 `{ ok, text, tagCount }`）、`queue_download_cover {uid}`（回覆 `{ ok, url }` 或錯誤原因）、`settings_set {quality?, cooldownSec?, limit?}`；既有的 `start`（連線本機小程式）、`set_output_dir` 保留。背景程式廣播 `queue_state`（完整狀態，最多每 200 ms 一次）與既有的 `status`。
+`queue_get`、`queue_add {url}`、`queue_remove {uid}`、`queue_retry {uid}`、`queue_start`、`queue_stop`、`queue_copy_text {uid}`（回覆 `{ ok, text, tagCount }`）、`queue_download_cover {uid}`（回覆 `{ ok, file }` 或錯誤原因）、`settings_set {quality?, cooldownSec?, limit?}`；既有的 `start`（連線本機小程式）、`set_output_dir` 保留。背景程式廣播 `queue_state`（完整狀態，最多每 200 ms 一次）與既有的 `status`。
 
 ## 3. 增加、刪除、重試
 
-- **增加**：背景程式立刻插入一列 `fetching`（骨架動畫），送 `resolve` 給本機小程式；回來後把該列換成實際的項目：單一影片 → 一列；播放清單或頻道 → 依 `limit` 展開成多列。已在清單的影片 ID（失敗的除外）不重複加入，並提示「已在清單中」。解析失敗 → 該列變 `failed`（顯示原因，可刪可重試）。
+- **增加**：背景程式立刻插入一列 `fetching`（骨架動畫），送 `resolve` 給本機小程式；回來後把該列換成實際的項目：單一影片 → 一列；播放清單或頻道 → 依 `limit` 展開成多列。重複的影片照樣加入清單，但依下面「重複判定」標示。解析失敗 → 該列變 `failed`（顯示原因，可刪可重試）。
 - **標題與時長**：沿用 `resolve`；本機小程式額外回傳 `duration`（秒，抓不到則為 null）。
+- **重複判定**（`queue.js` 的純函式，每次清單變動都重算）：
+  - 兩支影片的**影片 ID 相同**，或**標題相同**（比對前先做 Unicode NFKC 正規化、去頭尾空白、不分大小寫），視為重複。同一網址貼兩次，解析後 ID 相同，也是重複。
+  - 依清單順序，**最早的一筆保持正常**，之後每一筆重複的都標記 `dupOf = 最早那筆的 uid`：欄位顯示「重複下載」與「與第 N 筆相同，已暫停」，進度列隱藏，「開始全部下載」略過它。
+  - 重複的列仍可刪除、也可複製內文與下載封面。若最早那筆被刪除，其餘重複者自動重算：下一筆變正常（回到 `waiting`），其餘仍標記為重複。
+  - 資料夾裡早就下載過的影片，仍沿用既有的「已下載過，略過」，與這裡無關。
 - **刪除（X）**：
   - 等待中／已完成／失敗 → 直接從清單移除。
   - 正在下載中 → 只中止**這一支**，工作繼續下一支（先冷卻）。
@@ -74,11 +81,15 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 - 說明欄不在批量解析的資料裡，所以在**第一次按下時**才向本機小程式取得（新訊息 `meta`，§4），取回的 hashtag 存在該列（`tags`）供之後直接使用。取得需要幾秒，按鈕顯示「擷取中…」，完成後顯示「已複製」。
 - 寫入剪貼簿使用「以 Promise 提供內容的 `ClipboardItem`」，這樣即使網路等待超過瀏覽器的使用者操作時效，網頁版仍能寫入；側邊面板另有 `clipboardWrite` 權限。本機小程式未連線時提示「請先連線本機小程式」。
 
-**下載封面**
+**下載封面（放在影片旁邊）**
 - 封面是 `<button>`：滑鼠移過（或鍵盤聚焦）時縮圖反灰並出現下載符號，點擊即下載，不影響整列。觸控裝置不顯示 hover，改為封面角落常駐一個小下載符號。
-- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，用背景程式的 `HEAD` 請求找出第一個存在的（YouTube 並非每支影片都有最高解析度，會自動退而求其次）。
-- 以 `chrome.downloads.download` 存到瀏覽器的下載資料夾，檔名為「影片標題.jpg」（非法字元換成 `_`、過長截短，同名自動加序號）。網頁版透過橋接請背景程式下載，不碰 CORS。
-- 需要新增 `https://i.ytimg.com/*` 的 `host_permissions`。找不到任何封面時，該列提示「找不到封面圖片」。
+- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，用背景程式的 `HEAD` 請求找出第一個存在的（YouTube 並非每支影片都有最高解析度，會自動退而求其次），再由**背景程式（Chrome 的網路）下載圖片位元組**（上限 8 MiB），以新訊息 `save_cover` 交給本機小程式，由小程式寫進**影片的存放資料夾**。小程式不自己連網，避免 Python 在 macOS 憑證、公司網路或代理下失敗。
+- 需要新增 `https://i.ytimg.com/*` 的 `host_permissions`。本機小程式未連線時提示「請先連線本機小程式」；找不到任何封面時提示「找不到封面圖片」。
+- **檔名規則**（`naming.py` 新增 `cover_name`）：
+  1. 取影片標題，先去掉所有標點符號、符號與空白（Unicode 類別 P、S、Z），再取**前六個字**（以字元計，中英文都算一個字）。例如「颱風假放不放？氣象署最新預測」→「颱風假放不放」；「【獨家】直擊跨年」→「獨家直擊跨年」；不足六字就全取；去完是空的則改用影片 ID。
+  2. 再套用既有的 `sanitize_filename`（非法字元、Windows 保留字、長度與路徑上限）。副檔名固定 `.jpg`。
+  3. **同名衝突**：資料夾內隱藏檔 `.ytdl-covers.json` 記錄「影片 ID → 封面檔名」。同一支影片再次下載 → 覆蓋原檔；不同影片前六字相同 → 檔名加 `_2`、`_3`…。
+- `save_cover` 的驗證：檔頭必須是 JPEG（`FF D8 FF`）、大小上限 8 MiB，路徑一律經 `safe_output_path`，存放資料夾不存在時自動建立。
 
 ## 4. 下載、冷卻與進度（本機小程式）
 
@@ -89,6 +100,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 | `download { items, quality, cooldownSec }` | `cooldownSec`（0–300，缺省 2 以相容舊版）。每支「實際下載」之間等待冷卻；已下載過而略過的不冷卻。等待可被取消。 |
 | `enqueue { items }` | 工作執行中，把新項目接到待辦尾端，回 `enqueued { count }`；沒有執行中的工作則回 `error not_running`，背景程式改送 `download`。 |
 | `remove { itemId }` | 待辦中 → 移除；正在下載 → 只取消那一支並繼續；回 `removed`。 |
+| `save_cover { id, title, data }` | `data` 為 base64 的 JPEG；依 §3.5 的檔名規則寫入存放資料夾，回 `cover_saved { file }`；格式或大小不符回 `error`。 |
 | `meta { url }` | 取得單支影片的說明欄（`yt-dlp --skip-download --no-playlist --dump-json`），回 `meta { id, title, description }`；失敗回 `error`。在背景執行緒進行，不影響進行中的下載。 |
 | `cancel`（既有） | 取消整個工作；背景程式把尚未完成的項目退回 `waiting`。 |
 
@@ -132,24 +144,24 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 - 沒有網路／YouTube 要求登入等：沿用既有的失敗原因文字，顯示在該列。
 - 本機小程式中途斷線：`running = false`，未完成項目退回 `waiting`，畫面顯示「連線中斷」。
-- 同一支影片重複貼：不重複加入。
+- 同一支影片（或標題相同的影片）重複加入：依 §3「重複判定」顯示「重複下載」並略過。
 - 網址不是 YouTube：輸入列下方顯示錯誤，不加入。
 - 清單上限 500 列；超過時拒絕新增並提示。
 
 ## 8. 測試
 
-- **單元（node）**：`copytext.js`（hashtag 擷取：中英文、重複、不足三個、沒有、網址片段、標題格式）；封面網址挑選（以假 fetch 驗證順序與退而求其次）；檔名清理；`queue.js`——增加與去重、解析展開、事件對應（進度、完成、略過、失敗、冷卻、結束）、開始的內容與順序、停止、移除（含下載中）、重試、重啟還原、清單上限。
-- **本機小程式（pytest）**：冷卻（含可取消、略過不冷卻）、`enqueue`（含與結束的競態）、`remove`（待辦／下載中）、`resolve` 回傳 `duration`、`meta`（成功、失敗、說明欄很長）、舊參數相容。
+- **單元（node）**：`copytext.js`（hashtag 擷取：中英文、重複、不足三個、沒有、網址片段、標題格式）；封面網址挑選（以假 fetch 驗證順序與退而求其次）；檔名清理；`queue.js`——重複判定（ID 相同、標題相同、NFKC 與大小寫、最早者保持正常、刪除最早者後重算、重複者不被送去下載）、增加與去重、解析展開、事件對應（進度、完成、略過、失敗、冷卻、結束）、開始的內容與順序、停止、移除（含下載中）、重試、重啟還原、清單上限。
+- **本機小程式（pytest）**：冷卻（含可取消、略過不冷卻）、`enqueue`（含與結束的競態）、`remove`（待辦／下載中）、`cover_name`（前六字、標點與空白、不足六字、空白改用 ID、非法字元與保留字）、`save_cover`（成功、同一影片覆蓋、不同影片同名加序號、非 JPEG、過大、路徑逃逸）、`resolve` 回傳 `duration`、`meta`（成功、失敗、說明欄很長）、舊參數相容。
 - **端對端（Playwright，沿用既有慣例）**：
   - 側邊面板：增加 → 骨架 → 標題與封面出現；刪除；開始 → 依序下載、冷卻倒數、列內進度；下載途中新增與刪除。
   - 網頁版（以 route 攔截讓本地檔案充當 Pages 網址）：偵測擴充功能、重新載入擴充功能後不需重新整理即重新連線、與側邊面板看到同一份清單、部署流程（OPFS 當資料夾、假的 GitHub）、窄寬度無橫向捲動。
-  - 複製內文：按下後剪貼簿內容符合格式（含「說明欄沒有 hashtag」的情況）；封面：滑鼠移上去時縮圖反灰並出現下載符號，點擊後觸發下載（以假的 `i.ytimg.com` 回應驗證所選尺寸與檔名）。
+  - 複製內文：按下後剪貼簿內容符合格式（含「說明欄沒有 hashtag」的情況）；封面：滑鼠移上去時縮圖反灰並出現下載符號，點擊後圖片出現在存放資料夾（以假的 `i.ytimg.com` 回應驗證所選尺寸與檔名「前六字.jpg」）；重複：貼同一網址兩次，第二筆顯示「重複下載」且開始下載時不會被送出。
   - 假的下載引擎（`stub_ytdlp.py`）擴充：依網址的 `v=` 回傳不同影片 ID 與標題，並支援 `--dump-json` 回傳含 hashtag 的說明欄。
 
 ## 9. 尚未驗證（需使用者在真實環境確認）
 
 - 真實 YouTube 的下載與冷卻效果、`duration` 欄位是否存在、說明欄的 hashtag 是否完整取得。
-- 各影片實際有哪一種封面尺寸（最高解析度不一定存在）；`i.ytimg.com` 的 `HEAD` 請求在真實 Chrome 的行為。
+- 各影片實際有哪一種封面尺寸（最高解析度不一定存在）；`i.ytimg.com` 的 `HEAD` 與圖片下載在真實 Chrome 的行為。
 - 擴充功能安裝後的內容腳本注入、網頁是否免重新整理即偵測。
 - GitHub Pages 實際啟用後的網址與行為；Chrome 資料夾選擇器的限制。
 - 背景程式在長時間下載中是否持續存活（原生連線通常會維持其存活，屬推論）。
@@ -165,4 +177,5 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 2. 開始後依加入順序下載，欄位內即時顯示進度，每支之間依設定冷卻並顯示倒數。
 3. 兩個畫面同時開啟時，清單與進度一致；關閉任一畫面不中斷下載。
 4. 網頁版部署完成後，不需手動操作即顯示已連線。
-5. 每列的「複製內文」得到 `【標題】` 加前三個 hashtag；滑鼠移到封面會反灰並顯示下載符號，點擊即下載原尺寸封面。
+5. 每列的「複製內文」得到 `【標題】` 加前三個 hashtag；滑鼠移到封面會反灰並顯示下載符號，點擊後原尺寸封面以「標題前六字.jpg」存進影片的存放資料夾。
+6. 清單裡 ID 或標題相同的影片，後加入者顯示「重複下載」並被略過，不會產生同名檔案。
