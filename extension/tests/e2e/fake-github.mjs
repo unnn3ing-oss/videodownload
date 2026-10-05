@@ -52,12 +52,3 @@ export function buildFixture({ repoRoot, overrides = {}, message = "release: e2e
 
   return { owner, repo, commit: COMMIT, message, files, tree, routes };
 }
-
-// The host downloads its files itself (not through the browser): lay them out where host_with_fake_github.py reads them.
-export function writeHostFiles(fixture, dir) {
-  const target = path.join(dir, fixture.commit, "host");
-  fs.mkdirSync(target, { recursive: true });
-  for (const [rel, bytes] of fixture.files) {
-    if (/^host\/[A-Za-z0-9_]+\.py$/.test(rel)) fs.writeFileSync(path.join(target, path.basename(rel)), bytes);
-  }
-}

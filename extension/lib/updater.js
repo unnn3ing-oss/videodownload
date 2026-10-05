@@ -77,13 +77,13 @@ export async function checkLatest({ fetchFn = fetch, readLocal = readBundled, re
 
 // Download every changed file from the exact commit and verify each against its git blob SHA.
 // Nothing is returned unless every file matches.
-export async function downloadAll(entries, { sha, repo = UPDATE_REPO, fetchFn = fetch, onProgress = () => {} }) {
+export async function downloadAll(entries, { sha, repo = UPDATE_REPO, fetchFn = fetch, onProgress = () => {}, base = "extension" }) {
   if (!SHA_RE.test(sha ?? "")) throw new UpdateError("無效的 commit，已取消更新");
   const results = [];
   for (const [index, entry] of entries.entries()) {
     if (!isSafeRelativePath(entry.path)) throw new UpdateError(`不安全的檔案路徑：${entry.path}`);
     const encoded = entry.path.split("/").map(encodeURIComponent).join("/");
-    const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${sha}/extension/${encoded}`;
+    const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${sha}/${base}/${encoded}`;
     let bytes;
     try {
       const response = await fetchFn(url, { cache: "no-store" });
@@ -99,6 +99,13 @@ export async function downloadAll(entries, { sha, repo = UPDATE_REPO, fetchFn = 
     onProgress({ step: "download", done: index + 1, total: entries.length });
   }
   return results;
+}
+
+// Chunked so large files do not overflow the argument limit of String.fromCharCode.
+export function toBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }
 
 // The pinned manifest key keeps the extension id (and so the native-messaging allow-list) stable.
@@ -171,10 +178,16 @@ export async function runUpdate({
   }
   const downloads = dir ? await downloadAll(info.extChanged, { sha: info.sha, repo, fetchFn, onProgress }) : [];
   assertSameKey(downloads, currentKey);
+  // Chrome downloads the host files too (its network and proxy settings are known to work);
+  // the host re-verifies every byte against the same blob SHA before using it.
+  const hostDownloads = hostChanged.length > 0
+    ? await downloadAll(hostChanged, { sha: info.sha, repo, fetchFn, onProgress, base: "host" })
+    : [];
   let hostCommitted = false;
   if (hostChanged.length > 0) {
     onProgress({ step: "host", done: 0, total: hostChanged.length });
-    await hostApi.stage(info.sha, hostChanged);
+    const contents = Object.fromEntries(hostDownloads.map((file) => [file.path, toBase64(file.bytes)]));
+    await hostApi.stage(info.sha, hostChanged, contents);
     await hostApi.commit();
     hostCommitted = true;
   }

@@ -6,12 +6,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { launchExtension, manifest, registerNativeHost, root, shotter } from "./helpers.mjs";
-import { buildFixture, writeHostFiles } from "./fake-github.mjs";
+import { buildFixture } from "./fake-github.mjs";
 
 const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 } });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
-const fakeGithub = path.join(work, "fake-github");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });
 fs.mkdirSync(path.join(home, "host"), { recursive: true });
 for (const name of fs.readdirSync(path.join(root, "host")).filter((n) => n.endsWith(".py"))) {
@@ -33,12 +32,11 @@ const fixture = buildFixture({
     "host/tests/t.py": "# excluded from updates\n",
   },
 });
-writeHostFiles(fixture, fakeGithub);
 const tamper = new Set();
 await fixture.routes(context, { tamper });
 
 const wrapper = path.join(work, "host.sh");
-fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=3\nexport FAKE_GITHUB_DIR="${fakeGithub}"\n`
+fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=3\n`
   + `exec python3 "${path.join(root, "extension/tests/e2e/host_with_fake_github.py")}"\n`);
 fs.chmodSync(wrapper, 0o755);
 registerNativeHost({ userData, wrapperPath: wrapper, extId });
@@ -97,13 +95,18 @@ try {
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
   assert.match(await text("update-apply"), /選擇擴充功能資料夾並更新/, "first update asks for the extension folder");
 
-  // 3. A tampered download is refused before anything local changes.
+  // 3. A tampered download (the host file too, since Chrome downloads those and the host only verifies) is refused before anything local changes.
   tamper.add("extension/sidepanel.css");
   await page.click("#update-apply");
   await page.waitForFunction(() => document.getElementById("update-progress").textContent.includes("不一致"));
   assert.equal((await opfsManifest()).version, "0.1.0");
   assert.equal(read(home, "host/version.py"), oldVersion);
   assert.equal(await reloaded(), false);
+  tamper.clear();
+  tamper.add("host/version.py");
+  await page.click("#update-apply");
+  await page.waitForFunction(() => /version\.py.*不一致/.test(document.getElementById("update-progress").textContent));
+  assert.equal(read(home, "host/version.py"), oldVersion);
   await shot("6-update-refused");
 
   // 4. Without the tampering the update goes through: host first, manifest.json last, then reload.

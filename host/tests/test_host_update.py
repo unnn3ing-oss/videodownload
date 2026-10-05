@@ -98,3 +98,27 @@ def test_update_install_failure_reports_rolled_back(tmp_path, monkeypatch):
     h.handle({"type": "update_commit", "reqId": 4})
     assert events[-1]["code"] == "update_install_failed" and events[-1]["rolledBack"] is True
     assert (home / "host" / "version.py").read_bytes() == old
+
+
+def test_update_stage_accepts_base64_contents_without_network(tmp_path, monkeypatch):
+    import base64
+    h, events, home = new_host(tmp_path)
+
+    def refuse(url):
+        raise AssertionError("no network access expected")
+
+    monkeypatch.setattr(selfupdate, "http_get", refuse)
+    h.handle({"type": "update_stage", "reqId": 1, "commit": COMMIT, "files": [entry("version.py", NEW)],
+              "contents": {"version.py": base64.b64encode(NEW).decode()}})
+    h.wait(10)
+    assert events[-1] == {"type": "update_staged", "count": 1, "reqId": 1}
+
+
+def test_update_stage_rejects_malformed_contents(tmp_path):
+    h, events, home = new_host(tmp_path)
+    for bad in ({"version.py": "***not base64***"}, {"other.py": "eA=="}, ["x"], {"version.py": 5}):
+        h.handle({"type": "update_stage", "reqId": 1, "commit": COMMIT, "files": [entry("version.py", NEW)],
+                  "contents": bad})
+        h.wait(10)
+        assert events[-1]["type"] == "error" and events[-1]["code"] == "update_bad_file", bad
+    assert not (home / "update" / "staging").exists()

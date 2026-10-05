@@ -185,10 +185,15 @@ class Host:
         if self._busy(msg):
             return
         commit, files = msg.get("commit"), msg.get("files")
+        try:
+            contents = selfupdate.decode_contents(msg.get("contents"), selfupdate.validate_files(files))
+        except selfupdate.UpdateError as exc:
+            self._update_error(msg, exc)
+            return
 
         def work() -> None:
             try:
-                count = selfupdate.stage(self.home, commit, files)
+                count = selfupdate.stage(self.home, commit, files, contents=contents)
             except selfupdate.UpdateError as exc:
                 self._update_error(msg, exc)
                 return

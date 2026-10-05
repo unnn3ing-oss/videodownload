@@ -101,3 +101,21 @@ def test_self_check_accepts_consistent_overlay(tmp_path):
     stage(home, COMMIT, [entry("version.py", NEW_VERSION)], lambda url: NEW_VERSION)
     self_check(home)  # staged files overlaid on the installed ones import cleanly
     assert not (home / "update" / "check").exists()
+
+
+def test_stage_uses_contents_from_the_extension_without_downloading(tmp_path):
+    home = make_home(tmp_path)
+
+    def fetch(url):
+        raise AssertionError("must not download when the extension supplied the bytes")
+
+    assert stage(home, COMMIT, [entry("version.py", NEW_VERSION)], fetch, contents={"version.py": NEW_VERSION}) == 1
+    assert (staging(home) / "version.py").read_bytes() == NEW_VERSION
+
+
+def test_stage_verifies_contents_from_the_extension(tmp_path):
+    home = make_home(tmp_path)
+    with pytest.raises(UpdateError) as exc:
+        stage(home, COMMIT, [entry("version.py", NEW_VERSION)], contents={"version.py": b"tampered\n"})
+    assert exc.value.code == "update_hash_mismatch"
+    assert not staging(home).exists()

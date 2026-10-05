@@ -125,6 +125,13 @@ test("downloadAll fetches from the pinned commit url", async () => {
   assert.deepEqual(got.map((f) => [f.path, dec(f.bytes)]), [["lib/a b.js", "x"]]);
 });
 
+test("downloadAll can fetch host files from the same pinned commit", async () => {
+  const entry = { path: "version.py", sha: await gitBlobSha(enc("v")) };
+  const url = `https://raw.githubusercontent.com/o/r/${COMMIT}/host/version.py`;
+  const got = await downloadAll([entry], { sha: COMMIT, repo: REPO, base: "host", fetchFn: makeFetch({ [url]: { bytes: enc("v") } }) });
+  assert.deepEqual(got.map((f) => [f.path, dec(f.bytes)]), [["version.py", "v"]]);
+});
+
 test("downloadAll verifies every file and returns nothing when one is tampered", async () => {
   const entries = [{ path: "a.js", sha: await gitBlobSha(enc("A")) }, { path: "b.js", sha: await gitBlobSha(enc("B")) }];
   const url = (name) => `https://raw.githubusercontent.com/o/r/${COMMIT}/extension/${name}`;
@@ -160,8 +167,9 @@ test("writeFiles writes manifest.json last and creates directories", async () =>
 });
 
 // ---- runUpdate ---------------------------------------------------------------------------------
-async function updateSetup({ tamper = false, failOn = null, extra = {} } = {}) {
+async function updateSetup({ tamper = false, tamperHost = false, failOn = null, extra = {} } = {}) {
   const calls = [];
+  const staged = [];
   const manifestBytes = enc(JSON.stringify({ name: "X", key: "K", version: "2" }));
   const files = { "manifest.json": manifestBytes, "lib/a.js": enc("new a") };
   const entries = [];
@@ -170,15 +178,17 @@ async function updateSetup({ tamper = false, failOn = null, extra = {} } = {}) {
   for (const [path, bytes] of Object.entries(files)) {
     routes[`https://raw.githubusercontent.com/o/r/${COMMIT}/extension/${path}`] = { bytes: tamper && path === "lib/a.js" ? enc("evil") : bytes };
   }
+  const hostBytes = enc('VERSION = "2"\n');
+  routes[`https://raw.githubusercontent.com/o/r/${COMMIT}/host/version.py`] = { bytes: tamperHost ? enc("evil") : hostBytes };
   const dir = fakeDir({ onWrite: (p) => calls.push(`write:${p}`), failOn });
   return {
-    calls,
+    calls, staged,
     deps: {
-      info: { sha: COMMIT, extChanged: entries }, hostChanged: [{ path: "version.py", sha: "a".repeat(40), size: 1 }],
+      info: { sha: COMMIT, extChanged: entries }, hostChanged: [{ path: "version.py", sha: await gitBlobSha(hostBytes), size: hostBytes.length }],
       getFolder: async () => { calls.push("getFolder"); return dir; }, pickFolder: async () => { calls.push("pickFolder"); return dir; },
       fetchFn: makeFetch(routes), repo: REPO, currentKey: "K", expectedName: "X",
       hostApi: {
-        stage: async () => { calls.push("stage"); }, commit: async () => { calls.push("commit"); },
+        stage: async (commit, files, contents) => { calls.push("stage"); staged.push({ commit, files, contents }); }, commit: async () => { calls.push("commit"); },
         rollback: async () => { calls.push("rollback"); },
       },
       reload: () => calls.push("reload"), onProgress: () => {}, ...extra,
@@ -190,6 +200,21 @@ test("runUpdate asks for the folder first, then stages and commits the host, wri
   const { calls, deps } = await updateSetup();
   await runUpdate(deps);
   assert.deepEqual(calls, ["getFolder", "stage", "commit", "write:lib/a.js", "write:manifest.json", "reload"]);
+});
+
+test("runUpdate hands the verified host files to the host as base64", async () => {
+  const { staged, deps } = await updateSetup();
+  await runUpdate(deps);
+  assert.equal(staged.length, 1);
+  assert.equal(staged[0].commit, COMMIT);
+  assert.deepEqual(staged[0].files.map((f) => f.path), ["version.py"]);
+  assert.deepEqual(staged[0].contents, { "version.py": Buffer.from('VERSION = "2"\n').toString("base64") });
+});
+
+test("runUpdate stops before the host is touched when a host download is tampered", async () => {
+  const { calls, deps } = await updateSetup({ tamperHost: true });
+  await assert.rejects(runUpdate(deps), /version\.py.*不一致/);
+  assert.deepEqual(calls, ["getFolder"]);
 });
 
 test("runUpdate stops before touching anything when a download fails", async () => {

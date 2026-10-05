@@ -5,6 +5,7 @@ GitHub API over TLS); every downloaded byte must match its git blob SHA exactly.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -133,9 +134,32 @@ def self_check(home: Path, python: str | None = None) -> None:
         _rmtree(check)
 
 
-def stage(home: Path, commit: str, files: list[dict], fetch: Callable[[str], bytes] | None = None) -> int:
-    """Download the changed files into staging, verify every byte, and self-check. Returns the file count."""
+def decode_contents(contents: object, files: list[dict]) -> dict[str, bytes]:
+    """Decode the optional {name: base64} map the extension sends (Chrome's network stack did the download)."""
+    if contents is None:
+        return {}
+    listed = {entry["path"] for entry in files}
+    if not isinstance(contents, dict):
+        raise UpdateError("update_bad_file", "更新內容格式不正確")
+    decoded = {}
+    for name, value in contents.items():
+        if name not in listed or not isinstance(value, str):
+            raise UpdateError("update_bad_file", f"更新內容不正確：{name!r}")
+        try:
+            decoded[name] = base64.b64decode(value, validate=True)
+        except ValueError as exc:
+            raise UpdateError("update_bad_file", f"{name} 的內容不是有效的編碼") from exc
+    return decoded
+
+
+def stage(home: Path, commit: str, files: list[dict], fetch: Callable[[str], bytes] | None = None,
+          contents: dict[str, bytes] | None = None) -> int:
+    """Put the changed files into staging, verify every byte, and self-check. Returns the file count.
+
+    Bytes come from `contents` when the extension supplied them, otherwise from a download.
+    """
     fetch = fetch or http_get  # looked up at call time so tests can replace http_get
+    contents = contents or {}
     if not isinstance(commit, str) or not SHA_RE.fullmatch(commit):
         raise UpdateError("update_bad_file", "commit 格式不正確")
     files = validate_files(files)
@@ -147,7 +171,7 @@ def stage(home: Path, commit: str, files: list[dict], fetch: Callable[[str], byt
     try:
         for entry in files:
             try:
-                data = fetch(f"{RAW_BASE}/{commit}/host/{entry['path']}")
+                data = contents[entry["path"]] if entry["path"] in contents else fetch(f"{RAW_BASE}/{commit}/host/{entry['path']}")
             except UpdateError:
                 raise
             except Exception as exc:

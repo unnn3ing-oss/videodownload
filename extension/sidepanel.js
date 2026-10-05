@@ -457,7 +457,7 @@ async function applyUpdate() {
       getFolder: () => getFolder(name),
       pickFolder: () => pickFolder(name),
       hostApi: {
-        stage: (commit, files) => hostUpdateRequest({ type: "update_stage", commit, files }),
+        stage: (commit, files, contents) => hostUpdateRequest({ type: "update_stage", commit, files, contents }),
         commit: () => hostUpdateRequest({ type: "update_commit" }),
         rollback: () => hostUpdateRequest({ type: "update_rollback" }),
       },
