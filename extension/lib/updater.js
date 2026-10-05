@@ -1,6 +1,9 @@
 import { UPDATE_REPO } from "./update-config.js";
 import { gitBlobSha, sameContent } from "./gitsha.js";
 import { MAX_FILE_BYTES, isSafeRelativePath, mapTree } from "./update-rules.js";
+import { toBase64 } from "./base64.js";
+
+export { toBase64 };
 
 export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -99,13 +102,6 @@ export async function downloadAll(entries, { sha, repo = UPDATE_REPO, fetchFn = 
     onProgress({ step: "download", done: index + 1, total: entries.length });
   }
   return results;
-}
-
-// Chunked so large files do not overflow the argument limit of String.fromCharCode.
-export function toBase64(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
 }
 
 // The pinned manifest key keeps the extension id (and so the native-messaging allow-list) stable.
