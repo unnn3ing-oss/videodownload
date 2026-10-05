@@ -7,7 +7,7 @@ export function formatEta(seconds) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
-function formatSpeed(bytesPerSecond) {
+export function formatSpeed(bytesPerSecond) {
   return bytesPerSecond ? `${(bytesPerSecond / 1048576).toFixed(1)} MB/s` : "";
 }
 
