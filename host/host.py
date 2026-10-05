@@ -21,8 +21,9 @@ from version import VERSION
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta", "enqueue", "remove"}
 MAX_LIMIT = 1000
+MAX_COOLDOWN = 300
 
 
 def locate_engine(home: Path) -> Engine:
@@ -176,13 +177,37 @@ class Host:
             self._error(msg, "busy", "已有下載工作進行中")
             return
         override = msg.get("titleOverride")
+        cooldown = msg.get("cooldownSec")
+        if (isinstance(cooldown, bool) or not isinstance(cooldown, (int, float))
+                or not 0 <= cooldown <= MAX_COOLDOWN):
+            cooldown = None  # absent or out of range: the runner's default
         job_id = uuid.uuid4().hex
         self._reply(msg, {"type": "started", "jobId": job_id})
         try:
             self.runner.start(job_id, items, quality, self.config.output_dir,
-                              override if isinstance(override, str) and override.strip() else None)
+                              override if isinstance(override, str) and override.strip() else None,
+                              cooldown)
         except RuntimeError:
             self._error(msg, "busy", "已有下載工作進行中")
+
+    def _on_enqueue(self, msg: dict) -> None:
+        items = msg.get("items")
+        if (not isinstance(items, list) or not items
+                or not all(isinstance(i, dict) and is_allowed_url(i.get("url")) for i in items)):
+            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            return
+        if not self.runner.enqueue(items):
+            self._error(msg, "not_running", "目前沒有進行中的下載工作")
+            return
+        self._reply(msg, {"type": "enqueued", "count": len(items)})
+
+    def _on_remove(self, msg: dict) -> None:
+        item_id = msg.get("itemId")
+        where = self.runner.remove(item_id) if isinstance(item_id, str) else None
+        if where is None:
+            self._error(msg, "not_found", "清單中沒有這支影片")
+            return
+        self._reply(msg, {"type": "removed", "itemId": item_id, "where": where})
 
     def _on_save_cover(self, msg: dict) -> None:
         video_id, title, data = msg.get("id"), msg.get("title"), msg.get("data")

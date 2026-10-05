@@ -268,3 +268,47 @@ def test_meta_without_engine_reports_engine_missing(tmp_path):
     h, events = new_host(tmp_path, with_engine=False)
     h.handle({"type": "meta", "reqId": 7, "url": URL})
     assert events[0]["type"] == "error" and events[0]["code"] == "engine_missing"
+
+
+def test_download_passes_valid_cooldown_and_ignores_invalid(tmp_path):
+    h, events = new_host(tmp_path)
+    seen = []
+    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None: seen.append(cooldown)
+    for value, expected in [(7, 7), (0, 0), (2.5, 2.5), (301, None), (-1, None), ("x", None), (True, None), (None, None)]:
+        msg = {"type": "download", "quality": 720, "items": [{"url": URL, "id": "v1", "title": "t"}]}
+        if value is not None:
+            msg["cooldownSec"] = value
+        h.handle(msg)
+        assert seen[-1] == expected, value
+
+
+def test_enqueue_message_when_not_running_errors(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "enqueue", "reqId": 8, "items": [{"url": URL, "id": "v1", "title": "t"}]})
+    assert events[-1]["type"] == "error" and events[-1]["code"] == "not_running" and events[-1]["reqId"] == 8
+    h.handle({"type": "enqueue", "reqId": 9, "items": []})
+    assert events[-1]["code"] == "bad_url"
+
+
+def test_enqueue_and_remove_messages_on_running_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("YTDL_STUB_DELAY", "0.6")
+    h, events = new_host(tmp_path)
+    h.handle({"type": "download", "reqId": 1, "quality": 720, "cooldownSec": 0,
+              "items": [{"url": URL, "id": "v1", "title": "甲"}]})
+    two = {"url": "https://www.youtube.com/watch?v=v2", "id": "v2", "title": "乙"}
+    three = {"url": "https://www.youtube.com/watch?v=v3", "id": "v3", "title": "丙"}
+    h.handle({"type": "enqueue", "reqId": 2, "items": [two, three]})
+    assert {"type": "enqueued", "count": 2, "reqId": 2} in events
+    h.handle({"type": "remove", "reqId": 3, "itemId": "v3"})
+    assert {"type": "removed", "itemId": "v3", "where": "pending", "reqId": 3} in events
+    h.wait(15)
+    done = [e for e in events if e["type"] == "item_done"]
+    assert sorted(Path(e["file"]).name for e in done) == ["乙.mp4", "甲.mp4"]
+
+
+def test_remove_message_not_found(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "remove", "reqId": 4, "itemId": "nope"})
+    assert events[-1]["type"] == "error" and events[-1]["code"] == "not_found"
+    h.handle({"type": "remove", "reqId": 5, "itemId": 5})
+    assert events[-1]["type"] == "error"

@@ -17,13 +17,13 @@ def item(vid="v1", title="標題"):
 class Harness:
     """JobRunner wired to a fake yt-dlp that writes the -o target and prints a done line."""
 
-    def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None):
+    def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None, delay=0):
         self.out = tmp_path / "out"
         self.events, self.calls = [], []
         self.height, self.codec, self.fail = height, codec, fail or {}
         self.runner = JobRunner(Engine(Path("yt-dlp")), self.events.append, stream=self.stream,
                                 resolve_fn=resolve_fn or (lambda e, u, limit=None: []),
-                                sleep=lambda s: None, delay=0)
+                                sleep=lambda s: None, delay=delay)
 
     def stream(self, cmd, on_line, cancel):
         self.calls.append(cmd)
@@ -35,8 +35,8 @@ class Harness:
         on_line(f"[ytdl-done]{vid}|{self.height}|{self.codec}")
         return StreamResult(0, "", False)
 
-    def run(self, items, job_id="j", quality=1080, title_override=None):
-        self.runner.start(job_id, items, quality, self.out, title_override)
+    def run(self, items, job_id="j", quality=1080, title_override=None, cooldown=None):
+        self.runner.start(job_id, items, quality, self.out, title_override, cooldown)
         self.runner.join(10)
         return self
 
@@ -222,3 +222,124 @@ def test_archive_record_failure_still_reports_done(tmp_path, monkeypatch):
     monkeypatch.setattr(Archive, "record", boom)
     h = Harness(tmp_path).run([item()])
     assert h.of("item_done")[0]["skipped"] is False and h.summary["ok"] == 1
+
+
+def blocking_stream(h, block_ids, entered, gate):
+    """Stream that holds the listed video ids until `gate` is set or the item is cancelled."""
+    original = h.stream
+
+    def stream(cmd, on_line, cancel):
+        vid = cmd[-1].split("v=")[-1]
+        if vid in block_ids:
+            entered.set()
+            while not (gate.is_set() or cancel.is_set()):
+                cancel.wait(0.01)
+            if cancel.is_set():
+                h.calls.append(cmd)
+                return StreamResult(-15, "", True)
+        return original(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+
+
+def test_cooldown_waits_between_real_downloads_and_emits_event(tmp_path):
+    h = Harness(tmp_path)
+    sleeps = []
+    h.runner._sleep = sleeps.append
+    h.run([item("v1", "甲"), item("v2", "乙")], cooldown=3)
+    cooldowns = h.of("cooldown")
+    assert len(cooldowns) == 1
+    assert cooldowns[0]["seconds"] == 3 and cooldowns[0]["nextId"] == "v2" and cooldowns[0]["jobId"] == "j"
+    assert sum(sleeps) == 3 and all(step <= 1 for step in sleeps)
+    kinds = [e["type"] for e in h.events]
+    assert kinds.index("item_done") < kinds.index("cooldown") < len(kinds) - 1 - kinds[::-1].index("progress")
+
+
+def test_no_cooldown_for_skipped_or_first_item(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "甲")], cooldown=3)
+    h.events.clear()
+    sleeps = []
+    h.runner._sleep = sleeps.append
+    h.run([item("v1", "甲"), item("v2", "乙")], job_id="j2", cooldown=3)
+    assert h.of("cooldown") == [] and sleeps == []
+    assert [e["skipped"] for e in h.of("item_done")] == [True, False]
+
+
+def test_cancel_interrupts_cooldown(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._sleep = lambda seconds: h.runner.cancel()
+    h.run([item("v1", "甲"), item("v2", "乙")], cooldown=5)
+    assert len(h.calls) == 1 and h.summary["cancelled"] is True and h.summary["ok"] == 1
+
+
+def test_default_cooldown_when_not_given(tmp_path):
+    h = Harness(tmp_path, delay=2).run([item("v1", "甲"), item("v2", "乙")])
+    assert [e["seconds"] for e in h.of("cooldown")] == [2]
+
+
+def test_enqueue_appends_to_running_job(tmp_path):
+    h = Harness(tmp_path)
+    entered, gate = threading.Event(), threading.Event()
+    blocking_stream(h, {"v1"}, entered, gate)
+    h.runner.start("j", [item("v1", "甲")], 1080, h.out)
+    assert entered.wait(5)
+    assert h.runner.enqueue([item("v2", "乙")]) is True
+    gate.set()
+    h.runner.join(10)
+    assert len(h.calls) == 2 and h.summary["ok"] == 2 and len(h.of("done")) == 1
+
+
+def test_enqueue_after_finish_returns_false(tmp_path):
+    h = Harness(tmp_path).run([item()])
+    assert h.runner.enqueue([item("v2")]) is False
+    assert h.runner.enqueue([item("v2")]) is False  # still no job: nothing was queued behind its back
+
+
+def test_enqueue_without_job_returns_false(tmp_path):
+    assert Harness(tmp_path).runner.enqueue([item()]) is False
+
+
+def test_remove_pending_item_never_downloads_it(tmp_path):
+    h = Harness(tmp_path)
+    entered, gate = threading.Event(), threading.Event()
+    blocking_stream(h, {"v1"}, entered, gate)
+    h.runner.start("j", [item("v1", "甲"), item("v2", "乙"), item("v3", "丙")], 1080, h.out)
+    assert entered.wait(5)
+    assert h.runner.remove("v2") == "pending"
+    gate.set()
+    h.runner.join(10)
+    assert [Path(e["file"]).name for e in h.of("item_done")] == ["甲.mp4", "丙.mp4"]
+
+
+def test_remove_current_item_continues_with_next(tmp_path):
+    h = Harness(tmp_path)
+    entered, gate = threading.Event(), threading.Event()
+    blocking_stream(h, {"v1"}, entered, gate)
+    h.runner.start("j", [item("v1", "甲"), item("v2", "乙")], 1080, h.out)
+    assert entered.wait(5)
+    assert h.runner.remove("v1") == "current"
+    h.runner.join(10)
+    assert [e["itemId"] for e in h.of("item_removed")] == ["v1"]
+    assert [Path(e["file"]).name for e in h.of("item_done")] == ["乙.mp4"]
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False}
+
+
+def test_remove_item_during_cooldown(tmp_path):
+    h = Harness(tmp_path)
+    removed = []
+
+    def sleeper(seconds):
+        if not removed:
+            removed.append(h.runner.remove("v2"))
+
+    h.runner._sleep = sleeper
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙")], cooldown=3)
+    assert removed == ["current"]
+    assert [e["itemId"] for e in h.of("item_removed")] == ["v2"]
+    assert [Path(e["file"]).name for e in h.of("item_done")] == ["甲.mp4", "丙.mp4"]
+    assert h.summary["cancelled"] is False
+
+
+def test_remove_unknown_returns_none(tmp_path):
+    h = Harness(tmp_path).run([item()])
+    assert h.runner.remove("nope") is None
