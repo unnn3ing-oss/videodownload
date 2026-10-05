@@ -1,0 +1,243 @@
+// Wires the queue state (queue.js) to the local host: resolving, downloading, copy text and covers.
+// The background script owns one controller; the side panel and the web page only see its state.
+import {
+  addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
+  pendingDownloads, removeItem, retryItem, setHostConnected, setSettings, setTags, QueueError,
+} from "./queue.js";
+import { buildCopyText, extractHashtags } from "./copytext.js";
+import { coverName } from "./covername.js";
+import { findCover } from "./cover.js";
+import { toBase64 } from "./base64.js";
+import { versionAtLeast } from "./version.js";
+import { MIN_HOST_VERSION } from "./constants.js";
+
+const TIMEOUT = { resolve: 180000, meta: 90000, save_cover: 30000, download: 20000, enqueue: 20000 };
+const fail = (error) => ({ ok: false, error });
+
+// deps.host: { connected(), version(), request(message, timeoutMs) -> Promise<event>, send(message) }
+export function createController({ host, save, notify, fetchFn = fetch, downloads, now = Date.now, initial = null }) {
+  let state = createState(initial);
+  const sentIds = new Set(); // video ids the host already has in its current job
+  const resolving = new Set(); // uids with a resolve request in flight
+  const tasks = new Set();
+  let starting = false;
+  let restartAfterDone = false;
+  let stopRequested = false;
+
+  const commit = (next) => {
+    state = next;
+    save(state);
+    notify(state);
+  };
+  const track = (promise) => {
+    const task = promise.catch(() => {}).finally(() => tasks.delete(task));
+    tasks.add(task);
+    return task;
+  };
+  const idle = async () => {
+    while (tasks.size) await Promise.all([...tasks]);
+  };
+  const syncHostFlag = () => {
+    if (state.hostConnected !== host.connected()) commit(setHostConnected(state, host.connected()));
+  };
+  const find = (uid) => state.items.find((i) => i.uid === uid);
+  const hostUsable = () => host.connected() && versionAtLeast(host.version(), MIN_HOST_VERSION);
+
+  function resolveOne(uid, url) {
+    resolving.add(uid);
+    return track((async () => {
+      try {
+        const event = await host.request({ type: "resolve", urls: [url], limit: state.settings.limit }, TIMEOUT.resolve);
+        commit(event.type === "resolved"
+          ? applyResolved(state, uid, event.items)
+          : applyResolveFailed(state, uid, event.message ?? "解析失敗"));
+      } catch (error) {
+        // A dropped connection leaves the row waiting; it is resolved again when the host is back.
+        if (host.connected()) commit(applyResolveFailed(state, uid, error.message));
+      } finally {
+        resolving.delete(uid);
+      }
+      syncRun();
+    })());
+  }
+
+  function flushResolves() {
+    for (const item of state.items) {
+      if (item.status === "fetching" && !resolving.has(item.uid)) resolveOne(item.uid, item.url);
+    }
+  }
+
+  async function startRun(items) {
+    starting = true;
+    stopRequested = false;
+    try {
+      const event = await host.request({
+        type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
+      }, TIMEOUT.download);
+      if (event.type === "started") {
+        sentIds.clear();
+        items.forEach((i) => sentIds.add(i.id));
+        commit(markRunning(state, true));
+      } else if (event.code !== "busy") {
+        return fail(event.message ?? "無法開始下載");
+      }
+    } catch (error) {
+      return fail(error.message);
+    } finally {
+      starting = false;
+    }
+    syncRun();
+    return { ok: true };
+  }
+
+  // While a job runs, anything that became startable (new rows, retries, promoted duplicates) joins it.
+  function syncRun() {
+    if (!state.running || !host.connected()) return;
+    const items = pendingDownloads(state).filter((i) => !sentIds.has(i.id));
+    if (!items.length) return;
+    items.forEach((i) => sentIds.add(i.id));
+    track((async () => {
+      try {
+        const event = await host.request({ type: "enqueue", items }, TIMEOUT.enqueue);
+        if (event.type === "error") {
+          items.forEach((i) => sentIds.delete(i.id));
+          if (event.code === "not_running") restartWhenFree();
+        }
+      } catch {
+        items.forEach((i) => sentIds.delete(i.id));
+      }
+    })());
+  }
+
+  // The job ended just as rows were added. Its `done` event may still be on its way.
+  function restartWhenFree() {
+    if (state.running) {
+      restartAfterDone = true;
+      return;
+    }
+    const items = pendingDownloads(state);
+    if (items.length && !starting) track(startRun(items));
+  }
+
+  return {
+    getState: () => state,
+    idle,
+
+    async add(url) {
+      syncHostFlag();
+      let added;
+      try {
+        added = addPlaceholder(state, url);
+      } catch (error) {
+        if (error instanceof QueueError) return fail(error.message);
+        throw error;
+      }
+      commit(added.state);
+      if (host.connected()) resolveOne(added.uid, url);
+      return { ok: true };
+    },
+
+    remove(uid) {
+      const item = find(uid);
+      if (!item) return;
+      const live = item.status === "waiting" || item.status === "downloading";
+      if (live && item.id && !item.dupOf && state.running && sentIds.has(item.id)) {
+        sentIds.delete(item.id);
+        try { host.send({ type: "remove", itemId: item.id }); } catch { /* host gone: nothing to cancel */ }
+      }
+      commit(removeItem(state, uid));
+      syncRun();
+    },
+
+    retry(uid) {
+      const item = find(uid);
+      commit(retryItem(state, uid));
+      if (item?.id) sentIds.delete(item.id);
+      syncRun();
+    },
+
+    async start() {
+      syncHostFlag();
+      if (!host.connected()) return fail("請先連線本機小程式");
+      if (!versionAtLeast(host.version(), MIN_HOST_VERSION)) return fail("請先更新本機小程式");
+      if (state.running || starting) return { ok: true };
+      const items = pendingDownloads(state);
+      if (!items.length) return fail("沒有可下載的影片");
+      return startRun(items);
+    },
+
+    stop() {
+      if (!state.running) return;
+      stopRequested = true;
+      try { host.send({ type: "cancel" }); } catch { /* host gone */ }
+    },
+
+    setSettings(patch) {
+      commit(setSettings(state, patch));
+    },
+
+    onHostConnected() {
+      commit(setHostConnected(state, true));
+      flushResolves();
+      return idle();
+    },
+
+    onHostDisconnected() {
+      sentIds.clear();
+      starting = false;
+      restartAfterDone = false;
+      commit(hostLost(state));
+    },
+
+    onHostEvent(event) {
+      const next = applyHostEvent(state, event, now());
+      if (next !== state) commit(next);
+      if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);
+      if (event.type === "done") {
+        sentIds.clear();
+        const again = restartAfterDone && !stopRequested;
+        restartAfterDone = false;
+        stopRequested = false;
+        const items = again ? pendingDownloads(state) : [];
+        if (items.length) track(startRun(items));
+      }
+    },
+
+    async copyText(uid) {
+      const item = find(uid);
+      if (!item || !item.id) return fail("找不到這支影片");
+      if (item.tags) return { ok: true, text: buildCopyText(item.title, item.tags), tagCount: item.tags.length };
+      if (!host.connected()) return fail("請先連線本機小程式");
+      let event;
+      try {
+        event = await host.request({ type: "meta", url: item.url }, TIMEOUT.meta);
+      } catch (error) {
+        return fail(error.message);
+      }
+      if (event.type !== "meta") return fail(event.message ?? "無法取得影片說明");
+      const tags = extractHashtags(event.description);
+      commit(setTags(state, uid, tags));
+      return { ok: true, text: buildCopyText(find(uid)?.title ?? item.title, tags), tagCount: tags.length };
+    },
+
+    async downloadCover(uid) {
+      const item = find(uid);
+      if (!item || !item.id) return fail("找不到這支影片");
+      const cover = await findCover(item.id, fetchFn);
+      if (!cover) return fail("找不到封面圖片");
+      if (hostUsable()) {
+        try {
+          const event = await host.request({ type: "save_cover", id: item.id, title: item.title, data: toBase64(cover.bytes) }, TIMEOUT.save_cover);
+          if (event.type === "cover_saved") return { ok: true, where: "folder", file: event.file };
+          return fail(event.message ?? "無法儲存封面");
+        } catch { /* host dropped while saving: fall back to the browser download below */ }
+      }
+      try {
+        await downloads.download({ url: cover.url, filename: `${coverName(item.title, item.id)}.jpg`, conflictAction: "uniquify" });
+        return { ok: true, where: "downloads" };
+      } catch (error) {
+        return fail(`無法下載封面：${error.message}`);
+      }
+    },
+  };
+}
