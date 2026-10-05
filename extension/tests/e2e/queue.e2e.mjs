@@ -128,7 +128,8 @@ try {
   });
   await web.evaluate(() => window.postMessage({ source: "ytdl-web", ping: true }, location.origin));
   await web.waitForFunction(() => window.__ext.some((m) => m.hello));
-  await web.waitForFunction(() => window.__ext.some((m) => m.push?.type === "queue_state"));
+  await send({ type: "settings_set", settings: { limit: 51 } }); // any change is pushed to the connected page
+  await web.waitForFunction(() => window.__ext.some((m) => m.push?.type === "queue_state" && m.push.state.settings.limit === 51));
   const ask = (request) => web.evaluate((r) => new Promise((resolve) => {
     const id = Math.random();
     const on = (e) => { if (e.data?.source === "ytdl-ext" && e.data.id === id) { window.removeEventListener("message", on); resolve(e.data.response); } };

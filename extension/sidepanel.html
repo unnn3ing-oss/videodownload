@@ -55,14 +55,23 @@
       <button id="tab-add" class="btn small" type="button">加入</button>
     </section>
 
-    <section class="card input">
-      <div class="field">
-        <label for="urls" class="field-label">網址 <span class="hint">一行一個；可貼影片、播放清單或頻道</span></label>
-        <textarea id="urls" rows="3" placeholder="https://www.youtube.com/watch?v=…" spellcheck="false" autocomplete="off"></textarea>
-        <ul id="invalid" class="invalid" hidden></ul>
+    <section class="card add">
+      <div class="add-row">
+        <input id="add-url" type="text" placeholder="貼上 YouTube 網址，按 Enter 或「增加」" spellcheck="false" autocomplete="off" aria-label="影片網址">
+        <button id="add-btn" class="btn primary" type="button">增加</button>
       </div>
+      <p id="add-note" class="add-note" role="status" aria-live="polite" hidden></p>
+    </section>
 
-      <div class="grid2">
+    <section class="card queue">
+      <div class="queue-head">
+        <h2>下載清單</h2>
+        <span id="queue-stats" class="count"></span>
+        <span id="cooldown-chip" class="cool-chip" hidden></span>
+      </div>
+      <ul id="queue-list" class="qlist"></ul>
+      <p id="queue-empty" class="queue-empty">清單是空的。貼上網址按「增加」，影片的標題和封面會自動帶進來。</p>
+      <div class="queue-set">
         <div class="field">
           <span id="quality-label" class="field-label">解析度</span>
           <div id="quality" class="segmented" role="radiogroup" aria-labelledby="quality-label">
@@ -71,36 +80,14 @@
           </div>
         </div>
         <div class="field">
-          <label for="limit" class="field-label">最多下載</label>
+          <label for="cooldown" class="field-label">每支間隔</label>
           <div class="suffix">
-            <input id="limit" type="number" min="1" max="1000" placeholder="全部" inputmode="numeric">
-            <span>支</span>
+            <input id="cooldown" type="number" min="3" max="60" step="1" value="10" inputmode="numeric">
+            <span>秒</span>
           </div>
         </div>
       </div>
-
-      <div class="field">
-        <label for="filename" class="field-label">檔名 <span class="hint">單支影片時可修改</span></label>
-        <input id="filename" type="text" disabled placeholder="預設為影片標題" autocomplete="off">
-      </div>
-
-      <div class="actions">
-        <button id="download" class="btn primary block" type="button" disabled>開始下載</button>
-        <button id="cancel" class="btn danger block" type="button" hidden>取消下載</button>
-      </div>
-    </section>
-
-    <section id="queue" class="card queue" hidden>
-      <div class="queue-head">
-        <h2 id="queue-title">下載清單</h2>
-        <span id="queue-count" class="count"></span>
-      </div>
-      <div id="overall" class="overall" hidden>
-        <div class="bar" role="progressbar" aria-label="整體進度" aria-valuemin="0" aria-valuemax="100"><span id="overall-bar"></span></div>
-        <span id="overall-text" class="overall-text"></span>
-      </div>
-      <ul id="items" class="items"></ul>
-      <div id="summary" class="summary" hidden></div>
+      <button id="start-all" class="btn primary block" type="button" disabled>開始全部下載</button>
     </section>
 
     <details id="settings" class="card settings">
@@ -111,6 +98,13 @@
           <div class="row">
             <input id="outdir" type="text" disabled spellcheck="false">
             <button id="save-outdir" class="btn small" type="button" disabled>儲存</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="limit" class="field-label">頻道或播放清單最多展開</label>
+          <div class="suffix">
+            <input id="limit" type="number" min="1" max="1000" step="1" value="50" inputmode="numeric">
+            <span>支</span>
           </div>
         </div>
         <div class="row between"><span>下載引擎（yt-dlp）</span><button id="update" class="btn small" type="button" disabled>更新下載引擎</button></div>

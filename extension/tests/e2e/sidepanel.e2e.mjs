@@ -1,18 +1,25 @@
-// End-to-end check of side panel page + background + real host (with a stub yt-dlp) in headless Chromium.
+// End-to-end check of the side panel page + background + real host (with a stub yt-dlp) in headless Chromium.
 // The side panel itself cannot be opened without a real user gesture, so the page is opened as a tab.
 // Exit codes: 0 = OK, 1 = assertion failed, 2 = UNVERIFIED (browser/extension could not be launched).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { launchExtension, manifest, registerNativeHost, root, shotter } from "./helpers.mjs";
+import { startFakeYtimg } from "./fake-ytimg.mjs";
 
-const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 } });
+const ytimg = await startFakeYtimg({ covers: {
+  v1: ["hq720", "mqdefault"], v2: ["mqdefault"], xss1: ["mqdefault"],
+} });
+const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 }, args: ytimg.args() });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });
 const stub = path.join(home, "bin", "yt-dlp");
 fs.copyFileSync(path.join(root, "host/tests/stub_ytdlp.py"), stub);
 fs.chmodSync(stub, 0o755);
+const step = (name) => { if (process.env.E2E_VERBOSE) console.error(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${name}`); };
+const t0 = Date.now();
+const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
 try {
   const page = await context.newPage();
@@ -20,25 +27,35 @@ try {
   if (process.env.E2E_SCHEME) await page.emulateMedia({ colorScheme: process.env.E2E_SCHEME });
   await page.goto(`chrome-extension://${extId}/sidepanel.html`);
   const state = (s) => page.waitForFunction((x) => document.getElementById("status").dataset.state === x, s);
+  const rowByTitle = (text) => page.locator(".qrow", { hasText: text });
+  const queueState = () => page.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state);
+  const add = async (url) => { await page.fill("#add-url", url); await page.click("#add-btn"); };
 
   // The manifest declares a side panel and no popup.
   assert.equal(manifest.side_panel.default_path, "sidepanel.html");
   assert.equal(manifest.action.default_popup, undefined);
   assert.ok(manifest.permissions.includes("sidePanel"));
 
-  // Phase A: no native host registered yet -> onboarding card is shown.
+  step("1. No native host registered yet");
+  // 1. No native host registered yet: onboarding is shown, adding still works, downloading waits for the host.
   await page.click("#start");
   await state("not_installed");
   assert.match(await page.textContent("#status"), /尚未部署/);
   assert.equal(await page.isVisible("#setup"), true);
-  await page.fill("#urls", "https://youtu.be/a\nhttp://evil.com/x");
-  await page.waitForSelector("#invalid:not([hidden]) li");
-  assert.match(await page.textContent("#invalid"), /http:\/\/evil\.com\/x/);
+  await page.fill("#add-url", "http://evil.com/x");
+  await page.click("#add-btn");
+  await page.waitForFunction(() => /不是 YouTube 網址/.test(document.getElementById("add-note").textContent));
+  await add("https://youtu.be/v1");
+  await page.waitForSelector('.qrow[data-kind="waiting-host"]');
+  assert.match(await page.textContent("#queue-list"), /等待連線本機小程式/);
+  assert.equal(await page.isDisabled("#start-all"), true);
+  assert.equal(await page.inputValue("#add-url"), "", "the box is emptied after adding");
   await shot("1-not-installed");
 
-  // Phase B: register the real host (python) wired to the stub engine, then start it.
+  step("2. Register the real host (python) wired");
+  // 2. Register the real host (python) wired to the stub engine; the panel connects, the row gets its title and cover.
   const wrapper = path.join(work, "host.sh");
-  fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexec python3 "${path.join(root, "host/host.py")}"\n`);
+  fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexec python3 "${path.join(root, "host/host.py")}"\n`);
   fs.chmodSync(wrapper, 0o755);
   registerNativeHost({ userData, wrapperPath: wrapper, extId });
   await page.click("#start");
@@ -46,62 +63,113 @@ try {
   assert.match(await page.textContent("#status"), /已啟動/);
   assert.match(await page.textContent("#engine-info"), /2099\.01\.01/);
   assert.equal(await page.isVisible("#setup"), false, "onboarding collapses once running");
-
+  await page.waitForSelector('.qrow[data-kind="waiting"]');
+  assert.match(await page.textContent("#queue-list"), /範例影片/);
+  assert.match(await page.getAttribute(".qrow .qthumb", "src"), /\/vi\/v1\/mqdefault\.jpg$/);
+  await page.waitForFunction(() => { const i = document.querySelector(".qrow .qthumb"); return i && i.complete && i.naturalWidth > 0; });
   await page.click("#settings > summary");
   await page.fill("#outdir", outDir);
   await page.click("#save-outdir");
   await page.waitForFunction((d) => document.getElementById("note").textContent.includes(d), outDir);
   await page.click("#settings > summary");
 
-  // Current-tab card follows the active tab (YouTube page served from a stub route).
+  step("3. A hostile title is shown as text and ");
+  // 3. A hostile title is shown as text and never runs.
+  await add(watch("xss1"));
+  const hostile = '<img src=x onerror="window.__pwned=1">';
+  await page.waitForFunction((t) => [...document.querySelectorAll(".qtitle")].some((n) => n.textContent === t), hostile);
+  assert.equal(await page.evaluate(() => window.__pwned), undefined);
+  assert.equal(await page.locator(".qtitle img").count(), 0);
+
+  step("4. The same video again is marked as a d");
+  // 4. The same video again is marked as a duplicate, not added twice.
+  await add(watch("v1"));
+  await page.waitForSelector('.qrow[data-kind="duplicate"]');
+  assert.match(await page.textContent('.qrow[data-kind="duplicate"]'), /重複下載/);
+  assert.match(await page.textContent('.qrow[data-kind="duplicate"]'), /與第 1 筆相同/);
+
+  step("5. The current-tab card adds the page be");
+  // 5. The current-tab card adds the page being viewed.
   await context.route("https://www.youtube.com/**", (route) => route.fulfill({
-    contentType: "text/html; charset=utf-8", body: "<title>範例影片 - YouTube</title><h1>stub</h1>" }));
-  await page.fill("#urls", "");
+    contentType: "text/html; charset=utf-8", body: "<title>影片 v2 - YouTube</title><h1>stub</h1>" }));
   const yt = await context.newPage();
-  await yt.goto("https://www.youtube.com/watch?v=v1");
+  await yt.goto(watch("v2"));
   await page.waitForSelector("#tab-card:not([hidden])");
-  assert.match(await page.textContent("#tab-title"), /範例影片/);
   assert.match(await page.textContent("#tab-kind"), /影片/);
   await page.evaluate(() => document.getElementById("tab-add").click());
-  await page.waitForFunction(() => document.getElementById("urls").value.includes("watch?v=v1"));
+  await rowByTitle("影片 v2").first().waitFor();
   await yt.close();
   await page.bringToFront();
-
-  // Resolve shows a preview list before anything is downloaded.
-  await page.waitForFunction(() => document.getElementById("filename").value === "範例影片");
-  assert.equal(await page.isEnabled("#filename"), true);
-  await page.waitForSelector("#items li");
-  assert.match(await page.textContent("#items"), /範例影片/);
-  const noScroll = () => page.evaluate(() => { const l = document.getElementById("items"); return l.scrollHeight <= l.clientHeight + 1; });
-  assert.equal(await noScroll(), true, "a single row must not make the list scroll");
-  await page.waitForTimeout(500); // let the entrance animation settle before the screenshot
   await shot("2-ready");
 
+  step("6. Settings reach the background script");
+  // 6. Settings reach the background script.
   await page.click('label:has(input[name="quality"][value="720"])');
-  assert.equal(await page.isChecked('input[name="quality"][value="720"]'), true);
-  await page.click("#download");
-  await page.waitForSelector("#summary:not([hidden])");
-  assert.match(await page.textContent("#summary"), /完成 1/);
-  assert.match(await page.textContent("#note"), /下載完成/, "the stale 下載中… banner is replaced when the job ends");
-  assert.match(await page.textContent("#overall-text"), /1 \/ 1/);
-  assert.match(await page.textContent("#items"), /範例影片/, "finished rows keep the video title, not the id");
-  assert.doesNotMatch(await page.textContent("#items"), /\bv1\b/);
-  assert.equal(await noScroll(), true, "a finished single row must not make the list scroll");
+  await page.fill("#cooldown", "3");
+  await page.dispatchEvent("#cooldown", "change");
+  await page.waitForFunction(async () => {
+    const s = (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings;
+    return s.quality === 720 && s.cooldownSec === 3;
+  });
+
+  step("7. Start");
+  // 7. Start: rows go one by one with progress inside the row and a cooldown in between.
+  await page.click("#start-all");
+  await page.waitForSelector('.qrow[data-kind="downloading"]');
+  assert.match(await page.textContent('.qrow[data-kind="downloading"] .qpill'), /下載中|0%/);
+  await page.waitForSelector("#cooldown-chip:not([hidden])", { timeout: 20000 });
+  assert.match(await page.textContent("#cooldown-chip"), /秒後開始/);
+  assert.match(await page.textContent('.qrow[data-kind="cooling"]'), /冷卻中，\d+ 秒後開始/);
+  await shot("3-cooldown");
+  await page.waitForFunction(() => document.querySelectorAll('.qrow[data-kind="done"]').length === 3, null, { timeout: 40000 });
+  assert.equal(await page.locator('.qrow[data-kind="duplicate"]').count(), 1);
+  assert.ok(fs.existsSync(path.join(outDir, "範例影片.mp4")), "downloaded file is named after the title");
+  assert.ok(fs.existsSync(path.join(outDir, "影片 v2.mp4")));
+  assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).length, 3, "the duplicate was not downloaded");
+  assert.match(await page.textContent("#start-all"), /全部完成/);
+  assert.match(await page.textContent("#queue-stats"), /3/);
+  await shot("4-done");
+
+  step("8. Copy text puts 【title】 and the first ");
+  // 8. Copy text puts 【title】 and the first three hashtags on the clipboard.
+  await rowByTitle("範例影片").first().locator(".qcopy").click();
+  await page.waitForFunction(() => document.querySelector(".qrow .qcopy[data-state='ok']"));
+  // read the clipboard by pasting into a scratch textarea (readText would need a permission prompt)
+  await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.body.append(t); t.focus(); });
+  await page.keyboard.press("Control+V");
+  assert.equal(await page.inputValue("#paste-probe"), "【範例影片】\n#標籤一 #標籤二 #標籤三");
+  await page.evaluate(() => document.getElementById("paste-probe").remove());
+
+  step("9. The cover");
+  // 9. The cover: grey with a download symbol on hover; a click saves the original size next to the videos.
+  const cover = rowByTitle("範例影片").first().locator(".qcover");
+  await cover.hover();
+  assert.match(await cover.locator(".qthumb").evaluate((n) => getComputedStyle(n).filter), /grayscale/);
+  assert.equal(await cover.locator(".qdl").evaluate((n) => getComputedStyle(n).opacity), "1");
+  await cover.click();
+  await page.waitForFunction(() => document.querySelector(".qrow .qcover[data-state='ok']"));
+  const saved = fs.readFileSync(path.join(outDir, "範例影片.jpg"));
+  assert.deepEqual([...saved.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  assert.match(saved.toString("latin1"), /v1:hq720/);
+
+  step("10. The X removes a row (the duplicate h");
+  // 10. The X removes a row (the duplicate here).
+  await page.locator('.qrow[data-kind="duplicate"] .qx').click();
+  await page.waitForFunction(() => document.querySelectorAll(".qrow").length === 3);
+  assert.equal((await queueState()).items.length, 3);
+
   assert.equal(await page.evaluate(() => {
     const pill = document.getElementById("status").getBoundingClientRect();
     const title = document.querySelector("h1").getBoundingClientRect();
     return Math.abs(pill.top - title.top) < 30; // pill stays on the header's first row
   }), true, "status pill stays beside the title");
-  await page.waitForTimeout(500);
-  assert.ok(fs.existsSync(path.join(outDir, "範例影片.mp4")), "downloaded file is named after the title");
-  await shot("3-done");
 
   // Layout holds at the narrowest and widest side panel widths: no horizontal scrolling.
   for (const width of [320, 480]) {
     await page.setViewportSize({ width, height: 860 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true,
       `no horizontal overflow at ${width}px`);
-    await shot(`4-width-${width}`);
+    await shot(`5-width-${width}`);
   }
   console.log("OK");
 } catch (error) {
@@ -109,4 +177,5 @@ try {
   process.exitCode = 1;
 } finally {
   await context.close();
+  await ytimg.close();
 }

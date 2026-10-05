@@ -6,7 +6,7 @@ const QUEUE = ["queue_get", "queue_add", "queue_remove", "queue_retry", "queue_s
 
 // The side panel is the extension's own page: it may also run updates.
 export const PANEL_ALLOWED = new Set([
-  "get_status", "start", "resolve", "download", "cancel", "set_output_dir", "deploy_installer",
+  "get_status", "start", "set_output_dir", "deploy_installer",
   "update_engine", "update_check", "update_stage", "update_commit", "update_rollback", ...QUEUE,
 ]);
 

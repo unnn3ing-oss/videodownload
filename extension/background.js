@@ -2,8 +2,6 @@
 // side panel or the web page is open. Both are only views of the list held here.
 import { HOST_NAME, WEB_ORIGIN, WEB_PATH } from "./lib/constants.js";
 import { classifyConnectError, installerFor } from "./lib/platform.js";
-import { applyEvent, emptyProgress } from "./lib/events.js";
-import { seedProgress } from "./lib/progress.js";
 import { checkLatest } from "./lib/updater.js";
 import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
@@ -11,18 +9,10 @@ import { classifySender, isAllowed } from "./lib/messages.js";
 
 let port = null;
 let status = { state: "stopped", ready: null, detail: null };
-let progress = emptyProgress();
-let busy = false;
 const webPorts = new Set(); // long-lived connections from the web page's content script
 
-// Old request/reply plumbing used by the side panel until it moves to the queue messages:
-// panel message -> host request, the answer is broadcast as a host_event carrying the panel's reqId.
+// Panel commands that are answered by the host: the answer is broadcast as a host_event carrying the panel's reqId.
 const FORWARD = {
-  resolve: (m) => ({ type: "resolve", reqId: m.reqId, urls: m.urls, limit: m.limit }),
-  download: (m) => ({ type: "download", reqId: m.reqId, items: m.items, quality: m.quality,
-                      titleOverride: m.titleOverride }),
-  cancel: (m) => ({ type: "cancel", reqId: m.reqId }),
-  set_output_dir: (m) => ({ type: "set_config", reqId: m.reqId, outputDir: m.path }),
   update_engine: (m) => ({ type: "update_engine", reqId: m.reqId }),
   update_check: (m) => ({ type: "update_check", reqId: m.reqId, files: m.files }),
   update_stage: (m) => ({ type: "update_stage", reqId: m.reqId, commit: m.commit, files: m.files, contents: m.contents }),
@@ -31,7 +21,7 @@ const FORWARD = {
 };
 
 function snapshot() {
-  return { type: "status", ...status, progress, busy };
+  return { type: "status", ...status };
 }
 
 function broadcast(message) {
@@ -141,15 +131,6 @@ function onHostMessage(msg) {
     waiter.resolve(msg);
     return;
   }
-  if (msg.type === "started") busy = true;
-  if (msg.type === "done") busy = false;
-  if (["progress", "item_done", "item_failed", "done"].includes(msg.type)) {
-    progress = applyEvent(progress, msg);
-  }
-  if (msg.type === "config" && status.ready) {
-    status = { ...status, ready: { ...status.ready, outputDir: msg.outputDir } };
-    broadcast(snapshot());
-  }
   broadcast({ type: "host_event", event: msg });
 }
 
@@ -162,7 +143,6 @@ function connect() {
     const message = chrome.runtime.lastError?.message;
     const kind = classifyConnectError(message);
     port = null;
-    busy = false;
     failWaiting(new Error("與本機小程式的連線中斷"));
     controllerReady.then((controller) => controller.onHostDisconnected());
     const state = kind === "not_installed" ? "not_installed" : kind === "forbidden" ? "forbidden" : "stopped";
@@ -214,11 +194,10 @@ async function handle(msg) {
     case "deploy_installer": return deployInstaller();
     default: break;
   }
-  if (msg.type === "set_output_dir" && msg.reqId === undefined) return setOutputDir(msg.path);
+  if (msg.type === "set_output_dir") return setOutputDir(msg.path);
   const build = FORWARD[msg.type];
   if (!build) return { ok: false, error: "unknown" };
   if (!port) return { ok: false, error: "not_running" };
-  if (msg.type === "download") progress = seedProgress(msg.items);
   port.postMessage(build(msg));
   return { ok: true };
 }

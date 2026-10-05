@@ -39,7 +39,6 @@ const wrapper = path.join(work, "host.sh");
 fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=3\n`
   + `exec python3 "${path.join(root, "extension/tests/e2e/host_with_fake_github.py")}"\n`);
 fs.chmodSync(wrapper, 0o755);
-registerNativeHost({ userData, wrapperPath: wrapper, extId });
 
 try {
   const page = await context.newPage();
@@ -101,6 +100,7 @@ try {
   assert.match(await text("update-progress"), /請先按「?『?啟動/);
   await shot("5-update-available");
 
+  registerNativeHost({ userData, wrapperPath: wrapper, extId }); // the panel only finds the host from here on
   // 2. Host started: the host's own files are compared too, and applying is allowed.
   await page.click("#start");
   await state("running");
@@ -140,13 +140,14 @@ try {
   await page.fill("#outdir", outDir);
   await page.click("#save-outdir");
   await page.waitForFunction((d) => document.getElementById("note").textContent.includes(d), outDir);
-  await page.fill("#urls", "https://www.youtube.com/watch?v=v1");
-  await page.waitForFunction(() => document.getElementById("filename").value === "範例影片");
-  await page.click("#download");
-  await page.waitForFunction(() => document.getElementById("cancel").hidden === false);
+  await page.fill("#add-url", "https://www.youtube.com/watch?v=v1");
+  await page.click("#add-btn");
+  await page.waitForSelector('.qrow[data-kind="waiting"]');
+  await page.click("#start-all");
+  await page.waitForSelector('.qrow[data-kind="downloading"]');
   assert.equal(await page.isDisabled("#update-apply"), true);
   assert.match(await text("update-progress"), /下載進行中/);
-  await page.waitForSelector("#summary:not([hidden])");
+  await page.waitForSelector('.qrow[data-kind="done"]');
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
 
   // Layout of the new block at the narrowest and widest side panel widths.

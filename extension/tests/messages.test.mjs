@@ -50,8 +50,8 @@ test("the allowlists are exactly the documented sets", () => {
     "queue_remove", "queue_retry", "queue_start", "queue_stop", "set_output_dir", "settings_set", "start",
   ]);
   assert.deepEqual([...PANEL_ALLOWED].sort(), [
-    "cancel", "deploy_installer", "download", "get_status", "queue_add", "queue_copy_text", "queue_download_cover",
-    "queue_get", "queue_remove", "queue_retry", "queue_start", "queue_stop", "resolve", "set_output_dir",
+    "deploy_installer", "get_status", "queue_add", "queue_copy_text", "queue_download_cover",
+    "queue_get", "queue_remove", "queue_retry", "queue_start", "queue_stop", "set_output_dir",
     "settings_set", "start", "update_check", "update_commit", "update_engine", "update_rollback", "update_stage",
   ]);
 });
