@@ -9,7 +9,8 @@
     "nativeMessaging",
     "downloads",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "alarms"
   ],
   "background": {
     "service_worker": "background.js",
@@ -22,7 +23,9 @@
     "https://www.youtube.com/*",
     "https://m.youtube.com/*",
     "https://music.youtube.com/*",
-    "https://youtu.be/*"
+    "https://youtu.be/*",
+    "https://api.github.com/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"

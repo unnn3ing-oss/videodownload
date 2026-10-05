@@ -3,6 +3,8 @@ import { HOST_NAME } from "./lib/constants.js";
 import { classifyConnectError } from "./lib/platform.js";
 import { applyEvent, emptyProgress } from "./lib/events.js";
 import { seedProgress } from "./lib/progress.js";
+import { checkLatest } from "./lib/updater.js";
+import { applyBadge, saveSummary, summarizeCheck } from "./lib/update-state.js";
 
 let port = null;
 let status = { state: "stopped", ready: null, detail: null };
@@ -85,3 +87,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Clicking the toolbar icon opens the side panel (there is no popup).
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// Look for a new release every 6 hours; a failed check keeps the previous badge.
+const UPDATE_ALARM = "check-update";
+
+async function backgroundCheck() {
+  try {
+    const info = await checkLatest();
+    await saveSummary(summarizeCheck(info));
+    await applyBadge(info.hasUpdate);
+  } catch (error) {
+    await saveSummary({ checkedAt: Date.now(), error: error.message });
+  }
+}
+
+async function ensureUpdateAlarm() {
+  if (!(await chrome.alarms.get(UPDATE_ALARM))) {
+    await chrome.alarms.create(UPDATE_ALARM, { delayInMinutes: 1, periodInMinutes: 360 });
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === UPDATE_ALARM) backgroundCheck();
+});
+ensureUpdateAlarm().catch(() => {});
