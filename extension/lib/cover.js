@@ -1,6 +1,7 @@
 // Original-size cover image of a YouTube video: the largest size that exists.
 export const COVER_VARIANTS = ["maxresdefault", "hq720", "sddefault", "hqdefault"];
-export const MAX_COVER_BYTES = 8 * 1024 * 1024;
+// Must equal host/covers.py MAX_COVER_BYTES: base64 of it still has to fit one native message (8 MiB).
+export const MAX_COVER_BYTES = 5 * 1024 * 1024;
 
 const isJpeg = (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
 

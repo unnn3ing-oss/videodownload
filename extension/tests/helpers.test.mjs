@@ -97,3 +97,11 @@ test("toBase64 lives in base64.js and is still exported by updater.js", () => {
   assert.equal(toBase64FromUpdater, toBase64);
   assert.equal(toBase64(new Uint8Array(100000)).length, Math.ceil(100000 / 3) * 4);
 });
+
+test("the cover size limit is the same in the extension and in the host", () => {
+  const python = fs.readFileSync(new URL("../../host/covers.py", import.meta.url), "utf8");
+  const match = /MAX_COVER_BYTES = (\d+) \* 1024 \* 1024/.exec(python);
+  assert.ok(match, "host/covers.py defines MAX_COVER_BYTES in MiB");
+  assert.equal(Number(match[1]) * 1024 * 1024, MAX_COVER_BYTES);
+  assert.ok(Math.ceil(MAX_COVER_BYTES / 3) * 4 < 8 * 1024 * 1024, "its base64 fits one 8 MiB native message");
+});

@@ -343,3 +343,31 @@ def test_remove_item_during_cooldown(tmp_path):
 def test_remove_unknown_returns_none(tmp_path):
     h = Harness(tmp_path).run([item()])
     assert h.runner.remove("nope") is None
+
+
+def test_failed_item_can_be_enqueued_again_in_the_same_job(tmp_path):
+    h = Harness(tmp_path, fail={"v1": "ERROR: Unable to download webpage: timed out"})
+    entered, gate = threading.Event(), threading.Event()
+    blocking_stream(h, {"v2"}, entered, gate)
+    h.runner.start("j", [item("v1", "甲"), item("v2", "乙")], 1080, h.out)
+    assert entered.wait(5)  # v1 has failed by now and v2 is running
+    h.fail.clear()
+    assert h.runner.enqueue([item("v1", "甲")]) is True
+    gate.set()
+    h.runner.join(10)
+    assert [e["itemId"] for e in h.of("item_failed")] == ["v1"]
+    assert sorted(Path(e["file"]).name for e in h.of("item_done")) == ["乙.mp4", "甲.mp4"]
+
+
+def test_removed_item_can_be_enqueued_again_in_the_same_job(tmp_path):
+    h = Harness(tmp_path)
+    entered, gate = threading.Event(), threading.Event()
+    blocking_stream(h, {"v1"}, entered, gate)
+    h.runner.start("j", [item("v1", "甲"), item("v2", "乙")], 1080, h.out)
+    assert entered.wait(5)
+    assert h.runner.remove("v1") == "current"
+    assert h.runner.enqueue([item("v1", "甲")]) is True
+    gate.set()
+    h.runner.join(10)
+    assert [e["itemId"] for e in h.of("item_removed")] == ["v1"]
+    assert sorted(Path(e["file"]).name for e in h.of("item_done")) == ["乙.mp4", "甲.mp4"]

@@ -11,7 +11,8 @@ import { toBase64 } from "./base64.js";
 import { versionAtLeast } from "./version.js";
 import { MIN_HOST_VERSION } from "./constants.js";
 
-const TIMEOUT = { resolve: 180000, meta: 90000, save_cover: 30000, download: 20000, enqueue: 20000 };
+const MAX_RESOLVES = 2; // yt-dlp processes asking YouTube at the same time
+const TIMEOUT = { remove: 15000, resolve: 180000, meta: 90000, save_cover: 30000, download: 20000, enqueue: 20000 };
 const fail = (error) => ({ ok: false, error });
 
 // deps.host: { connected(), version(), request(message, timeoutMs) -> Promise<event>, send(message) }
@@ -19,6 +20,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   let state = createState(initial);
   const sentIds = new Set(); // video ids the host already has in its current job
   const resolving = new Set(); // uids with a resolve request in flight
+  const expectRemoved = new Set(); // video ids the host was told to cancel mid-download; it will confirm each once
   const tasks = new Set();
   let starting = false;
   let restartAfterDone = false;
@@ -57,12 +59,16 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       } finally {
         resolving.delete(uid);
       }
+      pumpResolves();
       syncRun();
     })());
   }
 
-  function flushResolves() {
+  // Rows waiting for their title are resolved a couple at a time, in list order: one yt-dlp each.
+  function pumpResolves() {
+    if (!host.connected()) return;
     for (const item of state.items) {
+      if (resolving.size >= MAX_RESOLVES) return;
       if (item.status === "fetching" && !resolving.has(item.uid)) resolveOne(item.uid, item.url);
     }
   }
@@ -139,7 +145,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
         throw error;
       }
       commit(added.state);
-      if (host.connected()) resolveOne(added.uid, url);
+      pumpResolves();
       return { ok: true };
     },
 
@@ -149,7 +155,11 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       const live = item.status === "waiting" || item.status === "downloading";
       if (live && item.id && !item.dupOf && state.running && sentIds.has(item.id)) {
         sentIds.delete(item.id);
-        try { host.send({ type: "remove", itemId: item.id }); } catch { /* host gone: nothing to cancel */ }
+        // Only a download that is already running gets an item_removed event back, and that event must not
+        // be mistaken for a duplicate that has just taken this row's place.
+        track(host.request({ type: "remove", itemId: item.id }, TIMEOUT.remove).then((event) => {
+          if (event.type === "removed" && event.where === "current") expectRemoved.add(item.id);
+        }));
       }
       commit(removeItem(state, uid));
       syncRun();
@@ -184,7 +194,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
     onHostConnected() {
       commit(setHostConnected(state, true));
-      flushResolves();
+      pumpResolves();
       return idle();
     },
 
@@ -192,10 +202,12 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       sentIds.clear();
       starting = false;
       restartAfterDone = false;
+      expectRemoved.clear();
       commit(hostLost(state));
     },
 
     onHostEvent(event) {
+      if (event.type === "item_removed" && expectRemoved.delete(event.itemId)) return;
       const next = applyHostEvent(state, event, now());
       if (next !== state) commit(next);
       if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);

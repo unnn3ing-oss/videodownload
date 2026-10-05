@@ -6,7 +6,6 @@ import { formatEta, formatSpeed } from "./format.js";
 export const MAX_ITEMS = 500;
 export const DEFAULT_SETTINGS = { quality: 1080, cooldownSec: 10, limit: 50 };
 const STATUSES = new Set(["fetching", "waiting", "downloading", "done", "skipped", "failed"]);
-const INTERRUPTED = "已中斷，請重新加入";
 
 export class QueueError extends Error {
   constructor(code, message) {
@@ -66,7 +65,7 @@ export function createState(saved = null) {
     if (!raw || typeof raw !== "object" || !Number.isInteger(raw.uid) || !STATUSES.has(raw.status)) continue;
     let item = blankItem(raw.uid, raw);
     if (item.status === "downloading") item = { ...item, status: "waiting", percent: null, speed: null, eta: null };
-    if (item.status === "fetching") item = { ...item, status: "failed", error: INTERRUPTED, title: item.title || item.url };
+    if (item.status === "fetching") item = { ...item, title: item.title || item.url }; // resolved again once the host is there
     items.push(item);
   }
   const top = items.reduce((m, i) => Math.max(m, i.uid), 0);

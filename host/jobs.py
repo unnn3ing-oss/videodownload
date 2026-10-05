@@ -160,6 +160,8 @@ class JobRunner:
                 finally:
                     with self._lock:
                         self._current = None
+                if outcome in ("failed", "removed") and isinstance(it, dict):
+                    seen.discard(it.get("id"))  # a retry or a re-added copy must be allowed to run in this job
                 if outcome == "ok":
                     summary["ok"] += 1
                     downloaded_any = True

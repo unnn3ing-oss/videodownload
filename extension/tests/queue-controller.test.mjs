@@ -26,6 +26,7 @@ function fakeHost(options = {}) {
   h.replies.download = { type: "started", jobId: "j" };
   h.replies.enqueue = (m) => ({ type: "enqueued", count: m.items.length });
   h.replies.meta = { type: "meta", id: "a", title: "影片 a", description: "說明 #標籤一 #標籤二 #標籤三 #標籤四" };
+  h.replies.remove = (m) => ({ type: "removed", itemId: m.itemId, where: "pending" });
   h.replies.save_cover = { type: "cover_saved", file: "/out/影片a.jpg" };
   return h;
 }
@@ -202,8 +203,23 @@ test("removing the earliest copy during a run enqueues the duplicate that was pr
   await ctl.start();
   ctl.remove(rows(ctl)[0].uid);
   await ctl.idle();
-  assert.deepEqual(host.sends, [{ type: "remove", itemId: "a" }]);
+  assert.deepEqual(host.of("remove").map((m) => m.itemId), ["a"]);
   assert.deepEqual(host.of("enqueue").map((m) => m.items.map((i) => i.id)), [["a"]]);
+});
+
+test("the host's item_removed for a row the user removed does not take its promoted duplicate with it", async () => {
+  const { host, ctl } = await withVideos(["a", "b", "a"]);
+  await ctl.start();
+  ctl.onHostEvent({ type: "progress", itemId: "a", percent: 5 });
+  host.replies.remove = (m) => ({ type: "removed", itemId: m.itemId, where: "current" });
+  ctl.remove(rows(ctl)[0].uid);
+  await ctl.idle();
+  assert.deepEqual(rows(ctl).map((i) => i.id), ["b", "a"], "the duplicate took over the first row's place");
+  ctl.onHostEvent({ type: "item_removed", itemId: "a" }); // the host confirms the cancelled download
+  assert.deepEqual(rows(ctl).map((i) => i.id), ["b", "a"]);
+  assert.deepEqual(host.of("enqueue").map((m) => m.items.map((i) => i.id)), [["a"]], "and it was sent exactly once");
+  ctl.onHostEvent({ type: "item_removed", itemId: "a" }); // a later, unrelated removal of the same video still works
+  assert.deepEqual(rows(ctl).map((i) => i.id), ["b"]);
 });
 
 test("retrying a failed row during a run enqueues it again", async () => {
@@ -219,11 +235,13 @@ test("retrying a failed row during a run enqueues it again", async () => {
 test("removing tells the host only about rows it was given", async () => {
   const { host, ctl } = await withVideos(["a", "b"]);
   ctl.remove(byId(ctl, "a").uid);
-  assert.deepEqual(host.sends, [], "nothing was started yet");
+  await ctl.idle();
+  assert.deepEqual(host.of("remove"), [], "nothing was started yet");
   await ctl.start();
   ctl.onHostEvent({ type: "progress", itemId: "b", percent: 3 });
   ctl.remove(byId(ctl, "b").uid);
-  assert.deepEqual(host.sends, [{ type: "remove", itemId: "b" }]);
+  await ctl.idle();
+  assert.deepEqual(host.of("remove").map((m) => m.itemId), ["b"]);
   assert.deepEqual(rows(ctl), []);
 });
 
@@ -315,6 +333,47 @@ test("downloadCover reports a video without any cover", async () => {
   await env.ctl.add(url("a"));
   await env.ctl.idle();
   assert.deepEqual(await env.ctl.downloadCover(rows(env.ctl)[0].uid), { ok: false, error: "找不到封面圖片" });
+});
+
+test("rows that were still waiting for the host survive a service-worker restart and resolve when it connects", async () => {
+  const first = setup({ isConnected: false });
+  await first.ctl.add(url("a"));
+  await first.ctl.add(url("b"));
+  const saved = JSON.parse(JSON.stringify(first.saved.at(-1)));
+  const second = setup({ isConnected: false }, { initial: saved });
+  assert.deepEqual(rows(second.ctl).map((i) => i.status), ["fetching", "fetching"]);
+  second.host.isConnected = true;
+  await second.ctl.onHostConnected({});
+  await second.ctl.idle();
+  assert.deepEqual(rows(second.ctl).map((i) => [i.id, i.status]), [["a", "waiting"], ["b", "waiting"]]);
+});
+
+test("at most two resolve requests are in flight at once, in list order", async () => {
+  const { host, ctl } = setup();
+  let inFlight = 0;
+  let peak = 0;
+  const gates = [];
+  host.replies.resolve = (m) => new Promise((resolve) => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    gates.push(() => {
+      inFlight -= 1;
+      resolve({ type: "resolved", items: [{ id: idOf(m.urls[0]), title: `影片 ${idOf(m.urls[0])}`, url: m.urls[0], duration: 1 }] });
+    });
+  });
+  for (const id of ["a", "b", "c", "d", "e"]) await ctl.add(url(id));
+  assert.equal(host.of("resolve").length, 2, "only two started");
+  gates.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(host.of("resolve").length, 3, "finishing one lets the next start");
+  while (gates.length || host.of("resolve").length < 5) {
+    if (gates.length) gates.shift()();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  await ctl.idle();
+  assert.equal(peak, 2);
+  assert.deepEqual(host.of("resolve").map((m) => idOf(m.urls[0])), ["a", "b", "c", "d", "e"]);
+  assert.deepEqual(rows(ctl).map((i) => i.status), ["waiting", "waiting", "waiting", "waiting", "waiting"]);
 });
 
 test("the queue is restored from saved state", async () => {

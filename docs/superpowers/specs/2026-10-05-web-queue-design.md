@@ -84,7 +84,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
 
 **下載封面（依連線狀態分兩層）**
 - 封面是 `<button>`：滑鼠移過（或鍵盤聚焦）時縮圖反灰並出現下載符號，點擊即下載，不影響整列。觸控裝置不顯示 hover，改為封面角落常駐一個小下載符號。
-- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，依序以 `GET` 請求，取第一個回應成功、檔頭為 JPEG 且不超過 8 MiB 的（YouTube 並非每支影片都有最高解析度，會自動退而求其次），再由**背景程式（Chrome 的網路）下載圖片位元組**（上限 8 MiB），以新訊息 `save_cover` 交給本機小程式，由小程式寫進**影片的存放資料夾**。小程式不自己連網，避免 Python 在 macOS 憑證、公司網路或代理下失敗。
+- 原尺寸圖片依序嘗試 `https://i.ytimg.com/vi/<id>/` 的 `maxresdefault.jpg`、`hq720.jpg`、`sddefault.jpg`、`hqdefault.jpg`，依序以 `GET` 請求，取第一個回應成功、檔頭為 JPEG 且不超過 5 MiB 的（YouTube 並非每支影片都有最高解析度，會自動退而求其次），再由**背景程式（Chrome 的網路）下載圖片位元組**（上限 8 MiB），以新訊息 `save_cover` 交給本機小程式，由小程式寫進**影片的存放資料夾**。小程式不自己連網，避免 Python 在 macOS 憑證、公司網路或代理下失敗。
 - 需要新增 `https://i.ytimg.com/*` 的 `host_permissions`。本機小程式未連線時提示「請先連線本機小程式」；找不到任何封面時提示「找不到封面圖片」。
 - **檔名規則**（`naming.py` 新增 `cover_name`）：
   1. 取影片標題，先去掉所有標點符號、符號與空白（Unicode 類別 P、S、Z），再取**前六個字**（以字元計，中英文都算一個字）。例如「颱風假放不放？氣象署最新預測」→「颱風假放不放」；「【獨家】直擊跨年」→「獨家直擊跨年」；不足六字就全取；去完是空的則改用影片 ID。
@@ -92,7 +92,7 @@ status ∈ fetching | waiting | downloading | done | skipped | failed
   3. **同名衝突（影片資料夾）**：資料夾內隱藏檔 `.ytdl-covers.json` 記錄「影片 ID → 封面檔名」。同一支影片再次下載 → 覆蓋原檔；不同影片前六字相同 → 檔名加 `_2`、`_3`…。
 - **第二層（本機小程式沒連線）**：背景程式改用 `chrome.downloads.download` 把同一張圖存到瀏覽器的「下載」資料夾，檔名同樣是「前六字.jpg」（`conflictAction: "uniquify"`，同名自動加序號），並提示「已存到下載資料夾；連線本機小程式後可存到影片資料夾」。這需要在 JavaScript 端有一份與 `naming.py` 相同的 `coverName`（`extension/lib/covername.js`），兩邊以**同一份測試資料**（`tests/fixtures/cover-names.json`）驗證輸出完全一致。
 - **第三層（沒有擴充功能）**：網頁版不提供封面與複製內文（見 §5）。
-- `save_cover` 的驗證：檔頭必須是 JPEG（`FF D8 FF`）、大小上限 8 MiB，路徑一律經 `safe_output_path`，存放資料夾不存在時自動建立。
+- `save_cover` 的驗證：檔頭必須是 JPEG（`FF D8 FF`）、大小上限 5 MiB（base64 後仍須放得進一則 8 MiB 的原生訊息），路徑一律經 `safe_output_path`，存放資料夾不存在時自動建立。
 
 ## 4. 下載、冷卻與進度（本機小程式）
 

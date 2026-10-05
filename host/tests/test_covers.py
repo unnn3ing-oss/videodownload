@@ -55,3 +55,12 @@ def test_save_cover_creates_missing_directory(tmp_path):
 def test_save_cover_ignores_corrupt_registry(tmp_path):
     (tmp_path / ".ytdl-covers.json").write_text("{not json", encoding="utf-8")
     assert save_cover(tmp_path, "v1", "標題", JPEG).name == "標題.jpg"
+
+
+def test_largest_cover_fits_in_one_native_message():
+    import base64
+    import json
+    import protocol
+    biggest = base64.b64encode(b"\xff\xd8\xff" + b"\x00" * (MAX_COVER_BYTES - 3)).decode()
+    message = json.dumps({"type": "save_cover", "id": "x" * 64, "title": "題" * 200, "data": biggest, "reqId": "bg:123456"})
+    assert len(message.encode("utf-8")) < protocol.MAX_IN

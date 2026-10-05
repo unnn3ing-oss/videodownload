@@ -223,9 +223,9 @@ test("createState restores a saved queue conservatively", () => {
   };
   const state = createState(saved);
   assert.deepEqual([state.running, state.cooldown, state.hostConnected], [false, null, false]);
-  assert.deepEqual(state.items.map((i) => i.status), ["waiting", "failed", "done", "waiting"]);
+  assert.deepEqual(state.items.map((i) => i.status), ["waiting", "fetching", "done", "waiting"]);
   assert.equal(state.items[0].percent, null);
-  assert.equal(state.items[1].error, "已中斷，請重新加入");
+  assert.equal(state.items[1].error, null, "a row that never got its title is resolved again, not failed");
   assert.equal(state.items[3].dupOf, 5, "duplicates are recomputed on restore");
   assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 50 });
   assert.equal(addPlaceholder(state, url("n")).uid, 9, "new uids continue after the saved ones");

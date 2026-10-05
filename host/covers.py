@@ -9,7 +9,8 @@ from pathlib import Path
 from naming import sanitize_filename
 from security import safe_output_path
 
-MAX_COVER_BYTES = 8 * 1024 * 1024
+# base64 grows the image by a third, and one native message may carry 8 MiB in total (protocol.MAX_IN)
+MAX_COVER_BYTES = 5 * 1024 * 1024
 JPEG_MAGIC = b"\xff\xd8\xff"
 REGISTRY = ".ytdl-covers.json"
 NAME_CHARS = 6
