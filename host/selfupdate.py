@@ -6,14 +6,23 @@ GitHub API over TLS); every downloaded byte must match its git blob SHA exactly.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
+import subprocess
+import sys
 import urllib.request
 from pathlib import Path
+from typing import Callable
+
+from update_config import OWNER, REPO
 
 MAX_FILES = 50
 MAX_FILE_BYTES = 2 * 1024 * 1024
 ALLOWED_NAME = re.compile(r"[A-Za-z0-9_]+\.py")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+RAW_BASE = f"https://raw.githubusercontent.com/{OWNER}/{REPO}"
+_CHECK_CODE = "import sys; sys.path.insert(0, sys.argv[1]); import host"
 
 
 class UpdateError(Exception):
@@ -82,3 +91,73 @@ def http_get(url: str, timeout: float = 30.0) -> bytes:
     if len(data) > MAX_FILE_BYTES:
         raise UpdateError("update_download_failed", "檔案超過大小上限")
     return data
+
+
+def _staging(home: Path) -> Path:
+    return Path(home) / "update" / "staging"
+
+
+def _rmtree(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _staged_names(staging: Path) -> list[str]:
+    try:
+        names = json.loads((staging / "_files.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [n for n in names if isinstance(n, str) and ALLOWED_NAME.fullmatch(n)]
+
+
+def self_check(home: Path, python: str | None = None) -> None:
+    """Import the host with the staged files laid over the installed ones, in a throwaway subprocess."""
+    home = Path(home)
+    check = home / "update" / "check"
+    _rmtree(check)
+    check.mkdir(parents=True)
+    try:
+        for source in (home / "host").glob("*.py"):
+            shutil.copy2(source, check / source.name)
+        for name in _staged_names(_staging(home)):
+            shutil.copy2(_staging(home) / name, check / name)
+        try:
+            done = subprocess.run([python or sys.executable, "-c", _CHECK_CODE, str(check)],
+                                  capture_output=True, text=True, timeout=30)
+        except Exception as exc:
+            raise UpdateError("update_selfcheck_failed", f"新版小程式無法檢查：{exc}") from exc
+        if done.returncode != 0:
+            tail = (done.stderr.strip().splitlines() or ["未知原因"])[-1]
+            raise UpdateError("update_selfcheck_failed", f"新版小程式無法載入：{tail}")
+    finally:
+        _rmtree(check)
+
+
+def stage(home: Path, commit: str, files: list[dict], fetch: Callable[[str], bytes] | None = None) -> int:
+    """Download the changed files into staging, verify every byte, and self-check. Returns the file count."""
+    fetch = fetch or http_get  # looked up at call time so tests can replace http_get
+    if not isinstance(commit, str) or not SHA_RE.fullmatch(commit):
+        raise UpdateError("update_bad_file", "commit 格式不正確")
+    files = validate_files(files)
+    if not files:
+        raise UpdateError("update_nothing_staged", "沒有需要更新的檔案")
+    staging = _staging(home)
+    _rmtree(staging)
+    staging.mkdir(parents=True)
+    try:
+        for entry in files:
+            try:
+                data = fetch(f"{RAW_BASE}/{commit}/host/{entry['path']}")
+            except UpdateError:
+                raise
+            except Exception as exc:
+                raise UpdateError("update_download_failed", f"下載 {entry['path']} 失敗：{exc}") from exc
+            if len(data) > MAX_FILE_BYTES or git_blob_sha(data) != entry["sha"]:
+                raise UpdateError("update_hash_mismatch",
+                                  f"{entry['path']} 下載內容和 GitHub 上的不一致，已取消更新")
+            (staging / entry["path"]).write_bytes(data)
+        (staging / "_files.json").write_text(json.dumps([e["path"] for e in files]), encoding="utf-8")
+        self_check(home)
+    except BaseException:
+        _rmtree(staging)
+        raise
+    return len(files)
