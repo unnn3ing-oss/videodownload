@@ -1,0 +1,9 @@
+[
+  {"title": "颱風假放不放？氣象署最新預測一次看", "id": "a1", "expected": "颱風假放不放"},
+  {"title": "【獨家】直擊跨年晚會", "id": "a2", "expected": "獨家直擊跨年"},
+  {"title": "AI 詐騙新手法", "id": "a3", "expected": "AI詐騙新手"},
+  {"title": "短", "id": "a4", "expected": "短"},
+  {"title": "？！", "id": "xyz", "expected": "xyz"},
+  {"title": "CON", "id": "a5", "expected": "_CON"},
+  {"title": "😀😀颱風假放不放", "id": "a6", "expected": "颱風假放不放"}
+]

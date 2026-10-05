@@ -1,8 +1,11 @@
 """URL allow-list and output-path safety."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
+
+VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def is_allowed_url(url: object) -> bool:

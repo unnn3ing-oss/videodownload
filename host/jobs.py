@@ -11,11 +11,9 @@ from typing import Callable
 
 from naming import resolve_target
 from quality import parse_quality
-from security import is_allowed_url, safe_output_path
+from security import VIDEO_ID, is_allowed_url, safe_output_path
 from ytdlp import (Engine, ResolveError, build_download_args, classify_error, parse_done_line,
                    parse_progress_line, resolve, stream_download)
-
-_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 PLACEHOLDER_TITLES = {
     "[private video]": ("private", "這是私人影片，沒有權限下載"),
@@ -147,7 +145,7 @@ class JobRunner:
                 fail(item_id, "unavailable", "找不到這支影片")
                 return "failed"
             vid, title = vid or refs[0].id, title or refs[0].title
-        if not isinstance(vid, str) or not _VIDEO_ID.fullmatch(vid) or not isinstance(title, str):
+        if not isinstance(vid, str) or not VIDEO_ID.fullmatch(vid) or not isinstance(title, str):
             fail(str(item_id), "bad_id", "影片資料不正確，已略過")
             return "failed"
         if vid in seen:

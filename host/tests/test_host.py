@@ -217,3 +217,26 @@ def test_unrunnable_engine_does_not_break_ready(tmp_path):
     (home / "bin" / "yt-dlp").chmod(0o644)  # exists but cannot be executed
     h = Host(home, [].append)
     assert h.ready_message()["ytdlpVersion"] is None
+
+
+def test_save_cover_message_writes_into_output_dir(tmp_path):
+    import base64
+    h, events = new_host(tmp_path)
+    jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 8
+    h.handle({"type": "save_cover", "reqId": 3, "id": "v1", "title": "颱風假放不放？", "data": base64.b64encode(jpeg).decode()})
+    assert events[-1]["type"] == "cover_saved" and events[-1]["reqId"] == 3
+    assert (tmp_path / "out" / "颱風假放不放.jpg").read_bytes() == jpeg
+    assert Path(events[-1]["file"]).name == "颱風假放不放.jpg"
+
+
+def test_save_cover_message_rejects_bad_id_and_bad_base64(tmp_path):
+    import base64
+    h, events = new_host(tmp_path)
+    good = base64.b64encode(b"\xff\xd8\xff\xe0").decode()
+    h.handle({"type": "save_cover", "id": "../x", "title": "t", "data": good})
+    assert events[-1]["type"] == "error" and events[-1]["code"] == "bad_id"
+    h.handle({"type": "save_cover", "id": "v1", "title": "t", "data": "***"})
+    assert events[-1]["type"] == "error" and events[-1]["code"] == "bad_cover"
+    h.handle({"type": "save_cover", "id": "v1", "title": 5, "data": good})
+    assert events[-1]["type"] == "error"
+    assert not (tmp_path / "out").exists() or not list((tmp_path / "out").glob("*.jpg"))

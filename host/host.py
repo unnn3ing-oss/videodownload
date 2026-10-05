@@ -1,6 +1,8 @@
 """Native Messaging host: reads requests from Chrome, drives yt-dlp, streams events back."""
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import sys
 import threading
@@ -10,15 +12,16 @@ from typing import BinaryIO, Callable
 
 import selfupdate
 from config import ConfigStore
+from covers import CoverError, save_cover
 from jobs import JobRunner
 from protocol import BadMessage, ProtocolError, read_message, write_message
 from quality import parse_quality
-from security import is_allowed_url
+from security import VIDEO_ID, is_allowed_url
 from version import VERSION
 from ytdlp import Engine, ResolveError, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover"}
 MAX_LIMIT = 1000
 
 
@@ -158,6 +161,25 @@ class Host:
                               override if isinstance(override, str) and override.strip() else None)
         except RuntimeError:
             self._error(msg, "busy", "已有下載工作進行中")
+
+    def _on_save_cover(self, msg: dict) -> None:
+        video_id, title, data = msg.get("id"), msg.get("title"), msg.get("data")
+        if not isinstance(video_id, str) or not VIDEO_ID.fullmatch(video_id):
+            self._error(msg, "bad_id", "影片 ID 不正確")
+            return
+        if not isinstance(title, str) or not isinstance(data, str):
+            self._error(msg, "bad_cover", "封面資料格式不正確")
+            return
+        try:
+            raw = base64.b64decode(data, validate=True)
+            path = save_cover(self.config.output_dir, video_id, title, raw)
+        except (binascii.Error, ValueError):
+            self._error(msg, "bad_cover", "封面圖片不是有效的編碼")
+            return
+        except CoverError as exc:
+            self._error(msg, exc.code, exc.message)
+            return
+        self._reply(msg, {"type": "cover_saved", "file": str(path)})
 
     # -- self-update of the host's own files (the extension coordinates it) -------------------
     def _update_error(self, msg: dict, exc: selfupdate.UpdateError) -> None:
