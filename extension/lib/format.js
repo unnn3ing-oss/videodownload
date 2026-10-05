@@ -13,6 +13,7 @@ function formatSpeed(bytesPerSecond) {
 
 export function itemMeta(item) {
   switch (item.status) {
+    case "preview": return "待下載";
     case "queued": return "排隊中";
     case "downloading": {
       const head = [item.percent == null ? "" : `${Math.round(item.percent)}%`, formatSpeed(item.speed)]

@@ -6,6 +6,8 @@ import { installerFor, classifyConnectError } from "../lib/platform.js";
 import { emptyProgress, applyEvent } from "../lib/events.js";
 import { createRequestIds } from "../lib/ids.js";
 import { formatEta, itemMeta } from "../lib/format.js";
+import { classifyTabUrl } from "../lib/page.js";
+import { overallProgress, previewItems, seedProgress } from "../lib/progress.js";
 
 test("HOST_NAME is the registered native host name", () => {
   assert.equal(HOST_NAME, "com.ytdl.batch_downloader");
@@ -103,4 +105,66 @@ test("itemMeta shows percent, speed and eta while downloading", () => {
   assert.equal(itemMeta({ status: "skipped" }), "已下載過，略過");
   assert.equal(itemMeta({ status: "failed", reason: "私人影片" }), "私人影片");
   assert.equal(itemMeta({ status: "queued" }), "排隊中");
+});
+
+test("classifyTabUrl tells videos, playlists and channels apart", () => {
+  const cases = [
+    ["https://www.youtube.com/watch?v=abc", "video"],
+    ["https://www.youtube.com/watch?v=abc&list=PL1", "video"],
+    ["https://youtu.be/abc", "video"],
+    ["https://www.youtube.com/shorts/abc", "video"],
+    ["https://www.youtube.com/playlist?list=PL1", "playlist"],
+    ["https://www.youtube.com/@abc", "channel"],
+    ["https://www.youtube.com/@abc/videos", "channel"],
+    ["https://www.youtube.com/channel/UC123", "channel"],
+    ["https://www.youtube.com/", null],
+    ["https://www.youtube.com/feed/subscriptions", null],
+    ["https://example.com/watch?v=abc", null],
+    ["https://youtube.com.evil.com/watch?v=abc", null],
+    ["chrome://extensions", null],
+    ["", null],
+    [undefined, null],
+  ];
+  for (const [url, kind] of cases) assert.equal(classifyTabUrl(url), kind, String(url));
+});
+
+test("overallProgress counts finished items plus partial progress", () => {
+  assert.deepEqual(overallProgress({}), { total: 0, finished: 0, done: 0, skipped: 0, failed: 0, percent: 0 });
+  const p = overallProgress({
+    a: { status: "done" }, b: { status: "skipped" }, c: { status: "failed" },
+    d: { status: "downloading", percent: 50 }, e: { status: "queued" },
+  });
+  assert.deepEqual([p.total, p.finished, p.done, p.skipped, p.failed, p.percent], [5, 3, 1, 1, 1, 70]);
+});
+
+test("overallProgress tolerates missing percent and never exceeds 100", () => {
+  assert.equal(overallProgress({ a: { status: "downloading", percent: null }, b: { status: "queued" } }).percent, 0);
+  assert.equal(overallProgress({ a: { status: "downloading", percent: 250 } }).percent, 100);
+});
+
+test("previewItems keys resolved items by id, falling back to url for unresolved ones", () => {
+  const rows = previewItems([
+    { id: "a", title: "T", url: "https://youtu.be/a" },
+    { id: "", title: "", url: "https://youtu.be/bad" },
+  ]);
+  assert.deepEqual(Object.keys(rows), ["a", "https://youtu.be/bad"]);
+  assert.equal(rows.a.status, "preview");
+  assert.equal(rows.a.title, "T");
+  assert.equal(rows["https://youtu.be/bad"].unresolved, true);
+});
+
+test("itemMeta labels preview rows as waiting to download", () => {
+  assert.equal(itemMeta({ status: "preview" }), "待下載");
+});
+
+test("seedProgress queues titled rows so progress events keep showing titles", () => {
+  const state = seedProgress([
+    { id: "a", title: "標題 A", url: "https://youtu.be/a" },
+    { id: "", title: "", url: "https://youtu.be/bad" },
+  ]);
+  assert.deepEqual(Object.keys(state.items), ["a"]);
+  assert.deepEqual(state.items.a, { title: "標題 A", status: "queued" });
+  assert.equal(state.summary, null);
+  const next = applyEvent(state, { type: "progress", itemId: "a", percent: 10, speed: 1, eta: 2 });
+  assert.equal(next.items.a.title, "標題 A");
 });

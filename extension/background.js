@@ -1,14 +1,15 @@
-// Owns the Native Messaging connection so downloads keep running after the popup closes.
+// Owns the Native Messaging connection so downloads keep running whether or not the side panel is open.
 import { HOST_NAME } from "./lib/constants.js";
 import { classifyConnectError } from "./lib/platform.js";
 import { applyEvent, emptyProgress } from "./lib/events.js";
+import { seedProgress } from "./lib/progress.js";
 
 let port = null;
 let status = { state: "stopped", ready: null, detail: null };
 let progress = emptyProgress();
 let busy = false;
 
-// popup message -> host request
+// side panel message -> host request
 const FORWARD = {
   resolve: (m) => ({ type: "resolve", reqId: m.reqId, urls: m.urls, limit: m.limit }),
   download: (m) => ({ type: "download", reqId: m.reqId, items: m.items, quality: m.quality,
@@ -23,7 +24,7 @@ function snapshot() {
 }
 
 function broadcast(message) {
-  chrome.runtime.sendMessage(message).catch(() => {}); // no popup open: nobody listens
+  chrome.runtime.sendMessage(message).catch(() => {}); // side panel closed: nobody listens
 }
 
 function setStatus(next) {
@@ -73,10 +74,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: false, error: "not_running" });
     } else {
       if (msg.type === "download") {
-        progress = emptyProgress();
-        for (const item of msg.items ?? []) {
-          if (item.id) progress.items[item.id] = { title: item.title ?? item.id, status: "queued" };
-        }
+        progress = seedProgress(msg.items);
       }
       port.postMessage(FORWARD[msg.type](msg));
       sendResponse({ ok: true });
@@ -84,3 +82,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return false;
 });
+
+// Clicking the toolbar icon opens the side panel (there is no popup).
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});

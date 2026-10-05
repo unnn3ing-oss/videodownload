@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube 批量下載器</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="9" fill="currentColor"/>
+          <path d="M16 7v11m0 0-5-5m5 5 5-5M9 23h14" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="brand-text">
+          <h1>YouTube 批量下載器</h1>
+          <p id="engine-info" class="engine-info">本機下載引擎未連線</p>
+        </div>
+      </div>
+      <div id="status" class="pill" data-state="stopped" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span><span id="status-text">尚未啟動</span>
+      </div>
+    </header>
+
+    <div id="note" class="note" role="status" aria-live="polite" hidden></div>
+
+    <section id="setup" class="card setup" hidden>
+      <h2>開始使用</h2>
+      <p id="setup-hint" class="setup-hint"></p>
+      <ol class="steps">
+        <li class="step">
+          <span class="num">1</span>
+          <div class="step-body"><strong>下載部署</strong><span>只需要做一次：下載安裝檔並執行</span></div>
+          <button id="deploy" class="btn" type="button">下載部署</button>
+        </li>
+        <li class="step">
+          <span class="num">2</span>
+          <div class="step-body"><strong>啟動</strong><span>安裝完成後，連線到本機小程式</span></div>
+          <button id="start" class="btn" type="button">啟動</button>
+        </li>
+      </ol>
+    </section>
+
+    <section id="tab-card" class="card tab" hidden>
+      <span id="tab-kind" class="chip">影片</span>
+      <div class="tab-text">
+        <span class="tab-label">目前分頁</span>
+        <span id="tab-title" class="tab-title"></span>
+      </div>
+      <button id="tab-add" class="btn small" type="button">加入</button>
+    </section>
+
+    <section class="card input">
+      <div class="field">
+        <label for="urls" class="field-label">網址 <span class="hint">一行一個；可貼影片、播放清單或頻道</span></label>
+        <textarea id="urls" rows="3" placeholder="https://www.youtube.com/watch?v=…" spellcheck="false" autocomplete="off"></textarea>
+        <ul id="invalid" class="invalid" hidden></ul>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <span id="quality-label" class="field-label">解析度</span>
+          <div id="quality" class="segmented" role="radiogroup" aria-labelledby="quality-label">
+            <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
+            <label><input type="radio" name="quality" value="720"><span>720p</span></label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="limit" class="field-label">最多下載</label>
+          <div class="suffix">
+            <input id="limit" type="number" min="1" max="1000" placeholder="全部" inputmode="numeric">
+            <span>支</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="filename" class="field-label">檔名 <span class="hint">單支影片時可修改</span></label>
+        <input id="filename" type="text" disabled placeholder="預設為影片標題" autocomplete="off">
+      </div>
+
+      <div class="actions">
+        <button id="download" class="btn primary block" type="button" disabled>開始下載</button>
+        <button id="cancel" class="btn danger block" type="button" hidden>取消下載</button>
+      </div>
+    </section>
+
+    <section id="queue" class="card queue" hidden>
+      <div class="queue-head">
+        <h2 id="queue-title">下載清單</h2>
+        <span id="queue-count" class="count"></span>
+      </div>
+      <div id="overall" class="overall" hidden>
+        <div class="bar" role="progressbar" aria-label="整體進度" aria-valuemin="0" aria-valuemax="100"><span id="overall-bar"></span></div>
+        <span id="overall-text" class="overall-text"></span>
+      </div>
+      <ul id="items" class="items"></ul>
+      <div id="summary" class="summary" hidden></div>
+    </section>
+
+    <details id="settings" class="card settings">
+      <summary>設定與工具</summary>
+      <div class="settings-body">
+        <div class="field">
+          <label for="outdir" class="field-label">存放資料夾</label>
+          <div class="row">
+            <input id="outdir" type="text" disabled spellcheck="false">
+            <button id="save-outdir" class="btn small" type="button" disabled>儲存</button>
+          </div>
+        </div>
+        <div class="row between"><span>下載引擎（yt-dlp）</span><button id="update" class="btn small" type="button" disabled>更新下載引擎</button></div>
+        <div class="row between"><span>本機小程式</span><button id="redeploy" class="btn small ghost" type="button">重新下載安裝檔</button></div>
+        <p class="version">擴充功能版本 <span id="ext-version" class="mono"></span></p>
+      </div>
+    </details>
+  </div>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

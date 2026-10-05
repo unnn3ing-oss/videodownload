@@ -30,7 +30,7 @@
 
 ```
 Chrome 擴充功能 (MV3)
-  popup  <—runtime message—>  background service worker
+  側邊面板  <—runtime message—>  background service worker
                                    │  Native Messaging（stdin/stdout JSON，無網路埠）
                                    ▼
                               本機小程式 host（Python 標準函式庫）
@@ -39,22 +39,24 @@ Chrome 擴充功能 (MV3)
                           yt-dlp（獨立執行檔）+ ffmpeg + JS 執行環境
 ```
 
-- background service worker 持有 Native Messaging 連線；popup 關閉後下載繼續。關閉 Chrome 會中止下載，已下載的片段在重跑時續傳。
+- background service worker 持有 Native Messaging 連線；側邊面板關閉後下載繼續。關閉 Chrome 會中止下載，已下載的片段在重跑時續傳。
 - 不開本機網路埠，避免其他網頁呼叫；host 登錄時以 `allowed_origins` 限定只有本擴充功能能連。
 - 擴充功能識別碼以 manifest 的 `key` 固定，安裝檔內寫入同一個識別碼。
 
 ## 4. 擴充功能
 
-**popup 欄位與按鈕**
+**側邊面板**：點工具列圖示開啟（`setPanelBehavior({ openPanelOnActionClick: true })`，沒有彈出視窗），每個視窗一個，切換分頁不消失；Chrome 最低版本 114。版面由上而下為：標題與連線狀態徽章、未部署時才顯示的兩步驟引導（下載部署、啟動）、「目前分頁」卡片（目前分頁是 YouTube 影片／清單／頻道時顯示，按「加入」放進網址框；只對 YouTube 網域開放讀取分頁網址）、輸入卡片、下載清單（解析後先預覽，下載中顯示整體與逐支進度）、收合的「設定與工具」。介面支援淺色與深色模式，寬度 320 至 480 像素自適應。
+
+**欄位與按鈕**
 | 項目 | 行為 |
 |---|---|
-| 網址 | 預設帶入目前分頁網址；可貼多行，或播放清單／頻道網址 |
+| 網址 | 可貼多行，或播放清單／頻道網址；目前分頁以卡片提示，按「加入」才放入 |
 | 解析度 | 720p / 1080p |
 | 檔名 | 單支時預設為影片標題，可修改；多支時各自使用自己的標題，此欄位停用 |
 | 最多下載 N 支 | 僅對播放清單／頻道有效，空白代表全部 |
 | 下載部署 | 以 `chrome.runtime.getPlatformInfo()` 判斷 win/mac，儲存對應的單檔安裝檔 |
 | 啟動 | 呼叫 `connectNative`，由 Chrome 啟動 host |
-| 下載 | 送出下載工作 |
+| 開始下載 | 送出下載工作；下載中改為「取消下載」 |
 | 更新引擎 | 次要連結；呼叫 host 更新 yt-dlp |
 
 **狀態**：未部署（找不到 host）→ 已部署未啟動 → 已啟動。連線失敗訊息為「Specified native messaging host not found」時，提示先按「下載部署」。
@@ -127,7 +129,7 @@ Chrome 擴充功能 (MV3)
 extension/
   manifest.json            # MV3，nativeMessaging、downloads、activeTab、storage，固定 key
   background.js
-  popup.html / popup.js / popup.css
+  sidepanel.html / sidepanel.js / sidepanel.css
   installers/              # build.py 產出
 host/
   host.py                  # 入口，Native Messaging 迴圈
@@ -154,7 +156,7 @@ docs/superpowers/specs/
 - `ytdlp`：以假的 yt-dlp 輸出測試進度與錯誤分類。
 - 網址白名單與路徑檢查。
 - 安裝檔雜湊一致性。
-- 擴充功能能否在 Chromium 載入、popup 欄位與狀態切換（以 Playwright 嘗試；若 Native Messaging 在無頭模式無法驗證，則明確標示未驗證）。
+- 擴充功能能否在 Chromium 載入、側邊面板欄位、目前分頁卡片與狀態切換（以 Playwright 嘗試；若 Native Messaging 在無頭模式無法驗證，則明確標示未驗證）。
 
 **無法在開發環境驗證，需使用者冒煙測試**
 - 真實下載 YouTube（沙箱連不上）。
