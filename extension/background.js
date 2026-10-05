@@ -4,7 +4,7 @@ import { classifyConnectError } from "./lib/platform.js";
 import { applyEvent, emptyProgress } from "./lib/events.js";
 import { seedProgress } from "./lib/progress.js";
 import { checkLatest } from "./lib/updater.js";
-import { applyBadge, saveSummary, summarizeCheck } from "./lib/update-state.js";
+import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 
 let port = null;
 let status = { state: "stopped", ready: null, detail: null };
@@ -101,7 +101,7 @@ async function backgroundCheck() {
     await saveSummary(summarizeCheck(info));
     await applyBadge(info.hasUpdate);
   } catch (error) {
-    await saveSummary({ checkedAt: Date.now(), error: error.message });
+    await saveSummary(failedSummary(await loadSummary().catch(() => null), error.message));
   }
 }
 

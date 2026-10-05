@@ -24,13 +24,14 @@ function makeFetch(routes, calls = []) {
     calls.push(url);
     const route = routes[url];
     if (route instanceof Error) throw route;
-    if (!route) return { ok: false, status: 404, json: async () => ({}) };
+    if (!route) return { ok: false, status: 404, json: async () => ({}), headers: { get: () => null } };
     if (route.bytes) {
       const b = route.bytes;
       return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
     }
     const status = route.status ?? 200;
-    return { ok: status < 400, status, json: async () => route.json };
+    const headers = { get: (name) => route.headers?.[name.toLowerCase()] ?? null };
+    return { ok: status < 400, status, json: async () => route.json, headers };
   };
 }
 
@@ -90,8 +91,11 @@ test("checkLatest does not report CRLF-only differences", async () => {
 test("checkLatest maps GitHub failures to friendly messages", async () => {
   const cases = [
     [{ [COMMIT_URL]: new Error("offline") }, /連不上 GitHub，請確認網路連線/],
-    [{ [COMMIT_URL]: { status: 403 } }, /暫時限制查詢次數/],
+    [{ [COMMIT_URL]: { status: 403, headers: { "x-ratelimit-remaining": "0" } } }, /暫時限制查詢次數/],
     [{ [COMMIT_URL]: { status: 429 } }, /暫時限制查詢次數/],
+    [{ [COMMIT_URL]: { status: 403 } }, /HTTP 403.*代理|HTTP 403.*防火牆/],
+    // GitHub answers 422 ("No commit found for SHA: release") for a branch that does not exist.
+    [{ [COMMIT_URL]: { status: 422 } }, /尚未發佈：找不到 release 分支/],
     [{ [COMMIT_URL]: { status: 404 } }, /尚未發佈：找不到 release 分支/],
     [{ [COMMIT_URL]: { status: 500 } }, /HTTP 500/],
     [{ [COMMIT_URL]: { json: commitJson() }, [TREE_URL]: { json: { tree: [], truncated: true } } }, /檔案太多/],

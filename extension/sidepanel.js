@@ -5,8 +5,8 @@ import { createRequestIds } from "./lib/ids.js";
 import { itemMeta } from "./lib/format.js";
 import { classifyTabUrl } from "./lib/page.js";
 import { overallProgress, previewItems, seedProgress } from "./lib/progress.js";
-import { UpdateError, checkLatest, runUpdate, shouldCheck } from "./lib/updater.js";
-import { applyBadge, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
+import { UpdateError, checkLatest, runUpdate } from "./lib/updater.js";
+import { applyBadge, autoCheckDue, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
 
 const $ = (id) => document.getElementById(id);
@@ -223,15 +223,14 @@ function renderUpdate() {
   let note = null;
   if (updateWorking === "check") {
     latest.textContent = "檢查中…";
-  } else if (lastSummary?.error) {
-    latest.textContent = "檢查失敗";
-    note = { text: lastSummary.error, kind: "error" };
   } else if (lastSummary?.sha) {
     latest.textContent = [lastSummary.message, lastSummary.sha.slice(0, 7), lastSummary.date?.slice(0, 10)].filter(Boolean).join(" · ");
-    note = hasUpdate() || (!updateInfo && lastSummary.hasUpdate)
-      ? null : { text: "已是最新版", kind: "ok" };
   } else {
-    latest.textContent = "尚未檢查";
+    latest.textContent = lastSummary?.error ? "檢查失敗" : "尚未檢查";
+  }
+  if (updateWorking !== "check") {
+    if (lastSummary?.error) note = { text: lastSummary.error, kind: "error" };
+    else if (lastSummary?.sha && !(hasUpdate() || (!updateInfo && lastSummary.hasUpdate))) note = { text: "已是最新版", kind: "ok" };
   }
   noteEl.hidden = !note;
   noteEl.textContent = note?.text ?? "";
@@ -409,7 +408,7 @@ async function runCheck() {
     await refreshHostChanged();
     await storeSummary();
   } catch (error) {
-    lastSummary = { checkedAt: Date.now(), error: error.message };
+    lastSummary = failedSummary(lastSummary, error.message);
     await saveSummary(lastSummary).catch(() => {});
   } finally {
     updateWorking = null;
@@ -422,7 +421,7 @@ async function runCheck() {
 async function onHostRunning() {
   if (updateWorking) return;
   if (!updateInfo) {
-    if (shouldCheck(lastSummary?.checkedAt) || lastSummary?.hasUpdate) runCheck();
+    if (autoCheckDue(lastSummary)) runCheck();
   } else if (!hostChecked) {
     updateWorking = "check";
     render();

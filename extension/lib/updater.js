@@ -34,9 +34,15 @@ async function githubJson(fetchFn, url, repo) {
   } catch {
     throw new UpdateError("連不上 GitHub，請確認網路連線");
   }
-  if (response.status === 403 || response.status === 429) throw new UpdateError("GitHub 暫時限制查詢次數，請稍後再試");
-  if (response.status === 404 && url.includes("/commits/")) {
+  const rateLimited = response.status === 429
+    || (response.status === 403 && response.headers?.get?.("x-ratelimit-remaining") === "0");
+  if (rateLimited) throw new UpdateError("GitHub 暫時限制查詢次數，請稍後再試");
+  // GitHub answers 422 ("No commit found for SHA: release") for a branch that does not exist.
+  if ((response.status === 404 || response.status === 422) && url.includes("/commits/")) {
     throw new UpdateError(`尚未發佈：找不到 ${repo.branch} 分支`);
+  }
+  if (response.status === 403) {
+    throw new UpdateError("GitHub 拒絕了查詢（HTTP 403），可能被公司網路的代理或防火牆擋下");
   }
   if (!response.ok) throw new UpdateError(`連不上 GitHub（HTTP ${response.status}）`);
   return response.json();

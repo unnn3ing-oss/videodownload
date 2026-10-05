@@ -1,3 +1,5 @@
+import { shouldCheck } from "./updater.js";
+
 const KEY = "updateInfo";
 
 export function summarizeCheck(info, now = Date.now()) {
@@ -9,6 +11,21 @@ export function summarizeCheck(info, now = Date.now()) {
     hasUpdate: info.hasUpdate,
     extChangedCount: info.extChanged.length,
   };
+}
+
+// A failed check must not erase the last good result (the toolbar badge keeps it too).
+export function failedSummary(previous, message, now = Date.now()) {
+  return { ...(previous ?? {}), error: message, errorAt: now };
+}
+
+const ERROR_RETRY_MS = 5 * 60 * 1000;
+
+// Whether the panel should check on its own: nothing stored, the result is stale, an update is
+// pending (its file list is not stored), or a failed check is old enough to retry.
+export function autoCheckDue(summary, now = Date.now()) {
+  if (!summary) return true;
+  if (summary.error) return now - (summary.errorAt ?? 0) >= ERROR_RETRY_MS;
+  return Boolean(summary.hasUpdate) || shouldCheck(summary.checkedAt, now);
 }
 
 export async function saveSummary(summary) {
