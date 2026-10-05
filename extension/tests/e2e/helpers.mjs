@@ -19,7 +19,7 @@ export function extensionId(keyB64) {
 }
 
 // Exit codes of the callers: 0 = OK, 1 = assertion failed, 2 = UNVERIFIED (browser/extension could not be launched).
-export async function launchExtension({ viewport = { width: 400, height: 860 } } = {}) {
+export async function launchExtension({ viewport = { width: 400, height: 860 }, args = [] } = {}) {
   const work = fs.mkdtempSync(path.join(process.env.E2E_TMP ?? os.tmpdir(), "ytdl-e2e-"));
   const userData = path.join(work, "profile");
   const extId = extensionId(manifest.key);
@@ -28,7 +28,7 @@ export async function launchExtension({ viewport = { width: 400, height: 860 } }
       executablePath: process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium",
       headless: false,
       viewport,
-      args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`],
+      args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, ...args],
     });
     let [worker] = context.serviceWorkers();
     worker ??= await context.waitForEvent("serviceworker", { timeout: 20000 });

@@ -38,6 +38,7 @@ elif "--dump-json" in args:
     print(json.dumps({"id": vid, "title": title_for(vid),
                       "description": "說明文字 #標籤一 #標籤二 #標籤三 #標籤四"}, ensure_ascii=False))
 else:
+    print("[ytdl-progress]0|1024|NA|NA|NA", flush=True)  # the download has started
     time.sleep(float(os.environ.get("YTDL_STUB_DELAY", "0")))  # lets tests look at a running download
     target = args[args.index("-o") + 1].replace("%%", "%")
     Path(target).write_text("x", encoding="utf-8")
