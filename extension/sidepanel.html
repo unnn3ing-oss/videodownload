@@ -15,7 +15,10 @@
           <path d="M16 7v11m0 0-5-5m5 5 5-5M9 23h14" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <div class="brand-text">
-          <h1>YouTube 批量下載器</h1>
+          <div class="title-row">
+            <h1>YouTube 批量下載器</h1>
+            <button id="update-badge" class="badge" type="button" hidden>有新版本</button>
+          </div>
           <p id="engine-info" class="engine-info">本機下載引擎未連線</p>
         </div>
       </div>
@@ -112,7 +115,19 @@
         </div>
         <div class="row between"><span>下載引擎（yt-dlp）</span><button id="update" class="btn small" type="button" disabled>更新下載引擎</button></div>
         <div class="row between"><span>本機小程式</span><button id="redeploy" class="btn small ghost" type="button">重新下載安裝檔</button></div>
-        <p class="version">擴充功能版本 <span id="ext-version" class="mono"></span></p>
+        <section class="update" aria-labelledby="update-title">
+          <div class="row between">
+            <h2 id="update-title" class="update-title">版本與更新</h2>
+            <button id="update-check" class="btn small ghost" type="button">檢查更新</button>
+          </div>
+          <dl class="versions">
+            <dt>目前版本</dt><dd id="ver-current" class="mono"></dd>
+            <dt>最新版本</dt><dd id="ver-latest">尚未檢查</dd>
+          </dl>
+          <p id="update-note" class="update-note" hidden></p>
+          <button id="update-apply" class="btn primary block" type="button" disabled>更新到最新版</button>
+          <p id="update-progress" class="update-progress" role="status" aria-live="polite" hidden></p>
+        </section>
       </div>
     </details>
   </div>

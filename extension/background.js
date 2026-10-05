@@ -19,6 +19,10 @@ const FORWARD = {
   cancel: (m) => ({ type: "cancel", reqId: m.reqId }),
   set_output_dir: (m) => ({ type: "set_config", reqId: m.reqId, outputDir: m.path }),
   update_engine: (m) => ({ type: "update_engine", reqId: m.reqId }),
+  update_check: (m) => ({ type: "update_check", reqId: m.reqId, files: m.files }),
+  update_stage: (m) => ({ type: "update_stage", reqId: m.reqId, commit: m.commit, files: m.files }),
+  update_commit: (m) => ({ type: "update_commit", reqId: m.reqId }),
+  update_rollback: (m) => ({ type: "update_rollback", reqId: m.reqId }),
 };
 
 function snapshot() {

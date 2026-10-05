@@ -1,27 +1,12 @@
 // End-to-end check of side panel page + background + real host (with a stub yt-dlp) in headless Chromium.
 // The side panel itself cannot be opened without a real user gesture, so the page is opened as a tab.
 // Exit codes: 0 = OK, 1 = assertion failed, 2 = UNVERIFIED (browser/extension could not be launched).
-import { chromium } from "playwright-core";
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { launchExtension, manifest, registerNativeHost, root, shotter } from "./helpers.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const extDir = path.join(root, "extension");
-const manifest = JSON.parse(fs.readFileSync(path.join(extDir, "manifest.json"), "utf8"));
-const HOST_NAME = "com.ytdl.batch_downloader";
-const SHOTS = process.env.E2E_SHOTS; // optional: directory for review screenshots
-
-function extensionId(keyB64) {
-  const hex = crypto.createHash("sha256").update(Buffer.from(keyB64, "base64")).digest("hex").slice(0, 32);
-  return [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join("");
-}
-
-const work = fs.mkdtempSync(path.join(process.env.E2E_TMP ?? os.tmpdir(), "ytdl-e2e-"));
-const userData = path.join(work, "profile");
+const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 } });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });
@@ -29,27 +14,9 @@ const stub = path.join(home, "bin", "yt-dlp");
 fs.copyFileSync(path.join(root, "host/tests/stub_ytdlp.py"), stub);
 fs.chmodSync(stub, 0o755);
 
-let context;
-const extId = extensionId(manifest.key);
-try {
-  context = await chromium.launchPersistentContext(userData, {
-    executablePath: process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium",
-    headless: false,
-    viewport: { width: 400, height: 860 },
-    args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`],
-  });
-  let [worker] = context.serviceWorkers();
-  worker ??= await context.waitForEvent("serviceworker", { timeout: 20000 });
-  assert.equal(new URL(worker.url()).hostname, extId, "pinned extension id must match the manifest key");
-} catch (error) {
-  console.log(`UNVERIFIED: could not launch the extension in headless Chromium: ${error.message.split("\n")[0]}`);
-  process.exit(2);
-}
-
-const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `${name}.png`) }); };
-
 try {
   const page = await context.newPage();
+  const shot = shotter(page);
   if (process.env.E2E_SCHEME) await page.emulateMedia({ colorScheme: process.env.E2E_SCHEME });
   await page.goto(`chrome-extension://${extId}/sidepanel.html`);
   const state = (s) => page.waitForFunction((x) => document.getElementById("status").dataset.state === x, s);
@@ -67,18 +34,13 @@ try {
   await page.fill("#urls", "https://youtu.be/a\nhttp://evil.com/x");
   await page.waitForSelector("#invalid:not([hidden]) li");
   assert.match(await page.textContent("#invalid"), /http:\/\/evil\.com\/x/);
-  await shot(page, "1-not-installed");
+  await shot("1-not-installed");
 
   // Phase B: register the real host (python) wired to the stub engine, then start it.
   const wrapper = path.join(work, "host.sh");
   fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexec python3 "${path.join(root, "host/host.py")}"\n`);
   fs.chmodSync(wrapper, 0o755);
-  const nmDir = path.join(userData, "NativeMessagingHosts");
-  fs.mkdirSync(nmDir, { recursive: true });
-  fs.writeFileSync(path.join(nmDir, `${HOST_NAME}.json`), JSON.stringify({
-    name: HOST_NAME, description: "e2e", path: wrapper, type: "stdio",
-    allowed_origins: [`chrome-extension://${extId}/`],
-  }));
+  registerNativeHost({ userData, wrapperPath: wrapper, extId });
   await page.click("#start");
   await state("running");
   assert.match(await page.textContent("#status"), /已啟動/);
@@ -113,7 +75,7 @@ try {
   const noScroll = () => page.evaluate(() => { const l = document.getElementById("items"); return l.scrollHeight <= l.clientHeight + 1; });
   assert.equal(await noScroll(), true, "a single row must not make the list scroll");
   await page.waitForTimeout(500); // let the entrance animation settle before the screenshot
-  await shot(page, "2-ready");
+  await shot("2-ready");
 
   await page.click('label:has(input[name="quality"][value="720"])');
   assert.equal(await page.isChecked('input[name="quality"][value="720"]'), true);
@@ -132,14 +94,14 @@ try {
   }), true, "status pill stays beside the title");
   await page.waitForTimeout(500);
   assert.ok(fs.existsSync(path.join(outDir, "範例影片.mp4")), "downloaded file is named after the title");
-  await shot(page, "3-done");
+  await shot("3-done");
 
   // Layout holds at the narrowest and widest side panel widths: no horizontal scrolling.
   for (const width of [320, 480]) {
     await page.setViewportSize({ width, height: 860 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true,
       `no horizontal overflow at ${width}px`);
-    await shot(page, `4-width-${width}`);
+    await shot(`4-width-${width}`);
   }
   console.log("OK");
 } catch (error) {

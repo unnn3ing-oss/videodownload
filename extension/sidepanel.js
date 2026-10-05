@@ -5,6 +5,9 @@ import { createRequestIds } from "./lib/ids.js";
 import { itemMeta } from "./lib/format.js";
 import { classifyTabUrl } from "./lib/page.js";
 import { overallProgress, previewItems, seedProgress } from "./lib/progress.js";
+import { UpdateError, checkLatest, runUpdate, shouldCheck } from "./lib/updater.js";
+import { applyBadge, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
+import { getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -25,6 +28,15 @@ let pendingItems = []; // items of the download being started, to seed titled ro
 const nextId = createRequestIds();
 const waiters = new Map();
 let resolveTimer = null;
+
+// ---------- self-update state ----------
+let updateInfo = null; // full result of the last check made in this panel session
+let hostChanged = []; // host files that differ from the installed ones (known only while the host runs)
+let hostChecked = false;
+let updateWorking = null; // "check" | "apply" while one is in progress
+let updateProgress = null; // { text, kind } of the last update attempt
+let lastSummary = null; // what was stored by the last check (also by the background alarm)
+let folderSaved = false;
 
 const send = (message) => chrome.runtime.sendMessage(message);
 
@@ -190,11 +202,63 @@ function renderTabCard() {
   $("tab-add").textContent = added ? "已加入" : "加入";
 }
 
+function hasUpdate() {
+  return Boolean(updateInfo) && (updateInfo.extChanged.length > 0 || hostChanged.length > 0);
+}
+
+function updateReason() {
+  if (!hasUpdate()) return null;
+  if (status.state !== "running") return "請先按「啟動」才能更新本機小程式";
+  if (status.busy) return "下載進行中，完成後再更新";
+  return null;
+}
+
+function renderUpdate() {
+  const manifest = chrome.runtime.getManifest();
+  const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
+  $("ver-current").textContent = `擴充功能 ${manifest.version}${hostVersion ? ` · 本機小程式 ${hostVersion}` : ""}`;
+
+  const latest = $("ver-latest");
+  const noteEl = $("update-note");
+  let note = null;
+  if (updateWorking === "check") {
+    latest.textContent = "檢查中…";
+  } else if (lastSummary?.error) {
+    latest.textContent = "檢查失敗";
+    note = { text: lastSummary.error, kind: "error" };
+  } else if (lastSummary?.sha) {
+    latest.textContent = [lastSummary.message, lastSummary.sha.slice(0, 7), lastSummary.date?.slice(0, 10)].filter(Boolean).join(" · ");
+    note = hasUpdate() || (!updateInfo && lastSummary.hasUpdate)
+      ? null : { text: "已是最新版", kind: "ok" };
+  } else {
+    latest.textContent = "尚未檢查";
+  }
+  noteEl.hidden = !note;
+  noteEl.textContent = note?.text ?? "";
+  noteEl.dataset.kind = note?.kind ?? "info";
+
+  $("update-badge").hidden = !(updateInfo ? hasUpdate() : lastSummary?.hasUpdate);
+  $("update-check").disabled = updateWorking !== null;
+
+  const reason = updateReason();
+  const apply = $("update-apply");
+  apply.disabled = updateWorking !== null || !hasUpdate() || reason !== null;
+  apply.textContent = updateWorking === "apply" ? "更新中…"
+    : updateInfo?.extChanged.length > 0 && !folderSaved ? "選擇擴充功能資料夾並更新" : "更新到最新版";
+
+  const shown = updateWorking === "apply" ? updateProgress : (reason ? { text: reason, kind: "info" } : updateProgress);
+  const progressEl = $("update-progress");
+  progressEl.hidden = !shown;
+  progressEl.textContent = shown?.text ?? "";
+  progressEl.dataset.kind = shown?.kind ?? "info";
+}
+
 function render() {
   renderStatus();
   renderQueue();
   renderControls();
   renderTabCard();
+  renderUpdate();
 }
 
 function renderInvalid(invalid) {
@@ -314,6 +378,112 @@ async function simpleRequest(message, onOk) {
   }
 }
 
+// ---------- self-update ----------
+async function refreshHostChanged() {
+  hostChanged = [];
+  hostChecked = false;
+  if (!updateInfo || status.state !== "running") return;
+  try {
+    const event = await request({ type: "update_check", files: updateInfo.hostFiles }, 20000);
+    if (event.type === "update_status") {
+      const changed = new Set(event.changed);
+      hostChanged = updateInfo.hostFiles.filter((file) => changed.has(file.path));
+      hostChecked = true;
+    }
+  } catch { /* host unreachable right now: the extension's own files can still be compared */ }
+}
+
+async function storeSummary() {
+  lastSummary = { ...summarizeCheck(updateInfo), hasUpdate: hasUpdate() };
+  await saveSummary(lastSummary).catch(() => {});
+  await applyBadge(lastSummary.hasUpdate).catch(() => {});
+}
+
+async function runCheck() {
+  if (updateWorking) return;
+  updateWorking = "check";
+  updateProgress = null;
+  render();
+  try {
+    updateInfo = await checkLatest();
+    await refreshHostChanged();
+    await storeSummary();
+  } catch (error) {
+    lastSummary = { checkedAt: Date.now(), error: error.message };
+    await saveSummary(lastSummary).catch(() => {});
+  } finally {
+    updateWorking = null;
+    folderSaved = await hasSavedFolder();
+    render();
+  }
+}
+
+// Called when the host is (or becomes) available: finish what a check without the host could not know.
+async function onHostRunning() {
+  if (updateWorking) return;
+  if (!updateInfo) {
+    if (shouldCheck(lastSummary?.checkedAt) || lastSummary?.hasUpdate) runCheck();
+  } else if (!hostChecked) {
+    updateWorking = "check";
+    render();
+    await refreshHostChanged();
+    await storeSummary();
+    updateWorking = null;
+    render();
+  }
+}
+
+async function hostUpdateRequest(message) {
+  const event = await request(message);
+  if (event.type === "error") throw new UpdateError(event.message);
+  return event;
+}
+
+const PROGRESS_TEXT = {
+  download: ({ done, total }) => `下載更新檔案 ${done} / ${total}`,
+  host: () => "更新本機小程式…",
+  write: ({ done, total }) => `寫入擴充功能檔案 ${done} / ${total}`,
+};
+
+async function applyUpdate() {
+  if (updateWorking || !hasUpdate() || updateReason()) return;
+  const { name, key } = chrome.runtime.getManifest();
+  updateWorking = "apply";
+  updateProgress = { text: "準備更新…", kind: "info" };
+  render();
+  try {
+    await runUpdate({
+      info: updateInfo,
+      hostChanged,
+      getFolder: () => getFolder(name),
+      pickFolder: () => pickFolder(name),
+      hostApi: {
+        stage: (commit, files) => hostUpdateRequest({ type: "update_stage", commit, files }),
+        commit: () => hostUpdateRequest({ type: "update_commit" }),
+        rollback: () => hostUpdateRequest({ type: "update_rollback" }),
+      },
+      reload: () => {
+        updateProgress = { text: "更新完成，正在重新載入擴充功能…", kind: "ok" };
+        render();
+        chrome.runtime.reload();
+      },
+      currentKey: key,
+      expectedName: name,
+      onProgress: (p) => {
+        updateProgress = { text: PROGRESS_TEXT[p.step]?.(p) ?? "更新中…", kind: "info" };
+        renderUpdate();
+      },
+    });
+  } catch (error) {
+    updateProgress = { text: error.message, kind: "error" };
+    note(error.message, "error");
+  } finally {
+    updateWorking = null;
+    folderSaved = await hasSavedFolder();
+    render();
+  }
+}
+
 // ---------- current tab ----------
 async function refreshCurrentTab() {
   let tab = null;
@@ -339,7 +509,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "status") {
     status = { ...status, ...msg };
     render();
-    if (status.state === "running") scheduleResolve();
+    if (status.state === "running") {
+      scheduleResolve();
+      onHostRunning();
+    }
   } else if (msg.type === "host_event") {
     const event = msg.event;
     if (event.reqId !== undefined && waiters.has(event.reqId)) {
@@ -382,22 +555,31 @@ $("update").addEventListener("click", () => {
   simpleRequest({ type: "update_engine" }, (e) => note(`下載引擎已更新（${e.ytdlpVersion ?? "未知版本"}）`, "ok"));
 });
 
+$("update-check").addEventListener("click", runCheck);
+$("update-apply").addEventListener("click", applyUpdate);
+$("update-badge").addEventListener("click", () => {
+  $("settings").open = true;
+  $("update-title").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+
 for (const event of [chrome.tabs.onActivated, chrome.windows.onFocusChanged]) event.addListener(refreshCurrentTab);
 chrome.tabs.onUpdated.addListener((_id, change, tab) => {
   if (tab.active && (change.url || change.title || change.status === "complete")) refreshCurrentTab();
 });
 
 async function init() {
-  $("ext-version").textContent = chrome.runtime.getManifest().version;
   try {
     const saved = await chrome.storage.local.get("quality");
     const radio = document.querySelector(`input[name="quality"][value="${saved.quality}"]`);
     if (radio) radio.checked = true;
   } catch { /* storage unavailable: defaults are fine */ }
   status = { ...status, ...(await send({ type: "get_status" })) };
+  lastSummary = await loadSummary().catch(() => null);
+  folderSaved = await hasSavedFolder();
   await refreshCurrentTab();
   render();
   scheduleResolve();
+  if (status.state === "running") onHostRunning();
 }
 
 init();

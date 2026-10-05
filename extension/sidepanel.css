@@ -219,4 +219,18 @@ textarea:focus-visible, input:focus-visible { outline: none; border-color: var(-
 .settings summary::before { content: "▸"; transition: transform .15s; }
 .settings[open] summary::before { transform: rotate(90deg); }
 .settings-body { display: grid; gap: 10px; margin-top: 10px; }
-.version { font-size: 12px; color: var(--muted); }
+.title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge {
+  font: inherit; font-size: 11.5px; font-weight: 800; cursor: pointer; padding: 1px 9px; border-radius: 999px;
+  color: var(--accent-ink); background: var(--accent); border: 0;
+}
+.badge:hover { filter: brightness(1.08); }
+
+.update { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.update-title { font-size: 13px; font-weight: 800; }
+.versions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 12.5px; }
+.versions dt { color: var(--muted); font-weight: 700; }
+.versions dd { margin: 0; overflow-wrap: anywhere; }
+.update-note, .update-progress { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.update-note[data-kind="error"], .update-progress[data-kind="error"] { color: var(--err); }
+.update-note[data-kind="ok"] { color: var(--ok); }
