@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -161,3 +162,59 @@ def stage(home: Path, commit: str, files: list[dict], fetch: Callable[[str], byt
         _rmtree(staging)
         raise
     return len(files)
+
+
+def _backup(home: Path) -> Path:
+    return Path(home) / "backup" / "host"
+
+
+def _restore(home: Path) -> int:
+    """Put back what the last commit replaced and remove what it added; returns how many files."""
+    backup = _backup(home)
+    try:
+        record = json.loads((backup / "_backup.json").read_text(encoding="utf-8"))
+        replaced = [n for n in record["replaced"] if ALLOWED_NAME.fullmatch(n)]
+        added = [n for n in record["added"] if ALLOWED_NAME.fullmatch(n)]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise UpdateError("update_nothing_staged", "沒有可還原的備份") from exc
+    host_dir = Path(home) / "host"
+    for name in replaced:
+        shutil.copy2(backup / name, host_dir / name)
+    for name in added:
+        (host_dir / name).unlink(missing_ok=True)
+    (backup / "_backup.json").unlink(missing_ok=True)
+    return len(replaced) + len(added)
+
+
+def commit_update(home: Path) -> int:
+    """Swap the staged files into host/, keeping the previous versions in backup/host/."""
+    home = Path(home)
+    staging, host_dir, backup = _staging(home), home / "host", _backup(home)
+    names = _staged_names(staging)
+    if not names or not all((staging / n).is_file() for n in names):
+        raise UpdateError("update_nothing_staged", "沒有已準備好的更新")
+    _rmtree(backup)
+    backup.mkdir(parents=True)
+    replaced, added = [], []
+    for name in names:
+        if (host_dir / name).exists():
+            shutil.copy2(host_dir / name, backup / name)
+            replaced.append(name)
+        else:
+            added.append(name)
+    (backup / "_backup.json").write_text(json.dumps({"replaced": replaced, "added": added}), encoding="utf-8")
+    try:
+        for name in names:
+            os.replace(staging / name, host_dir / name)
+    except Exception as exc:
+        try:
+            _restore(home)
+        except Exception:
+            pass
+        raise UpdateError("update_install_failed", f"安裝更新失敗，已還原：{exc}", rolled_back=True) from exc
+    _rmtree(staging)
+    return len(names)
+
+
+def rollback_update(home: Path) -> int:
+    return _restore(Path(home))
