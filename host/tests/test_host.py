@@ -240,3 +240,31 @@ def test_save_cover_message_rejects_bad_id_and_bad_base64(tmp_path):
     h.handle({"type": "save_cover", "id": "v1", "title": 5, "data": good})
     assert events[-1]["type"] == "error"
     assert not (tmp_path / "out").exists() or not list((tmp_path / "out").glob("*.jpg"))
+
+
+def test_resolve_reply_has_duration(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "resolve", "reqId": 4, "urls": [URL]})
+    h.wait(10)
+    assert events[0]["items"][0]["duration"] == 222
+
+
+def test_meta_message_returns_description(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "meta", "reqId": 5, "url": URL})
+    h.wait(10)
+    assert events[0]["type"] == "meta" and events[0]["reqId"] == 5
+    assert events[0]["id"] == "v1" and events[0]["title"] == "範例影片"
+    assert "#標籤一 #標籤二 #標籤三 #標籤四" in events[0]["description"]
+
+
+def test_meta_rejects_non_youtube_url(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "meta", "reqId": 6, "url": "https://evil.example/x"})
+    assert events[0]["type"] == "error" and events[0]["code"] == "bad_url"
+
+
+def test_meta_without_engine_reports_engine_missing(tmp_path):
+    h, events = new_host(tmp_path, with_engine=False)
+    h.handle({"type": "meta", "reqId": 7, "url": URL})
+    assert events[0]["type"] == "error" and events[0]["code"] == "engine_missing"

@@ -173,3 +173,41 @@ def test_resolve_no_playlist_only_for_single_video_urls(url, single):
 def test_run_capture_missing_executable_does_not_raise():
     code, out, err = run_capture(["/nonexistent/yt-dlp-xyz", "--version"])
     assert code != 0 and out == "" and err
+
+
+def test_resolve_includes_duration_when_present_and_none_otherwise():
+    run, _ = fake_run([{"id": "a1", "title": "T1", "duration": 222.0}, {"id": "a2", "title": "T2"},
+                       {"id": "a3", "title": "T3", "duration": "bad"}])
+    got = resolve(Engine(Path("yt-dlp")), [f"{ROOT}/@abc"], run=run)
+    assert [r.duration for r in got] == [222, None, None]
+
+
+def test_fetch_meta_parses_description_and_truncates():
+    from ytdlp import fetch_meta
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return 0, json.dumps({"id": "v1", "title": "標題", "description": "x" * 9000 + " #tag"}), ""
+
+    meta = fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1", run=run)
+    assert meta["id"] == "v1" and meta["title"] == "標題" and len(meta["description"]) == 8000
+    cmd = calls[0]
+    assert "--skip-download" in cmd and "--no-playlist" in cmd and "--dump-json" in cmd
+    assert cmd[-2:] == ["--", f"{ROOT}/watch?v=v1"]
+
+
+def test_fetch_meta_missing_description_is_empty_string():
+    from ytdlp import fetch_meta
+    meta = fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1",
+                      run=lambda cmd: (0, json.dumps({"id": "v1", "title": "T"}), ""))
+    assert meta["description"] == ""
+
+
+def test_fetch_meta_classifies_failure():
+    from ytdlp import fetch_meta
+    with pytest.raises(ResolveError) as exc:
+        fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1", run=lambda cmd: (1, "", "ERROR: Private video"))
+    assert exc.value.code == "private"
+    with pytest.raises(ResolveError):
+        fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1", run=lambda cmd: (0, "not json", ""))

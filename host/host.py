@@ -18,10 +18,10 @@ from protocol import BadMessage, ProtocolError, read_message, write_message
 from quality import parse_quality
 from security import VIDEO_ID, is_allowed_url
 from version import VERSION
-from ytdlp import Engine, ResolveError, resolve, run_capture
+from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta"}
 MAX_LIMIT = 1000
 
 
@@ -132,7 +132,29 @@ class Host:
                 self._error(msg, "internal", f"無法執行下載引擎：{exc}")
                 return
             self._reply(msg, {"type": "resolved", "items": [
-                {"id": r.id, "title": r.title, "url": r.url} for r in refs]})
+                {"id": r.id, "title": r.title, "url": r.url, "duration": r.duration} for r in refs]})
+
+        self._background(work)
+
+    def _on_meta(self, msg: dict) -> None:
+        url = msg.get("url")
+        if not is_allowed_url(url):
+            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            return
+        if not self._engine_present():
+            self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
+            return
+
+        def work() -> None:
+            try:
+                meta = fetch_meta(self.engine, url)
+            except ResolveError as exc:
+                self._error(msg, exc.code, exc.message)
+                return
+            except Exception as exc:
+                self._error(msg, "internal", f"無法執行下載引擎：{exc}")
+                return
+            self._reply(msg, {"type": "meta", **meta})
 
         self._background(work)
 

@@ -53,6 +53,7 @@ class VideoRef:
     id: str
     title: str
     url: str
+    duration: int | None = None
 
 
 @dataclass
@@ -211,12 +212,35 @@ def resolve(engine: Engine, urls: list[str], limit: int | None = None,
             if not vid or vid in seen:
                 continue
             seen.add(vid)
-            refs.append(VideoRef(vid, entry.get("title") or vid, f"https://www.youtube.com/watch?v={vid}"))
+            duration = entry.get("duration")
+            duration = int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
+            refs.append(VideoRef(vid, entry.get("title") or vid, f"https://www.youtube.com/watch?v={vid}", duration))
     if not refs and first_error:
         raise first_error
     refs = refs[:limit] if limit else refs
     # Unresolvable URLs stay in the list without id/title; the job reports each one as a failed item.
     return refs + [VideoRef("", "", url) for url in failed]
+
+
+MAX_DESCRIPTION = 8000
+
+
+def fetch_meta(engine: Engine, url: str,
+               run: Callable[[list[str]], tuple[int, str, str]] = run_capture) -> dict:
+    """Full metadata of one video (the description is not part of the flat playlist listing)."""
+    cmd = engine.base_args() + ["--skip-download", "--no-playlist", "--dump-json", "--", url]
+    code, out, err = run(cmd)
+    if code != 0:
+        raise ResolveError(*classify_error(err))
+    try:
+        info = json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise ResolveError("unknown", "無法讀取影片資料") from None
+    if not isinstance(info, dict) or not info.get("id"):
+        raise ResolveError("unknown", "無法讀取影片資料")
+    description = info.get("description")
+    return {"id": info["id"], "title": info.get("title") or info["id"],
+            "description": description[:MAX_DESCRIPTION] if isinstance(description, str) else ""}
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
