@@ -12,10 +12,10 @@
 
 **使用者已確認**
 - 更新方式照使用者的「圖片套版產生器」（`QuickPatterntool`）：不用 Release、不用 GitHub Actions、不用簽章；擴充功能自己比對 GitHub 上的檔案，使用者只需選一次擴充功能資料夾，更新後自動重新載入。
-- 追蹤的不是 `main`，而是獨立的 `release` 分支：維護者把測試過的版本推到 `release`，同事才會收到更新，避免做到一半的程式碼直接送出。
+- 追蹤 `main`（與圖片套版產生器相同）：開發與修改都記錄在功能分支；使用者確認沒問題、併入 `main` 後，同事才會收到更新，做到一半的程式碼不會直接送出。（原先設計為獨立的 `main` 分支，使用者後來改為追蹤 `main`。）
 - repo 已經公開。
 
-**不在範圍**：Release／Actions／簽章、自動（不經使用者按鈕）套用更新、Chrome 商店、Linux、更新 yt-dlp（沿用既有的「更新下載引擎」）、由 Claude 代為建立或推送遠端的 `release` 分支（對外動作，由使用者決定與執行）。
+**不在範圍**：Release／Actions／簽章、自動（不經使用者按鈕）套用更新、Chrome 商店、Linux、更新 yt-dlp（沿用既有的「更新下載引擎」）、由 Claude 代為建立 `main` 或把功能分支併入 `main`（對外動作，由使用者決定與執行）。
 
 **參考的實際做法**（讀 `QuickPatterntool/updater.js` 與 `README.md` 得知，未實際執行）：向 GitHub 取得被追蹤分支最新 commit 的檔案清單與每個檔案的 git blob SHA → 與擴充功能自己目前的檔案比對 → 有差異的檔案才下載（網址固定在該 commit，內容不會變）→ 重新計算 blob SHA 確認與清單一致 → 以 File System Access API 寫回使用者選定的資料夾 → `chrome.runtime.reload()`。
 
@@ -29,11 +29,11 @@
 
 ## 3. 發佈與初次安裝
 
-**發版（維護者）**：跑完測試後，把確定的 commit 推到遠端 `release` 分支（`git push origin <commit>:release`）。出貨前同步更新 `extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION`，兩者必須相同（測試強制）。已提交的安裝檔必須是最新的（既有測試已強制）。建議對 `release` 分支開啟 GitHub 分支保護（限制誰能推送），並對 GitHub 帳號啟用雙重驗證。
+**發版（維護者）**：跑完測試後，把確定的功能分支併入遠端 `main`（開 PR 合併，或 `git push origin <commit>:main`）。出貨前同步更新 `extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION`，兩者必須相同（測試強制）。已提交的安裝檔必須是最新的（既有測試已強制）。建議對 `main` 分支開啟 GitHub 分支保護（限制誰能推送），並對 GitHub 帳號啟用雙重驗證。
 
-**初次安裝（新同事）**：下載 `https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/release.zip` → 解壓縮 → 從 `extension` 資料夾載入未封裝項目 → 面板內「下載部署」→ 執行安裝檔 → 「啟動」。之後的更新全部在面板內完成。
+**初次安裝（新同事）**：下載 `https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/main.zip` → 解壓縮 → 從 `extension` 資料夾載入未封裝項目 → 面板內「下載部署」→ 執行安裝檔 → 「啟動」。之後的更新全部在面板內完成。
 
-**追蹤設定**：擴充功能 `extension/lib/update-config.js` 與小程式 `host/update_config.py` 各有一份 `OWNER`、`REPO`、`BRANCH`（`release`），測試確保兩份一致。
+**追蹤設定**：擴充功能 `extension/lib/update-config.js` 與小程式 `host/update_config.py` 各有一份 `OWNER`、`REPO`、`BRANCH`（`main`），測試確保兩份一致。
 
 ## 4. 比對規則
 
@@ -93,7 +93,7 @@
 | 寫到別的資料夾 | 選取的資料夾必須有同名的 `manifest.json` |
 | 有人把更新來源改指向別處 | 倉庫、分支、網域寫死在程式碼中，不接受訊息或設定覆蓋 |
 
-**殘餘風險（與圖片套版產生器相同的信任程度）**：能推送到 `release` 分支的人（例如 GitHub 帳號被盜），就能影響所有同事的電腦；沒有簽章可擋。對策是分支保護與雙重驗證（見第 3 節），而不是程式碼。
+**殘餘風險（與圖片套版產生器相同的信任程度）**：能推送到 `main` 分支的人（例如 GitHub 帳號被盜），就能影響所有同事的電腦；沒有簽章可擋。對策是分支保護與雙重驗證（見第 3 節），而不是程式碼。
 
 ## 9. 測試與驗證
 
@@ -103,21 +103,21 @@
 - 面板端對端（無頭 Chromium）：以 `context.route` 攔截 GitHub 請求，並用瀏覽器的私有檔案系統（OPFS）代替「選到的資料夾」，驗證徽章、檢查、更新進度、更新後呼叫重新載入。
 
 **無法在開發環境驗證（需要使用者）**
-- 真實 GitHub 的比對與下載（尚未有 `release` 分支）。
+- 真實 GitHub 的比對與下載（尚未有 `main` 分支）。
 - 真實的資料夾選擇視窗：Chrome 會拒絕某些系統資料夾（例如磁碟根目錄、使用者的「下載」「文件」資料夾本身），擴充功能放在這些位置時無法授權，需要搬到一般子資料夾。
 - Windows／Mac 真機上的檔案替換與占用行為。
 - Chrome 在真機上重新載入未封裝擴充功能。
 
 ## 10. 使用者要做的一次性設定
 
-1. 決定哪個 commit 是第一個正式版本（目前功能還在 `claude/youtube-video-downloader-4gvj18` 分支，尚未合併到任何預設分支），並推送成遠端 `release` 分支。
-2. 對 `release` 分支開啟分支保護、對 GitHub 帳號啟用雙重驗證（建議）。
-3. 依 README 冒煙測試：從 `release.zip` 安裝 → 推一個更高版本到 `release` → 面板檢查更新、一鍵更新。
+1. 決定哪個 commit 是第一個正式版本（目前功能還在 `claude/youtube-video-downloader-4gvj18` 分支，尚未合併到任何預設分支），並併入遠端 `main`。
+2. 對 `main` 分支開啟分支保護、對 GitHub 帳號啟用雙重驗證（建議）。
+3. 依 README 冒煙測試：從 `main.zip` 安裝 → 併入一個更高版本到 `main` → 面板檢查更新、一鍵更新。
 
 ## 11. 成功標準
 
-1. 從 `release.zip` 初次安裝後，擴充功能與小程式都能正常運作。
-2. 維護者推新版本到 `release` 後，工具列圖示與面板在 6 小時內（或按「檢查更新」立即）顯示有新版本；按「更新到最新版」後，擴充功能與小程式都換成新版並重新載入。
+1. 從 `main.zip` 初次安裝後，擴充功能與小程式都能正常運作。
+2. 維護者併入新版本到 `main` 後，工具列圖示與面板在 6 小時內（或按「檢查更新」立即）顯示有新版本；按「更新到最新版」後，擴充功能與小程式都換成新版並重新載入。
 3. 雜湊不符、檔名不合規、識別碼被改、新版小程式無法載入、替換中途失敗的更新，都不會改動現有安裝，或能完整還原。
 4. 有下載工作進行中時不會更新。
 5. 第 9 節標明「無法在開發環境驗證」的項目，由使用者依第 10 節冒煙測試確認，開發端不宣稱已驗證。

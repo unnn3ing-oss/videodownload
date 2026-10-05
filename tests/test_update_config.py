@@ -18,7 +18,7 @@ def test_tracking_config_matches_between_js_and_python():
     js = (ROOT / "extension" / "lib" / "update-config.js").read_text(encoding="utf-8")
     found = {k: re.search(rf'{k}:\s*"([^"]+)"', js).group(1) for k in ("owner", "repo", "branch")}
     assert found == {"owner": update_config.OWNER, "repo": update_config.REPO, "branch": update_config.BRANCH}
-    assert update_config.BRANCH == "release"
+    assert update_config.BRANCH == "main"
 
 
 def test_ready_reports_host_version(tmp_path):

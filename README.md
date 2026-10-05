@@ -14,7 +14,7 @@ Chrome 擴充功能加本機小程式，用來把**公司 YouTube 頻道的公�
 
 ### 1. 載入擴充功能（Windows、Mac 相同）
 
-1. 下載 [release.zip](https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/release.zip)（最新發佈版），解壓縮到一個**固定、之後不會搬動**的位置，裡面有 `extension` 資料夾。
+1. 下載 [main.zip](https://github.com/unnn3ing-oss/videodownload/archive/refs/heads/main.zip)（最新發佈版），解壓縮到一個**固定、之後不會搬動**的位置，裡面有 `extension` 資料夾。
 2. Chrome 開啟 `chrome://extensions`，右上角打開「開發人員模式」。
 3. 按「載入未封裝項目」，選擇 `extension` 資料夾。
 4. 把擴充功能釘選到工具列。之後點工具列上的圖示，就會在視窗右側開啟**側邊面板**，切換分頁也不會消失。（Chrome 啟動時可能提示「停用開發人員模式擴充功能」，請選保留。）
@@ -77,23 +77,23 @@ Chrome 擴充功能加本機小程式，用來把**公司 YouTube 頻道的公�
 | 顯示「YouTube 要求登入或驗證」 | 這是 YouTube 對該網路的限制。請改用住宅或公司網路，不要用雲端或 VPN |
 | Windows 安裝時 yt-dlp 無法執行 | 可能缺少 Visual C++ 執行階段，或被防毒軟體攔截 |
 | 公司電腦無法安裝 | IT 可能限制了開發人員模式擴充功能、腳本執行或 Native Messaging，需請 IT 協助 |
-| 更新後本機小程式無法啟動 | 把 `<安裝目錄>/backup/host/` 裡的檔案複製回 `<安裝目錄>/host/`（只保留上一版的備份）。不要重新執行安裝檔：安裝檔隨擴充功能一起更新，會裝回同一份有問題的版本；要退回舊版請改用上一版的 release.zip |
+| 更新後本機小程式無法啟動 | 把 `<安裝目錄>/backup/host/` 裡的檔案複製回 `<安裝目錄>/host/`（只保留上一版的備份）。不要重新執行安裝檔：安裝檔隨擴充功能一起更新，會裝回同一份有問題的版本；要退回舊版請改用上一版的 main.zip |
 | 檢查更新顯示「GitHub 暫時限制查詢次數」 | 同一個網路一小時內查詢太多次，稍後再試即可 |
 | 檢查更新顯示「GitHub 拒絕了查詢（HTTP 403）」 | 公司網路的代理或防火牆擋下了 api.github.com，請 IT 放行 `api.github.com` 與 `raw.githubusercontent.com` |
-| 檢查更新顯示「尚未發佈：找不到 release 分支」 | 維護者還沒推送過 `release` 分支 |
+| 檢查更新顯示「尚未發佈：找不到 main 分支」 | 維護者還沒把程式碼併入 `main` |
 | 更新時顯示「這個資料夾不是目前載入的擴充功能資料夾」 | 你可能解壓縮了多份。到 `chrome://extensions` 找到這個擴充功能，看「載入位置」，再選那個資料夾（面板已自動忘記先前選的資料夾） |
 | 選擇資料夾時被 Chrome 拒絕 | 不要選磁碟根目錄或「下載」「文件」「桌面」資料夾本身，請選擴充功能所在的 `extension` 那一層 |
 
 ## 維護者：發版
 
-更新會追蹤 GitHub 上獨立的 `release` 分支（開發分支的內容不會影響同事）。每次要讓同事收到更新時：
+更新會追蹤 GitHub 上的 `main` 分支（與圖片套版產生器相同）。修改都先記錄在功能分支，不會影響同事；確認沒問題、併入 `main` 後，同事才會收到更新。每次要發版時：
 
 1. 同步更新 `extension/manifest.json` 的 `version` 與 `host/version.py` 的 `VERSION`，兩者必須相同（測試強制）；**不要動 `manifest.json` 的 `key`**，否則擴充功能識別碼改變，更新會被拒絕。
 2. 跑完測試：`python -m pytest`，並執行 `python build.py` 重新產生安裝檔、把 `extension/installers/` 一併提交。
-3. 確定要發佈的 commit 後：`git push origin <commit>:release`。
+3. 確定可以發佈後，把功能分支併入 `main`（在 GitHub 開 Pull Request 並合併，或 `git push origin <commit>:main`）。
 4. 同事的擴充功能最多 6 小時內會發現新版本（或按「檢查更新」立即檢查）。
 
-**安全提醒**：這套更新沒有數位簽章，信任來源就是 `release` 分支本身；能推送到該分支的人，就能影響所有同事的電腦。請對 `release` 分支開啟 GitHub 分支保護（限制誰能推送），並對所有有推送權限的 GitHub 帳號啟用雙重驗證。
+**安全提醒**：這套更新沒有數位簽章，信任來源就是 `main` 分支本身；能推送到該分支的人，就能影響所有同事的電腦。請對 `main` 分支開啟 GitHub 分支保護（限制誰能推送），並對所有有推送權限的 GitHub 帳號啟用雙重驗證。
 
 ## 開發
 
