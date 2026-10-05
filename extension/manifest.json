@@ -10,7 +10,9 @@
     "downloads",
     "storage",
     "sidePanel",
-    "alarms"
+    "alarms",
+    "scripting",
+    "clipboardWrite"
   ],
   "background": {
     "service_worker": "background.js",
@@ -25,9 +27,22 @@
     "https://music.youtube.com/*",
     "https://youtu.be/*",
     "https://api.github.com/*",
-    "https://raw.githubusercontent.com/*"
+    "https://raw.githubusercontent.com/*",
+    "https://i.ytimg.com/*",
+    "https://unnn3ing-oss.github.io/videodownload/*"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://unnn3ing-oss.github.io/videodownload/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
 }
