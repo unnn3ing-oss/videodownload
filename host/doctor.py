@@ -18,6 +18,7 @@ from typing import Callable
 
 import macos_engine
 from config import ConfigStore
+from install_record import is_extension, read_record
 from version import VERSION
 from ytdlp import run_capture
 
@@ -111,7 +112,7 @@ def _check_output(output_dir: Path) -> Check:
     return Check("output", "ok", title, f"剩 {free // (1 << 30)} GB")
 
 
-def _default_manifest(platform: str) -> Path | None:
+def default_manifest(platform: str) -> Path | None:
     if platform == "darwin":
         return Path.home() / "Library/Application Support/Google/Chrome/NativeMessagingHosts" / f"{HOST_NAME}.json"
     if platform.startswith("win"):
@@ -150,6 +151,17 @@ def _check_native(path: Path, ext_id: str | None, platform: str) -> Check:
     return Check("native", "ok", "Chrome 已登錄本機小程式", str(path))
 
 
+def _check_extension_folder(home: Path) -> Check | None:
+    """Only when the installer put the extension somewhere (an extension deployed by hand is not known to the host)."""
+    folder = read_record(home).get("extensionFolder")
+    if not isinstance(folder, str):
+        return None
+    if is_extension(Path(folder)):
+        return Check("extension", "ok", "擴充功能資料夾在原位", folder)
+    return Check("extension", "warn", "找不到擴充功能資料夾（可能被搬動或刪除了）", folder,
+                 "把它搬回去，或" + _REINSTALL + "，然後到 chrome://extensions 重新載入")
+
+
 def _quarantined(home: Path, run: Run) -> int:
     code, out, _ = run(["xattr", "-r", str(Path(home) / "bin"), str(Path(home) / "host")])
     return sum(1 for line in out.splitlines() if "com.apple.quarantine" in line) if code == 0 else 0
@@ -169,7 +181,7 @@ def _check_network(run: Run) -> Check | None:
 def diagnose(home: Path, *, ext_id: str | None = None, native_manifest: Path | None = None, output_dir: Path | None = None,
              run: Run = run_capture, platform: str = sys.platform, network: bool = True) -> list[Check]:
     home = Path(home)
-    manifest = Path(native_manifest) if native_manifest else (_default_manifest(platform) or home / f"{HOST_NAME}.json")
+    manifest = Path(native_manifest) if native_manifest else (default_manifest(platform) or home / f"{HOST_NAME}.json")
     output = Path(output_dir) if output_dir else ConfigStore(home / "config.json").output_dir
     checks = [
         _check_python(),
@@ -180,6 +192,8 @@ def diagnose(home: Path, *, ext_id: str | None = None, native_manifest: Path | N
         _check_output(output),
         _check_native(manifest, ext_id, platform),
     ]
+    if folder_check := _check_extension_folder(home):
+        checks.append(folder_check)
     if platform == "darwin":
         marked = _quarantined(home, run)
         checks.append(Check("quarantine", "warn", f"{marked} 個檔案帶有「從網路下載」標記", "macOS 可能因此擋下它們", "按「嘗試自動修復」，或" + _REINSTALL)

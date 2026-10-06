@@ -74,15 +74,31 @@ def test_windows_installer_is_crlf_and_has_ext_id():
     text = build.render_windows()
     assert re.search(r"(?<!\r)\n", text) is None and "\r\n" in text
     assert build.extension_id(KEY) in text
-    assert "HKCU:\\Software\\Google\\Chrome\\NativeMessagingHosts" in text
-    assert build.HOST_NAME in text
 
 
 def test_windows_payload_matches_host_sources():
     text = build.render_windows()
-    b64 = re.search(r"FromBase64String\('([A-Za-z0-9+/=]+)'\)", text).group(1)
+    b64 = re.search(r"WriteAllBytes\(\$payload, \[Convert\]::FromBase64String\('([A-Za-z0-9+/=]+)'\)", text).group(1)
     assert payload_files(b64) == host_sources()
-    assert "host.py" in host_sources() and not any("test" in n for n in host_sources())
+    assert "host.py" in host_sources() and "installer.py" in host_sources() and not any("test" in n for n in host_sources())
+
+
+def extension_files(b64: str) -> dict[str, bytes]:
+    return payload_files(b64)
+
+
+def test_the_extension_package_is_the_extension_without_tests_and_installers():
+    files = extension_files(build.extension_b64())
+    assert "manifest.json" in files and "background.js" in files and "lib/updater.js" in files
+    assert not any(n.startswith(("tests/", "installers/")) or "__pycache__" in n for n in files)
+    assert files["manifest.json"] == (ROOT / "extension/manifest.json").read_bytes()
+    assert build.extension_b64() == build.extension_b64(), "reproducible"
+
+
+def test_both_installers_carry_the_same_extension_package():
+    win = re.search(r"WriteAllBytes\(\(Join-Path \$Root 'extension.zip'\), \[Convert\]::FromBase64String\('([A-Za-z0-9+/=]+)'\)", build.render_windows()).group(1)
+    mac = re.search(r"EXTENSION='([A-Za-z0-9+/=]+)'", mac_script(build.render_mac())).group(1)
+    assert win == mac == build.extension_b64()
 
 
 def test_mac_zip_has_executable_lf_script_with_same_payload():
@@ -92,9 +108,16 @@ def test_mac_zip_has_executable_lf_script_with_same_payload():
         assert (z.getinfo("install-mac.command").external_attr >> 16) & 0o777 == 0o755
     script = mac_script(data)
     assert "\r" not in script and script.startswith("#!/bin/bash")
-    assert "Library/Application Support/Google/Chrome/NativeMessagingHosts" in script
+    assert "Library/Application Support/YTDownloader" in script
     b64 = re.search(r"PAYLOAD='([A-Za-z0-9+/=]+)'", script).group(1)
     assert payload_files(b64) == host_sources()
+
+
+def test_the_installers_are_only_a_bootstrap_the_installing_lives_in_the_host_folder():
+    for text in (mac_script(build.render_mac()), build.render_windows().replace("\r\n", "\n")):
+        assert "installer.py" in text and "--ext-id" in text and "--extension-zip" in text
+        for address in ("yt-dlp/yt-dlp", "denoland/deno", "BtbN", "evermeet"):
+            assert address not in text, f"{address}: download addresses belong in host/installer.py"
 
 
 def test_mac_script_is_valid_bash(tmp_path):
@@ -143,13 +166,13 @@ esac
 
 
 def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False,
-                      ffmpeg_body="echo ffmpeg\n", before=None, piped=False):
+                      ffmpeg_body="echo ffmpeg\n", before=None, piped=False, home=None):
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
-    home, stub, bin_dir = tmp_path / "home", tmp_path / "stub", tmp_path / "bin"
+    home, stub, bin_dir = home or tmp_path / "home", tmp_path / "stub", tmp_path / "bin"
     for d in (home, stub, bin_dir):
-        d.mkdir()
+        d.mkdir(exist_ok=True)
     with zipfile.ZipFile(stub / "ytdlp.zip", "w") as z:  # the unpacked ("onedir") yt-dlp build
         exe = zipfile.ZipInfo("yt-dlp_macos")
         exe.create_system = 3
@@ -171,7 +194,8 @@ def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wr
         before(home / "Library/Application Support/YTDownloader/bin")
     script = tmp_path / "install-mac.command"
     script.write_text(mac_script(build.render_mac()), encoding="utf-8")
-    env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub)}
+    env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub),
+           "YTDL_PLATFORM": "darwin", "YTDL_SKIP_NETWORK": "1"}  # (this machine is Linux: the Mac steps are run as a Mac would)
     if piped:  # the way the one-line command runs it: curl ... | bash
         proc = subprocess.run(["bash"], input=script.read_text(encoding="utf-8"), env=env, capture_output=True, text=True, timeout=120)
     else:
@@ -192,12 +216,27 @@ def test_mac_installer_happy_path(tmp_path):
     assert (bin_dir / "yt-dlp_dir" / "yt-dlp_macos").is_file() and (bin_dir / "yt-dlp_dir" / "_internal" / "lib.txt").is_file()
     assert subprocess.run([str(bin_dir / "yt-dlp"), "--version"], capture_output=True, text=True).stdout.strip() == "2099.01.01"
     assert "exec " in (bin_dir / "yt-dlp").read_text() and not (bin_dir / "yt-dlp").read_bytes().startswith(b"\xcf\xfa")
+    # the extension is put in a folder of its own (no dialog on this machine, so the home folder), ready for Chrome to load
+    ext = home / "YT批量下載器"
+    assert json.loads((ext / "manifest.json").read_text(encoding="utf-8"))["name"] == "YouTube 批量下載器"
+    assert (ext / "background.js").is_file() and not (ext / "installers").exists() and not (ext / "tests").exists()
+    record = json.loads((home / "Library/Application Support/YTDownloader/install.json").read_text(encoding="utf-8"))
+    assert record["extensionFolder"] == str(ext)
+    assert "測試本機小程式能不能被 Chrome 啟動" in proc.stdout and "OK（yt-dlp 2099.01.01）" in proc.stdout
+    assert "載入未封裝項目" in proc.stdout and str(ext) in proc.stdout
 
 
-def test_mac_installer_does_not_use_the_single_file_yt_dlp():
-    script = mac_script(build.render_mac())
-    assert "macos_engine.py" in script
-    assert "releases/latest/download/yt-dlp_macos\"" not in script and "-o \"$HOME_DIR/bin/yt-dlp\"" not in script
+def test_running_the_mac_installer_again_keeps_the_same_extension_folder_and_does_not_ask(tmp_path):
+    proc, home = run_mac_installer(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    marker = home / "YT批量下載器" / "background.js"
+    marker.write_text("// changed by hand")
+    (tmp_path / "again").mkdir()
+    # a second run on the same home, as a repair: the same folder is brought up to date, nothing is opened
+    again, _ = run_mac_installer(tmp_path / "again", home=home)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert marker.read_text() != "// changed by hand"
+    assert "載入未封裝項目" not in again.stdout
 
 
 def test_mac_installer_reports_checksum_fetch_failure(tmp_path):
@@ -245,22 +284,6 @@ def test_mac_installer_does_not_call_it_done_when_the_check_finds_a_problem(tmp_
     assert proc.returncode != 0
     assert "✘" in proc.stdout and "ffmpeg 無法執行" in proc.stdout and "→" in proc.stdout
     assert "安裝尚未完成" in proc.stdout and "安裝完成！" not in proc.stdout
-
-
-def test_mac_installer_removes_the_downloaded_from_internet_mark_before_registering_with_chrome():
-    script = mac_script(build.render_mac())
-    mark = script.index("xattr -dr com.apple.quarantine")
-    assert script.index('step "下載 yt-dlp') < mark < script.index('step "登錄 Chrome Native Messaging"')
-
-
-def test_windows_installer_judges_parts_by_running_them_and_ends_with_the_same_report():
-    text = build.render_windows().replace("\r\n", "\n")
-    assert "function Works(" in text
-    for part in ("deno.exe", "ffmpeg.exe"):
-        assert f"Works (Join-Path $BinDir '{part}')" in text
-    assert "(Works $py '--version')" in text
-    assert "doctor.py" in text and "--native-manifest $manifestPath" in text and "--ext-id $ExtId" in text
-    assert "重新執行這個安裝檔就會自動檢查並修復" in text
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed")
