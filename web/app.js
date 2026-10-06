@@ -6,6 +6,7 @@ import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
 import { createAutoConnect, extensionNotice, hostNotice } from "../extension/lib/connection.js";
+import { installerPendingText } from "../extension/lib/installer.js";
 
 const $ = (id) => document.getElementById(id);
 const client = createBridgeClient();
@@ -243,7 +244,8 @@ $("deploy-copy").addEventListener("click", async () => {
 $("deploy-installer").addEventListener("click", async () => {
   try {
     const result = await send({ type: "deploy_installer" });
-    setNote("deploy-status", result?.ok ? `已下載「${result.name}」。請執行一次，完成後這裡會自動連線。` : result?.error ?? "無法下載安裝檔", result?.ok ? "ok" : "error");
+    if (result?.ok && result.pending) setNote("deploy-status", installerPendingText(result.name), "info");
+    else setNote("deploy-status", result?.ok ? `已下載「${result.name}」。請執行一次，完成後這裡會自動連線。` : result?.error ?? "無法下載安裝檔", result?.ok ? "ok" : "error");
   } catch (error) {
     setNote("deploy-status", `需要先完成步驟 1、2：${error.message}`, "error");
   }

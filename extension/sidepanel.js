@@ -1,4 +1,5 @@
 import { classifyTabUrl } from "./lib/page.js";
+import { installerPendingText } from "./lib/installer.js";
 import { createRequestIds } from "./lib/ids.js";
 import { summarize } from "./lib/queue.js";
 import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
@@ -227,6 +228,10 @@ async function deploy() {
   const result = await send({ type: "deploy_installer" });
   if (!result?.ok) {
     note(result?.error ?? "無法下載安裝檔", "error");
+    return;
+  }
+  if (result.pending) {
+    note(installerPendingText(result.name), "info");
     return;
   }
   note(result.os === "mac"

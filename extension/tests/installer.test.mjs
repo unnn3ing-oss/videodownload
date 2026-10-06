@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { downloadInstaller } from "../lib/installer.js";
+import { downloadInstaller, installerPendingText } from "../lib/installer.js";
 
 const BYTES = new Uint8Array([0x50, 0x4b, 3, 4, 255, 0, 13, 10, 200]); // includes a CRLF and bytes above 127
 
@@ -38,7 +38,7 @@ const decode = (url) => new Uint8Array(Buffer.from(url.slice(url.indexOf(",") + 
 
 test("the installer is read inside the extension and saved from a data: address, not a chrome-extension:// one", async () => {
   const { env, calls } = setup();
-  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "mac", name: "install-mac.zip" });
+  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "mac", name: "install-mac.zip", pending: false });
   assert.deepEqual(calls.fetched, ["chrome-extension://abc/installers/install-mac.zip"]);
   assert.equal(calls.downloaded.length, 1);
   const [download] = calls.downloaded;
@@ -49,7 +49,7 @@ test("the installer is read inside the extension and saved from a data: address,
 
 test("the Windows installer keeps its line endings", async () => {
   const { env, calls } = setup({ os: "win" });
-  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "win", name: "install-windows.cmd" });
+  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "win", name: "install-windows.cmd", pending: false });
   assert.equal(calls.downloaded[0].filename, "install-windows.cmd");
   assert.match(calls.downloaded[0].url, /^data:application\/octet-stream;base64,/);
   assert.deepEqual(decode(calls.downloaded[0].url), BYTES);
@@ -85,9 +85,25 @@ test("a download that Chrome interrupts is an error with the reason", async () =
   assert.match((await downloadInstaller(cancelled.env)).error, /已取消/);
 });
 
-test("a download still running after the wait counts as started", async () => {
+test("a download still running after the wait is reported as not finished, so the page does not claim it is saved", async () => {
   const { env } = setup({ states: [{ state: "in_progress" }] });
-  assert.equal((await downloadInstaller(env)).ok, true);
+  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "mac", name: "install-mac.zip", pending: true });
+});
+
+test("a download Chrome holds for the person (a safety warning) is reported right away, without waiting it out", async () => {
+  const { env, calls } = setup({ os: "win", states: [{ state: "in_progress", danger: "file" }] });
+  env.timeoutMs = 60000;
+  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "win", name: "install-windows.cmd", pending: true });
+  assert.equal(calls.searched, 1);
+  const checked = setup({ states: [{ state: "in_progress", danger: "safe" }, { state: "complete", danger: "accepted" }] });
+  assert.equal((await downloadInstaller(checked.env)).pending, false, "a download Chrome considers safe is simply waited for");
+});
+
+test("the text for an unfinished installer download says where to look", () => {
+  const text = installerPendingText("install-windows.cmd");
+  assert.match(text, /install-windows\.cmd/);
+  assert.match(text, /下載清單/);
+  assert.match(text, /保留/);
 });
 
 test("a refused download call is an error", async () => {
