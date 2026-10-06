@@ -1,7 +1,8 @@
 // Owns the Native Messaging connection and the download list, so downloads keep running whether or not the
 // side panel or the web page is open. Both are only views of the list held here.
 import { HOST_NAME } from "./lib/constants.js";
-import { classifyConnectError, installerFor } from "./lib/platform.js";
+import { classifyConnectError } from "./lib/platform.js";
+import { downloadInstaller } from "./lib/installer.js";
 import { checkLatest } from "./lib/updater.js";
 import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
@@ -151,18 +152,7 @@ function connect() {
   });
 }
 
-async function deployInstaller() {
-  const info = await chrome.runtime.getPlatformInfo();
-  const installer = installerFor(info.os);
-  if (!installer) return { ok: false, error: "目前只支援 Windows 與 Mac" };
-  const name = installer.file.split("/").pop();
-  try {
-    await chrome.downloads.download({ url: chrome.runtime.getURL(installer.file), filename: name });
-    return { ok: true, os: info.os, name };
-  } catch (error) {
-    return { ok: false, error: `無法下載安裝檔：${error.message}` };
-  }
-}
+const deployInstaller = () => downloadInstaller({ runtime: chrome.runtime, downloads: chrome.downloads });
 
 async function setOutputDir(path) {
   if (!host.connected()) return { ok: false, error: "請先連線本機小程式" };

@@ -86,6 +86,16 @@ async function withExtension() {
     assert.equal(await web.isDisabled("#start-all"), true);
     await shot("web-1-setup");
 
+    // B1b. "Download installer" really saves the installer. (This machine is Linux, so the worker is told it is a Mac.)
+    const worker = context.serviceWorkers().find((w) => w.url().includes(extId));
+    await worker.evaluate(() => { chrome.runtime.getPlatformInfo = async () => ({ os: "mac", arch: "x86-64", nacl_arch: "x86-64" }); });
+    await web.click("#deploy-installer");
+    await web.waitForFunction(() => /已下載「|無法/.test(document.getElementById("deploy-status").textContent), null, { timeout: 20000 });
+    assert.match(await web.textContent("#deploy-status"), /已下載「install-mac\.zip」/);
+    const saved = await worker.evaluate(() => chrome.downloads.search({}).then((all) => all.map((d) => ({ state: d.state, error: d.error ?? null, filename: d.filename }))));
+    assert.deepEqual(saved.map((d) => [d.state, d.error]), [["complete", null]], "Chrome finished the download");
+    assert.deepEqual(fs.readFileSync(saved[0].filename), fs.readFileSync(path.join(root, "extension/installers/install-mac.zip")), "and it is the installer, byte for byte");
+
     // B2. Installing the host is enough: the page connects without any click.
     const wrapper = path.join(work, "host.sh");
     fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexec python3 "${path.join(root, "host/host.py")}"\n`);
@@ -181,7 +191,6 @@ async function withExtension() {
     // Injecting the bridge into a tab that already has one (what the extension does after an install or reload)
     // must not make the page hear every answer twice. Reloading the extension itself cannot be tried here:
     // this Chromium leaves a --load-extension extension disabled after chrome.runtime.reload().
-    const [worker] = context.serviceWorkers();
     await worker.evaluate(async () => {
       const [tab] = await chrome.tabs.query({ url: "https://unnn3ing-oss.github.io/videodownload/*" });
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["bridge.js"] });
