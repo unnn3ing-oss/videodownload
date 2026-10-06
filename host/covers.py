@@ -29,9 +29,16 @@ def cover_name(title: str, video_id: str) -> str:
     return sanitize_filename(kept[:NAME_CHARS] or video_id)
 
 
+_UNSAFE_NAME_CHARS = set('/\\:*?"<>|')
+
+
 def _is_cover_name(name: str) -> bool:
-    """A file name this module could have written: a plain, visible name ending in .jpg."""
-    return name.lower().endswith(".jpg") and not name.startswith(".") and "/" not in name and "\\" not in name
+    """A file name this module could have written: a plain, visible name ending in .jpg.
+
+    No characters that a path or Windows treat specially (a drive letter, an NTFS stream "file:stream", wildcards).
+    """
+    return (name.lower().endswith(".jpg") and not name.startswith(".")
+            and not any(ch in _UNSAFE_NAME_CHARS or ord(ch) < 32 for ch in name))
 
 
 def _registry(directory: Path) -> dict[str, str]:

@@ -26,6 +26,10 @@ test("extractHashtags ignores # fragments inside urls and accepts tags after bra
   assert.deepEqual(extractHashtags("#底線_tag #123"), ["底線_tag", "123"]);
 });
 
+test("extractHashtags also accepts a tag right after a U+0085 line break", () => {
+  assert.deepEqual(extractHashtags("第一行\u0085#標籤一 內文\u2028#標籤二"), ["標籤一", "標籤二"]);
+});
+
 test("buildCopyText formats title and hashtags", () => {
   assert.equal(buildCopyText("影片標題文字", ["一", "二", "三"]), "【影片標題文字】\n#一 #二 #三");
   assert.equal(buildCopyText("只有標題", []), "【只有標題】");

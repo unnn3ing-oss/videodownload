@@ -80,3 +80,9 @@ def test_save_cover_ignores_registry_entries_that_are_not_plain_jpg_names(tmp_pa
 def test_save_cover_reuses_a_registered_jpg_name_in_any_letter_case(tmp_path):
     (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": "舊名字.JPG"}), encoding="utf-8")
     assert save_cover(tmp_path, "v1", "完全不同的新標題", JPEG).name == "舊名字.JPG"
+
+
+@pytest.mark.parametrize("entry", ["C:x.jpg", "notes.docx:x.jpg", "a*b.jpg", "a?b.jpg", "a<b.jpg", "a|b.jpg", 'a"b.jpg', "a\x00b.jpg"])
+def test_save_cover_ignores_registry_entries_with_characters_windows_reads_specially(tmp_path, entry):
+    (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": entry}), encoding="utf-8")
+    assert save_cover(tmp_path, "v1", "標題", JPEG).name == "標題.jpg"

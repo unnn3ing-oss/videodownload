@@ -187,8 +187,9 @@ try {
   assert.match(bar.text, /完成/);
   assert.match(bar.label, /範例影片/);
   const message = first.locator(".qflash");
-  assert.deepEqual(await message.evaluate((n) => [n.getAttribute("role"), n.getAttribute("aria-live"), n.hidden]), ["status", "polite", false],
-    "the message line is a live region that is in the page before it has anything to say");
+  await page.waitForFunction(() => [...document.querySelectorAll(".qflash")].every((n) => n.textContent === ""), null, { timeout: 8000 }); // (the empty state is what has to stay in the page)
+  assert.deepEqual(await message.evaluate((n) => [n.getAttribute("role"), n.getAttribute("aria-live"), getComputedStyle(n).display !== "none"]), ["status", "polite", true],
+    "the message line is a live region that is in the page (not display:none) before it has anything to say");
   await first.locator(".qcopy").click();
   await page.waitForFunction(() => document.querySelector(".qrow .qflash")?.textContent === "已複製");
 

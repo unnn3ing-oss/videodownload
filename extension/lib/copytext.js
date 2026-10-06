@@ -1,5 +1,5 @@
 // "Copy text" for a video: 【title】 and the first hashtags of its description.
-const HASHTAG = /(?<=^|[\s(（【\[「『])#([\p{L}\p{N}_]+)/gmu;
+const HASHTAG = /(?<=^|[\s\u0085(（【\[「『])#([\p{L}\p{N}_]+)/gmu;
 
 // Hashtags (without the #) in order of appearance, distinct ignoring case. A # inside a url does not count.
 export function extractHashtags(description, max = 3) {
