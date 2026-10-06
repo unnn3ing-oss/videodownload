@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
-  createState, describeItem, hostLost, markRunning, pendingDownloads, removeItem, retryItem, setHostConnected,
+  createState, describeItem, hostLost, markRunning, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
   setSettings, setTags, summarize,
 } from "../lib/queue.js";
 
@@ -125,6 +125,63 @@ test("removing the earliest copy promotes the next one and keeps the rest marked
   assert.equal(state.items[1].dupOf, state.items[0].uid);
   assert.equal(describeItem(state, state.items[0], 0).kind, "waiting");
   assert.deepEqual(pendingDownloads(state).map((i) => i.id), ["a"]);
+});
+
+// A slow playlist row sits before a later video that is already on its way; when the playlist resolves,
+// a same-title video lands in front of it.
+function slowResolveBeforeStartedVideo(prepare) {
+  let state = setHostConnected(createState(), true);
+  const slow = addPlaceholder(state, url("list"));
+  const quick = addPlaceholder(slow.state, url("b"));
+  state = applyResolved(quick.state, quick.uid, [ref("b", "同一個標題")]);
+  state = prepare(state);
+  return applyResolved(state, slow.uid, [ref("p", "  同一個標題 ")]);
+}
+
+test("duplicates: a later row that is downloading stays the original when an earlier row lands with its title", () => {
+  const state = slowResolveBeforeStartedVideo((s) => applyHostEvent(s, { type: "progress", itemId: "b", percent: 5 }, 0));
+  assert.deepEqual(state.items.map((i) => i.id), ["p", "b"]);
+  assert.equal(byId(state, "b").dupOf, null);
+  assert.equal(byId(state, "p").dupOf, byId(state, "b").uid);
+  assert.equal(byId(state, "b").status, "downloading");
+  assert.deepEqual(pendingDownloads(state), []);
+});
+
+test("duplicates: a finished row stays the original too", () => {
+  const state = slowResolveBeforeStartedVideo((s) => applyHostEvent(s, { type: "item_done", itemId: "b", file: "/b.mp4" }, 0));
+  assert.deepEqual([byId(state, "b").dupOf, byId(state, "p").dupOf === byId(state, "b").uid], [null, true]);
+});
+
+test("duplicates: a row already handed to the host (still waiting) stays the original", () => {
+  const state = slowResolveBeforeStartedVideo((s) => markSent(s, ["b"], true));
+  assert.equal(byId(state, "b").dupOf, null);
+  assert.equal(byId(state, "p").dupOf, byId(state, "b").uid);
+  assert.equal(describeItem(state, byId(state, "p"), 0).sub, "與第 2 筆相同，已暫停");
+});
+
+test("duplicates: a row not sent yet still loses to the earlier row", () => {
+  const state = slowResolveBeforeStartedVideo((s) => s);
+  assert.equal(byId(state, "p").dupOf, null);
+  assert.equal(byId(state, "b").dupOf, byId(state, "p").uid);
+});
+
+test("markSent flags only rows that are not duplicates and is cleared when the host job ends or is lost", () => {
+  let state = stateWith(ref("a"), ref("a"), ref("c"));
+  state = markSent(state, ["a"], true);
+  assert.deepEqual(state.items.map((i) => i.sent), [true, false, false], "the repeated row is not a sent row");
+  assert.equal(state.items[1].dupOf, state.items[0].uid);
+  assert.deepEqual(applyHostEvent(state, { type: "done" }, 0).items.map((i) => i.sent), [false, false, false]);
+  assert.deepEqual(hostLost(state).items.map((i) => i.sent), [false, false, false]);
+  assert.equal(createState(JSON.parse(JSON.stringify(state))).items[0].sent, false, "nothing is sent after a restart");
+  assert.equal(markSent(state, ["a"], false).items[0].sent, false);
+});
+
+test("retrying or failing a row takes its sent mark away", () => {
+  let state = markSent(stateWith(ref("a")), ["a"], true);
+  state = applyHostEvent(state, { type: "item_failed", itemId: "a", reason: "x" }, 0);
+  assert.equal(state.items[0].sent, false);
+  state = markSent(retryItem(state, state.items[0].uid), ["a"], true);
+  assert.equal(retryItem(applyHostEvent(state, { type: "item_failed", itemId: "a", reason: "y" }, 0), state.items[0].uid).items[0].sent, false);
 });
 
 test("rows that failed without an id take no part in duplicate detection", () => {

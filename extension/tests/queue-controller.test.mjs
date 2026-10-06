@@ -198,6 +198,43 @@ test("stop does not trigger a restart", async () => {
   assert.equal(ctl.getState().running, false);
 });
 
+test("a slow playlist that lands a same-title video in front of a row already handed to the host neither hides that row nor sends its twin", async () => {
+  const { host, ctl } = setup();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  host.replies.resolve = async (m) => {
+    const id = idOf(m.urls[0]);
+    if (id === "list") await gate;
+    return { type: "resolved", items: [{ id: id === "list" ? "p" : id, title: "同一個標題", url: m.urls[0], duration: 1 }] };
+  };
+  await ctl.add(url("list"));
+  await ctl.add(url("b"));
+  while (!byId(ctl, "b")) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await ctl.start(), { ok: true });
+  release();
+  await ctl.idle();
+  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["p", false], ["b", true]]);
+  assert.equal(describeItem(ctl.getState(), byId(ctl, "p"), 0).kind, "duplicate");
+  assert.deepEqual(host.of("download")[0].items.map((i) => i.id), ["b"]);
+  assert.deepEqual(host.of("enqueue"), [], "the twin is not sent");
+  ctl.onHostEvent({ type: "progress", itemId: "b", percent: 10 });
+  assert.equal(byId(ctl, "b").status, "downloading", "progress still reaches the row that is really downloading");
+});
+
+test("rows enqueued during a run are marked sent too, and the marks end with the job", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  await ctl.start();
+  await ctl.add(url("c"));
+  await ctl.idle();
+  assert.deepEqual(rows(ctl).map((i) => i.sent), [true, true]);
+  host.replies.enqueue = { type: "error", code: "busy", message: "x" };
+  await ctl.add(url("d"));
+  await ctl.idle();
+  assert.equal(byId(ctl, "d").sent, false, "a refused enqueue leaves the row unsent");
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: {} });
+  assert.deepEqual(rows(ctl).map((i) => i.sent), [false, false, false]);
+});
+
 test("stop pressed while the start request is still in flight cancels the job as soon as it has started", async () => {
   const { host, ctl } = await withVideos(["a"]);
   host.replies.download = async () => {

@@ -33,24 +33,30 @@ function cleanSettings(patch, base = DEFAULT_SETTINGS) {
 
 const blankItem = (uid, fields) => ({
   uid, id: null, url: "", title: "", duration: null, tags: null, status: "waiting", dupOf: null,
-  percent: null, speed: null, eta: null, file: null, height: null, error: null, ...fields,
+  percent: null, speed: null, eta: null, file: null, height: null, error: null, sent: false, ...fields,
 });
 
 const titleKey = (title) => String(title ?? "").normalize("NFKC").trim().toLowerCase();
 
-// The earliest copy stays normal; every later video with the same id or title points at it.
+// The earliest copy stays normal; every later video with the same id or title points at it. The exception is a
+// row that is already on its way (handed to the host, downloading, finished): it keeps its place as the original
+// even when a slow playlist later lands a same-title video in front of it, so a running download is never hidden.
 function markDuplicates(items) {
   const byId = new Map();
   const byTitle = new Map();
+  const counts = (item) => item.status !== "fetching" && (item.id || item.status !== "failed");
+  const underway = (item) => item.sent || item.status === "downloading" || item.status === "done" || item.status === "skipped";
+  const find = (item) => (item.id && byId.get(item.id)) || (titleKey(item.title) && byTitle.get(titleKey(item.title))) || null;
+  const register = (item) => {
+    if (item.id) byId.set(item.id, item.uid);
+    if (titleKey(item.title)) byTitle.set(titleKey(item.title), item.uid);
+  };
+  for (const item of items) if (counts(item) && underway(item) && !find(item)) register(item);
   return items.map((item) => {
-    const counts = item.status !== "fetching" && (item.id || item.status !== "failed");
-    if (!counts) return item.dupOf === null ? item : { ...item, dupOf: null };
-    const key = titleKey(item.title);
-    const original = (item.id && byId.get(item.id)) || (key && byTitle.get(key)) || null;
-    if (!original) {
-      if (item.id) byId.set(item.id, item.uid);
-      if (key) byTitle.set(key, item.uid);
-    }
+    if (!counts(item)) return item.dupOf === null ? item : { ...item, dupOf: null };
+    let original = find(item);
+    if (!original) register(item);
+    if (original === item.uid) original = null;
     return item.dupOf === original ? item : { ...item, dupOf: original };
   });
 }
@@ -63,7 +69,7 @@ export function createState(saved = null) {
   const items = [];
   for (const raw of saved.items) {
     if (!raw || typeof raw !== "object" || !Number.isInteger(raw.uid) || !STATUSES.has(raw.status)) continue;
-    let item = blankItem(raw.uid, raw);
+    let item = { ...blankItem(raw.uid, raw), sent: false }; // a restart ends the host's job
     if (item.status === "downloading") item = { ...item, status: "waiting", percent: null, speed: null, eta: null };
     if (item.status === "fetching") item = { ...item, title: item.title || item.url }; // resolved again once the host is there
     items.push(item);
@@ -114,20 +120,31 @@ export function retryItem(state, uid) {
   const item = state.items.find((i) => i.uid === uid);
   if (!item || item.status !== "failed" || !item.id) return state;
   return withItems(state, state.items.map((i) => (i.uid === uid
-    ? { ...i, status: "waiting", error: null, percent: null, speed: null, eta: null } : i)));
+    ? { ...i, status: "waiting", error: null, percent: null, speed: null, eta: null, sent: false } : i)));
 }
 
 export const setSettings = (state, patch) => ({ ...state, settings: cleanSettings(patch, state.settings) });
 export const setTags = (state, uid, tags) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, tags } : i)) });
 export const setHostConnected = (state, connected) => ({ ...state, hostConnected: Boolean(connected) });
+// Rows the host has been given: they keep their place when duplicates are worked out again.
+export const markSent = (state, ids, sent) => {
+  const wanted = new Set(ids);
+  return {
+    ...state,
+    items: state.items.map((i) => (wanted.has(i.id) && i.sent !== sent && (!sent || !i.dupOf) ? { ...i, sent } : i)),
+  };
+};
 export const markRunning = (state, running) => ({ ...state, running: Boolean(running) });
 
 export const pendingDownloads = (state) => state.items
   .filter((i) => i.status === "waiting" && !i.dupOf && i.id)
   .map((i) => ({ id: i.id, url: i.url, title: i.title }));
 
-const resetInterrupted = (items) => items.map((i) => (i.status === "downloading"
-  ? { ...i, status: "waiting", percent: null, speed: null, eta: null } : i));
+// The host's job is over: rows it was still working on go back to waiting, and nothing counts as sent any more.
+const resetInterrupted = (items) => items.map((i) => {
+  if (i.status === "downloading") return { ...i, status: "waiting", percent: null, speed: null, eta: null, sent: false };
+  return i.sent ? { ...i, sent: false } : i;
+});
 
 export function hostLost(state) {
   return { ...state, running: false, cooldown: null, hostConnected: false, items: resetInterrupted(state.items) };
@@ -152,13 +169,13 @@ export function applyHostEvent(state, event, now) {
     }
     case "item_done": {
       const fields = event.skipped
-        ? { status: "skipped", file: event.file ?? null, percent: null, speed: null, eta: null }
-        : { status: "done", percent: 100, speed: null, eta: null, file: event.file ?? null, height: event.height ?? null };
+        ? { status: "skipped", file: event.file ?? null, percent: null, speed: null, eta: null, sent: false }
+        : { status: "done", percent: 100, speed: null, eta: null, file: event.file ?? null, height: event.height ?? null, sent: false };
       const items = patch(event.itemId, fields);
       return items ? { ...state, items, cooldown: endCooldown(event.itemId) } : state;
     }
     case "item_failed": {
-      const items = patch(event.itemId, { status: "failed", error: event.reason ?? "失敗", percent: null, speed: null, eta: null });
+      const items = patch(event.itemId, { status: "failed", error: event.reason ?? "失敗", percent: null, speed: null, eta: null, sent: false });
       return items ? { ...state, items, cooldown: endCooldown(event.itemId) } : state;
     }
     case "item_removed": {

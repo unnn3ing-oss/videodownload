@@ -2,7 +2,7 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  pendingDownloads, removeItem, retryItem, setHostConnected, setSettings, setTags, QueueError,
+  markSent, pendingDownloads, removeItem, retryItem, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
 import { buildCopyText, extractHashtags } from "./copytext.js";
 import { coverName } from "./covername.js";
@@ -87,7 +87,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
         if (event.type === "started") {
           sentIds.clear();
           items.forEach((i) => sentIds.add(i.id));
-          commit(markRunning(state, true));
+          commit(markSent(markRunning(state, true), items.map((i) => i.id), true));
           break;
         }
         if (event.code !== "busy") return fail(event.message ?? "無法開始下載");
@@ -116,16 +116,22 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     if (!state.running || !host.connected()) return;
     const items = pendingDownloads(state).filter((i) => !sentIds.has(i.id));
     if (!items.length) return;
-    items.forEach((i) => sentIds.add(i.id));
+    const ids = items.map((i) => i.id);
+    ids.forEach((id) => sentIds.add(id));
+    commit(markSent(state, ids, true));
+    const unsend = () => {
+      ids.forEach((id) => sentIds.delete(id));
+      commit(markSent(state, ids, false));
+    };
     track((async () => {
       try {
         const event = await host.request({ type: "enqueue", items }, TIMEOUT.enqueue);
         if (event.type === "error") {
-          items.forEach((i) => sentIds.delete(i.id));
+          unsend();
           if (event.code === "not_running") restartWhenFree();
         }
       } catch {
-        items.forEach((i) => sentIds.delete(i.id));
+        unsend();
       }
     })());
   }
