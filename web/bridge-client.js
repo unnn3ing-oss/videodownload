@@ -38,9 +38,15 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
     }
   });
 
+  let lastPingAt = Date.now();
   function ping() {
+    const now = Date.now();
+    // A hidden tab or a sleeping computer slows or stops the page's timers. After such a pause the extension has not
+    // had a chance to answer yet, so silence only counts from this moment on (otherwise it flips to "lost" and back).
+    if (now - lastPingAt > lostAfterMs) lastSeen = now;
+    lastPingAt = now;
     window.postMessage({ source: TO_EXTENSION, ping: true }, location.origin);
-    if (detected && Date.now() - lastSeen > lostAfterMs) setDetected(false);
+    if (detected && now - lastSeen > lostAfterMs) setDetected(false);
   }
   setInterval(ping, pingEveryMs);
   ping();
