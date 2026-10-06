@@ -19,7 +19,7 @@ export function hostNotice({ detected, status, wasRunning, gaveUp }) {
     return { kind: "error", text: "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）。請重新下載安裝檔並再執行一次。" };
   }
   if (gaveUp) {
-    return { kind: "error", text: "本機小程式啟動後馬上又關閉了，自動重試幾次都失敗。請確認已執行過安裝檔，再按步驟 4 的「啟動」重試。" };
+    return { kind: "error", text: "本機小程式啟動後馬上又關閉了，自動重試幾次都失敗。請重新執行安裝檔（它會自動檢查並修復，最後列出哪一項有問題），再按步驟 4 的「啟動」重試。" };
   }
   if (wasRunning) return { kind: "info", text: "與本機小程式的連線中斷，下載已暫停。正在嘗試重新連線…" };
   return null;

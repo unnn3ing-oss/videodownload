@@ -26,6 +26,11 @@ function Fetch($url, $dest) {
     Write-Host "    下載 $url"
     Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 }
+# Every part is judged by whether it runs, not by whether the file exists: running this installer again repairs what is broken.
+function Works($exe, $arg) {
+    if (-not (Test-Path $exe)) { return $false }
+    try { & $exe $arg *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false }
+}
 
 try {
     New-Item -ItemType Directory -Force -Path $Root, $HostDir, $BinDir, $PyDir, $Tmp | Out-Null
@@ -36,7 +41,7 @@ try {
     Expand-Archive -Force -Path $payload -DestinationPath $HostDir
 
     $py = Join-Path $PyDir 'python.exe'
-    if (-not (Test-Path $py)) {
+    if (-not (Works $py '--version')) {
         Step '下載 Python（內嵌版）'
         $zip = Join-Path $Tmp 'python.zip'
         Fetch '@@URL_PYTHON_WIN@@' $zip
@@ -58,14 +63,14 @@ try {
     if (-not $m.Success) { throw '找不到 yt-dlp.exe 的 SHA-256 校驗碼' }
     if ((Get-FileHash -Algorithm SHA256 -Path $ytdlp).Hash -ne $m.Groups[1].Value) { throw 'yt-dlp.exe 校驗碼不符，檔案可能損毀，請重新執行' }
 
-    if (-not (Test-Path (Join-Path $BinDir 'deno.exe'))) {
+    if (-not (Works (Join-Path $BinDir 'deno.exe') '--version')) {
         Step '下載 Deno（YouTube 解題需要）'
         $zip = Join-Path $Tmp 'deno.zip'
         Fetch '@@URL_DENO_WIN@@' $zip
         Expand-Archive -Force -Path $zip -DestinationPath $BinDir
     }
 
-    if (-not (Test-Path (Join-Path $BinDir 'ffmpeg.exe'))) {
+    if (-not (Works (Join-Path $BinDir 'ffmpeg.exe') '-version')) {
         Step '下載 ffmpeg'
         $zip = Join-Path $Tmp 'ffmpeg.zip'
         $dir = Join-Path $Tmp 'ffmpeg'
@@ -95,15 +100,13 @@ try {
     [IO.File]::WriteAllText($manifestPath, $manifest, (New-Object Text.UTF8Encoding $false))
     New-Item -Path "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName" -Value $manifestPath -Force | Out-Null
 
-    Step '自我檢查'
-    $version = & $ytdlp --version
-    if ($LASTEXITCODE -ne 0) { throw 'yt-dlp 無法執行（可能缺少 Visual C++ 執行階段，或被防毒軟體攔截）' }
-    Write-Host "    yt-dlp $version"
-    & $py -c "import sys; sys.path.insert(0, sys.argv[1]); import host; print('    host ok')" $HostDir
-    if ($LASTEXITCODE -ne 0) { throw '本機小程式無法載入' }
+    Step '檢查安裝結果'
+    & $py (Join-Path $HostDir 'doctor.py') --home $Root --ext-id $ExtId --native-manifest $manifestPath
+    if ($LASTEXITCODE -ne 0) { throw '上面標著 ✘ 的項目需要處理（照每一項下面的「→」建議做）' }
 
     Write-Host ''
     Write-Host '安裝完成！請回到 Chrome，打開擴充功能並按「啟動」。' -ForegroundColor Green
+    Write-Host '之後如果遇到任何問題，重新執行這個安裝檔就會自動檢查並修復。'
 } catch {
     Write-Host ''
     Write-Host "安裝失敗：$($_.Exception.Message)" -ForegroundColor Red

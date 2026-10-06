@@ -125,6 +125,26 @@ try {
   await page.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === true);
   await page.click("#settings > summary");
 
+  step("6c. The environment check");
+  // 6c. "Check the environment" shows what runs and what does not, with advice; "try to repair" is offered when something is wrong.
+  assert.equal(await page.isDisabled("#doctor-check"), false, "available once the host runs");
+  await page.click("#settings > summary");
+  await page.click("#doctor-check");
+  await page.waitForSelector("#doctor-list li");
+  await shot("6c-doctor");
+  const report = await page.$$eval("#doctor-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
+  assert.ok(report.length >= 6, "one line per part");
+  const engine = report.find((r) => /yt-dlp/.test(r.text));
+  assert.deepEqual([engine.status, /2099\.01\.01/.test(engine.text)], ["ok", true]);
+  const noFfmpeg = report.find((r) => /ffmpeg/.test(r.text)); // (this test machine has no ffmpeg)
+  assert.equal(noFfmpeg.status, "error");
+  assert.match(noFfmpeg.text, /重新執行安裝檔/);
+  assert.match(await page.textContent("#doctor-summary"), /需要處理/);
+  await page.click("#doctor-fix");
+  await page.waitForFunction(() => document.getElementById("doctor-fixed").textContent !== "");
+  assert.equal(await page.locator("#doctor-list li").count() >= 6, true, "checked again after the repair");
+  await page.click("#settings > summary");
+
   step("7. Start");
   // 7. Start: rows go one by one with progress inside the row and a cooldown in between.
   await page.click("#start-all");

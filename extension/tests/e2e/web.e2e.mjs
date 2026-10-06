@@ -153,6 +153,12 @@ async function withExtension() {
     await panel.waitForFunction(() => document.getElementById("auto-cover").checked === false); // (the panel shows the same switch)
     await web.check("#auto-cover");
     await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === true);
+    // the environment check in the sidebar
+    await web.click("#doctor-check");
+    await web.waitForSelector("#doctor-list li");
+    const webReport = await web.$$eval("#doctor-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
+    assert.equal(webReport.find((r) => /yt-dlp/.test(r.text)).status, "ok");
+    assert.match(await web.textContent("#doctor-summary"), /需要處理/);
     await web.fill("#add-url", watch("v1"));
     await web.press("#add-url", "Enter");
     await web.waitForSelector('#queue-list .qrow[data-kind="waiting"]');

@@ -167,6 +167,18 @@ async function setOutputDir(path) {
   }
 }
 
+// "Check the environment": the host looks at what is installed and what runs; with fix it first repairs what is safe to repair.
+async function runDoctor(msg) {
+  if (!host.connected()) return { ok: false, error: "尚未連線本機小程式。連不上的時候，重新執行安裝檔就會自動檢查並修復。" };
+  try {
+    const event = await host.request({ type: "doctor", extensionId: chrome.runtime.id, fix: msg.fix === true }, 120000);
+    if (event.type !== "doctor") return { ok: false, error: event.message ?? "檢查失敗" };
+    return { ok: true, checks: event.checks, fixed: event.fixed };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 async function handle(msg) {
   const controller = await controllerReady;
   switch (msg.type) {
@@ -183,6 +195,7 @@ async function handle(msg) {
     case "queue_download_cover": return controller.downloadCover(msg.uid);
     case "settings_set": controller.setSettings(msg.settings); return { ok: true };
     case "deploy_installer": return deployInstaller();
+    case "doctor": return runDoctor(msg);
     default: break;
   }
   if (msg.type === "set_output_dir") return setOutputDir(msg.path);

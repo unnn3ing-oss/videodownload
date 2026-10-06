@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import re
 import sys
 import threading
 import uuid
@@ -18,11 +19,12 @@ from protocol import BadMessage, ProtocolError, read_message, write_message
 from quality import parse_quality
 from security import VIDEO_ID, is_allowed_url
 from version import VERSION
+import doctor
 import macos_engine
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta", "enqueue", "remove"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta", "enqueue", "remove", "doctor"}
 MAX_LIMIT = 1000
 MAX_COOLDOWN = 300
 
@@ -295,6 +297,19 @@ class Host:
             self._update_error(msg, exc)
             return
         self._reply(msg, {"type": "update_rolled_back"})
+
+    def _on_doctor(self, msg: dict) -> None:
+        ext = msg.get("extensionId")
+        ext_id = ext if isinstance(ext, str) and re.fullmatch(r"[a-p]{32}", ext) else None
+        fix = msg.get("fix") is True
+
+        def work() -> None:
+            output = self.config.output_dir
+            fixed = doctor.repair(self.home, output_dir=output) if fix else []
+            checks = doctor.diagnose(self.home, ext_id=ext_id, output_dir=output)
+            self._reply(msg, {"type": "doctor", "checks": [c.to_dict() for c in checks], "fixed": fixed})
+
+        self._background(work)
 
     def _on_update_engine(self, msg: dict) -> None:
         # On a Mac the engine is the unpacked build, which cannot update itself (`-U`): it is installed again instead,

@@ -60,6 +60,11 @@ def test_host_name_consistent_with_extension():
     assert f'"{build.HOST_NAME}"' in js
 
 
+def test_the_environment_check_knows_the_same_host_name():
+    import doctor
+    assert doctor.HOST_NAME == build.HOST_NAME
+
+
 def test_installers_have_no_placeholders():
     assert "@@" not in build.render_windows()
     assert "@@" not in mac_script(build.render_mac())
@@ -129,7 +134,8 @@ esac
 """
 
 
-def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False):
+def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False,
+                      ffmpeg_body="echo ffmpeg\n", before=None):
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
@@ -150,9 +156,11 @@ def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wr
         info = zipfile.ZipInfo("deno")
         info.external_attr = (0o100000 | 0o755) << 16
         z.writestr(info, "#!/bin/sh\necho deno 2\n")
-    for name, body in (("curl", CURL_STUB), ("ffmpeg", "#!/bin/sh\necho ffmpeg\n")):
+    for name, body in (("curl", CURL_STUB), ("ffmpeg", "#!/bin/sh\n" + ffmpeg_body)):
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
+    if before:
+        before(home / "Library/Application Support/YTDownloader/bin")
     script = tmp_path / "install-mac.command"
     script.write_text(mac_script(build.render_mac()), encoding="utf-8")
     env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub)}
@@ -195,3 +203,61 @@ def test_mac_installer_rejects_a_download_whose_checksum_does_not_match(tmp_path
     proc, home = run_mac_installer(tmp_path, wrong_sum=True)
     assert proc.returncode != 0 and "校驗碼不符" in proc.stdout and "安裝完成" not in proc.stdout
     assert not (home / "Library/Application Support/YTDownloader/bin/yt-dlp").exists()
+
+
+def test_mac_installer_ends_with_a_report_of_every_part(tmp_path):
+    proc, _ = run_mac_installer(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    report = proc.stdout.split("檢查安裝結果")[1]
+    for part in ("Python 3", "下載引擎 yt-dlp 2099.01.01", "ffmpeg 可以執行", "Deno 可以執行", "Chrome 已登錄本機小程式"):
+        assert "✔" in next(line for line in report.splitlines() if part in line), part
+    assert "安裝完成" in proc.stdout and "重新執行這個安裝檔就會自動檢查並修復" in proc.stdout
+
+
+def test_running_the_mac_installer_again_repairs_parts_that_exist_but_do_not_run(tmp_path):
+    def break_parts(bin_dir):
+        bin_dir.mkdir(parents=True)
+        for name in ("deno", "ffmpeg"):
+            (bin_dir / name).write_text("#!/bin/sh\nexit 3\n")
+            (bin_dir / name).chmod(0o755)
+
+    proc, home = run_mac_installer(tmp_path, before=break_parts)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    bin_dir = home / "Library/Application Support/YTDownloader/bin"
+    assert subprocess.run([str(bin_dir / "deno"), "--version"], capture_output=True).returncode == 0
+    assert subprocess.run([str(bin_dir / "ffmpeg"), "-version"], capture_output=True).returncode == 0
+    assert "下載 Deno" in proc.stdout and "準備 ffmpeg" in proc.stdout
+
+
+def test_mac_installer_does_not_call_it_done_when_the_check_finds_a_problem(tmp_path):
+    proc, _ = run_mac_installer(tmp_path, ffmpeg_body="exit 1\n")
+    assert proc.returncode != 0
+    assert "✘" in proc.stdout and "ffmpeg 無法執行" in proc.stdout and "→" in proc.stdout
+    assert "安裝尚未完成" in proc.stdout and "安裝完成！" not in proc.stdout
+
+
+def test_mac_installer_removes_the_downloaded_from_internet_mark_before_registering_with_chrome():
+    script = mac_script(build.render_mac())
+    mark = script.index("xattr -dr com.apple.quarantine")
+    assert script.index('step "下載 yt-dlp') < mark < script.index('step "登錄 Chrome Native Messaging"')
+
+
+def test_windows_installer_judges_parts_by_running_them_and_ends_with_the_same_report():
+    text = build.render_windows().replace("\r\n", "\n")
+    assert "function Works(" in text
+    for part in ("deno.exe", "ffmpeg.exe"):
+        assert f"Works (Join-Path $BinDir '{part}')" in text
+    assert "(Works $py '--version')" in text
+    assert "doctor.py" in text and "--native-manifest $manifestPath" in text and "--ext-id $ExtId" in text
+    assert "重新執行這個安裝檔就會自動檢查並修復" in text
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed")
+def test_windows_installer_script_parses(tmp_path):
+    text = build.render_windows().replace("\r\n", "\n")
+    script = tmp_path / "install.ps1"
+    script.write_text(text.rsplit("#PS-START", 1)[1], encoding="utf-8")
+    cmd = (f"$e = $null; [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$null, [ref]$e) | Out-Null; "
+           "if ($e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }")
+    done = subprocess.run(["pwsh", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr

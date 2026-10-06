@@ -49,7 +49,7 @@
             <span class="st-n">3</span>
             <div class="st-b">
               <strong>部署本機小程式</strong>
-              <span>下載安裝檔並執行一次（Windows 雙擊；Mac 右鍵「打開」）。只需做一次。</span>
+              <span>下載安裝檔並執行（Windows 雙擊；Mac 右鍵「打開」）。它同時是修復工具：之後遇到任何問題，重新執行它就會自動檢查並修復，最後列出每一項的結果。</span>
               <div class="st-a">
                 <button id="deploy-installer" class="btn small" type="button">下載安裝檔</button>
               </div>
@@ -94,6 +94,16 @@
           </div>
         </div>
         <p id="settings-note" class="st-note" role="status" aria-live="polite" hidden></p>
+      </section>
+
+      <section aria-labelledby="doctor-title">
+        <h2 id="doctor-title">環境檢查</h2>
+        <p class="st-note">小程式連不上或下載有問題時，先按這裡看哪一項有狀況。還是不行，重新執行安裝檔（步驟 3）就會自動檢查並修復。</p>
+        <div class="field"><button id="doctor-check" class="btn small" type="button" disabled>檢查環境</button></div>
+        <ul id="doctor-list" class="dr-list"></ul>
+        <p id="doctor-summary" class="dr-summary" role="status" aria-live="polite"></p>
+        <p id="doctor-fixed" class="dr-fixed" role="status" aria-live="polite"></p>
+        <button id="doctor-fix" class="btn small" type="button" hidden>嘗試自動修復</button>
       </section>
     </aside>
 

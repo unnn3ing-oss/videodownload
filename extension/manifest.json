@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube 批量下載器",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "在本機批量下載公司 YouTube 頻道的公開影片（720p / 1080p）",
   "minimum_chrome_version": "114",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzEy0znFabpTMwyg8dSf9xvO0e/52CZewkTvcm1lihHR+cQvJxlmjgzF/iT83XbVxbewa5YtSptoCrpt6obyfdM0iNYE3Vh5eby8f44oaWI4CwaYIMe65Z8JhyagimU4uR6YJ5xAn/XHu7wLvggsbMZI7SB9113vp89Pj01Z88FLJNK0dHOmjFDlxn4M1GIxjEInDN8yuHq/rpFRFmVq2SOPH52Iorq+VVv/OW/HBRcDpxi+/3eT0GNaGwJqLJdQwUW/dLSkNdlsgor+BkL6/HVBBRLmRhJAV+PWAP5W/MDtL6bldc2wNLPEqeHsYS2IOmkxKUXBz0isERjxtiM+OAwIDAQAB",

@@ -32,16 +32,19 @@ step "下載 yt-dlp 並驗證校驗碼"
 # starts the host macOS marks those files "downloaded by Chrome" and refuses to load them ("Python.framework is damaged").
 "$PY" "$HOME_DIR/host/macos_engine.py" install "$HOME_DIR/bin" || fail "yt-dlp 安裝失敗（原因請看上面的訊息）"
 
-if [ ! -x "$HOME_DIR/bin/deno" ]; then
+# Every part is judged by whether it runs, not by whether the file exists: running this installer again repairs what is broken.
+if ! "$HOME_DIR/bin/deno" --version >/dev/null 2>&1; then
   step "下載 Deno（YouTube 解題需要）"
+  rm -f "$HOME_DIR/bin/deno"
   if [ "$(uname -m)" = "arm64" ]; then DENO_URL="@@URL_DENO_MAC_ARM@@"; else DENO_URL="@@URL_DENO_MAC_X64@@"; fi
   curl -fL --retry 3 -o "$TMP/deno.zip" "$DENO_URL" || fail "Deno 下載失敗"
   unzip -o -q "$TMP/deno.zip" -d "$HOME_DIR/bin"
   chmod +x "$HOME_DIR/bin/deno"
 fi
 
-if [ ! -e "$HOME_DIR/bin/ffmpeg" ]; then
+if ! "$HOME_DIR/bin/ffmpeg" -version >/dev/null 2>&1; then
   step "準備 ffmpeg"
+  rm -f "$HOME_DIR/bin/ffmpeg"
   if command -v ffmpeg >/dev/null 2>&1; then
     ln -sf "$(command -v ffmpeg)" "$HOME_DIR/bin/ffmpeg"
   else
@@ -50,6 +53,9 @@ if [ ! -e "$HOME_DIR/bin/ffmpeg" ]; then
     chmod +x "$HOME_DIR/bin/ffmpeg"
   fi
 fi
+
+# Programs that Chrome starts must not carry macOS's "downloaded from the internet" mark.
+xattr -dr com.apple.quarantine "$HOME_DIR" 2>/dev/null || true
 
 step "登錄 Chrome Native Messaging"
 cat > "$HOME_DIR/host.sh" <<LAUNCHER
@@ -72,11 +78,11 @@ with open(path, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, ensure_ascii=False, indent=2)
 PYEOF
 
-step "自我檢查"
-YTDLP_VERSION="$("$HOME_DIR/bin/yt-dlp" --version)" || fail "yt-dlp 無法執行"
-echo "    yt-dlp $YTDLP_VERSION"
-"$HOME_DIR/bin/deno" --version >/dev/null 2>&1 || fail "Deno 無法執行"
-"$HOME_DIR/bin/ffmpeg" -version >/dev/null 2>&1 || fail "ffmpeg 無法執行（Apple Silicon 上的 Intel 版需要 Rosetta：softwareupdate --install-rosetta）"
-"$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import host; print("    host ok")' "$HOME_DIR/host" || fail "本機小程式無法載入"
+step "檢查安裝結果"
+if ! "$PY" "$HOME_DIR/host/doctor.py" --home "$HOME_DIR" --ext-id "$EXT_ID" --native-manifest "$NM_DIR/$HOST_NAME.json"; then
+  printf '\n安裝尚未完成：上面標著 ✘ 的項目需要處理。\n照每一項下面的「→」建議做；解決不了就把這個視窗截圖給提供工具的同事。\n'
+  exit 1
+fi
 
 printf '\n安裝完成！請回到 Chrome，打開擴充功能並按「啟動」。\n'
+printf '之後如果遇到任何問題，重新執行這個安裝檔就會自動檢查並修復。\n'

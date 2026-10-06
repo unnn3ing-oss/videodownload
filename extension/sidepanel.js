@@ -1,5 +1,6 @@
 import { classifyTabUrl } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
+import { runDoctor } from "./lib/doctor-view.js";
 import { createRequestIds } from "./lib/ids.js";
 import { summarize } from "./lib/queue.js";
 import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
@@ -12,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 const PILL_TEXT = { not_installed: "尚未部署", stopped: "尚未啟動", running: "已啟動", forbidden: "連線被拒" };
 const SETUP_HINT = {
   not_installed: "找不到本機小程式。請先完成步驟 1：下載安裝檔並執行一次。",
-  stopped: "準備好了就按「啟動」。第一次使用請先完成步驟 1。",
+  stopped: "準備好了就按「啟動」。第一次使用請先完成步驟 1；按了沒反應的話，重新執行安裝檔會自動檢查並修復。",
   forbidden: "Chrome 拒絕連線（擴充功能識別碼與安裝檔不符）。請重新下載部署並再執行一次安裝檔。",
 };
 const KIND_TEXT = { video: "影片", playlist: "播放清單", channel: "頻道" };
@@ -138,6 +139,7 @@ function renderControls() {
   const running = status.state === "running";
   $("update").disabled = !running || Boolean(queue?.running);
   $("save-outdir").disabled = !running;
+  $("doctor-check").disabled = !running;
   $("outdir").disabled = !running;
   if (running && status.ready?.outputDir && document.activeElement !== $("outdir")) {
     $("outdir").value = status.ready.outputDir;
@@ -414,6 +416,9 @@ $("auto-cover").addEventListener("change", () => {
 for (const [id, key] of [["cooldown", "cooldownSec"], ["limit", "limit"]]) {
   $(id).addEventListener("change", () => send({ type: "settings_set", settings: { [key]: Number($(id).value) } }));
 }
+const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
+$("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));
+$("doctor-fix").addEventListener("click", () => runDoctor(send, doctorUi(), true));
 $("save-outdir").addEventListener("click", async () => {
   const result = await send({ type: "set_output_dir", path: $("outdir").value });
   note(result?.ok ? `已改為：${result.outputDir}` : result?.error ?? "無法使用這個資料夾", result?.ok ? "ok" : "error");

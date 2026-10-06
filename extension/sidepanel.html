@@ -110,6 +110,11 @@
           </div>
         </div>
         <label class="check"><input id="auto-cover" type="checkbox" checked><span>下載完影片後，自動下載封面</span></label>
+        <div class="row between"><span>環境檢查</span><button id="doctor-check" class="btn small" type="button" disabled>檢查環境</button></div>
+        <ul id="doctor-list" class="dr-list"></ul>
+        <p id="doctor-summary" class="dr-summary" role="status" aria-live="polite"></p>
+        <p id="doctor-fixed" class="dr-fixed" role="status" aria-live="polite"></p>
+        <button id="doctor-fix" class="btn small" type="button" hidden>嘗試自動修復</button>
         <div class="row between"><span>下載引擎（yt-dlp）</span><button id="update" class="btn small" type="button" disabled>更新下載引擎</button></div>
         <div class="row between"><span>本機小程式</span><button id="redeploy" class="btn small ghost" type="button">重新下載安裝檔</button></div>
         <section class="update" aria-labelledby="update-title">

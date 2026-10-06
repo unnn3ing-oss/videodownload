@@ -7,6 +7,7 @@ import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
 import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../extension/lib/connection.js";
 import { installerPendingText } from "../extension/lib/installer.js";
+import { runDoctor } from "../extension/lib/doctor-view.js";
 
 const $ = (id) => document.getElementById(id);
 const client = createBridgeClient();
@@ -19,7 +20,7 @@ let gaveUp = false; // automatic launching of the host stopped (it keeps closing
 let pageVersion = null; // the version of the extension files this page was published with
 const autoConnect = createAutoConnect();
 
-const LONG = new Set(["queue_copy_text", "queue_download_cover"]);
+const LONG = new Set(["queue_copy_text", "queue_download_cover", "doctor"]);
 const send = (message) => client.request(message, LONG.has(message.type) ? 120000 : 20000);
 
 function setNote(id, text, kind = "info") {
@@ -63,6 +64,7 @@ function renderQueueArea() {
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
   $("outdir").disabled = !connected;
   $("save-outdir").disabled = !connected;
+  $("doctor-check").disabled = !connected;
   if (connected && status.ready?.outputDir && document.activeElement !== $("outdir")) $("outdir").value = status.ready.outputDir;
 
   if (!queue) {
@@ -193,6 +195,9 @@ $("cooldown").addEventListener("input", () => { $("cooldown-out").textContent = 
 $("cooldown").addEventListener("change", () => send({ type: "settings_set", settings: { cooldownSec: Number($("cooldown").value) } }));
 $("limit").addEventListener("change", () => send({ type: "settings_set", settings: { limit: Number($("limit").value) } }));
 $("auto-cover").addEventListener("change", () => send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } }));
+const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
+$("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));
+$("doctor-fix").addEventListener("click", () => runDoctor(send, doctorUi(), true));
 $("save-outdir").addEventListener("click", async () => {
   try {
     const result = await send({ type: "set_output_dir", path: $("outdir").value });
