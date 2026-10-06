@@ -26,26 +26,37 @@ export function detectOs(nav = globalThis.navigator) {
   return "other";
 }
 
-// A visible folder in the person's home, written the way each system's folder window understands.
-const FOLDER = "YT批量下載器擴充功能";
-export const defaultFolder = (os) => (os === "mac" ? `~/${FOLDER}` : os === "win" ? `%USERPROFILE%\\${FOLDER}` : FOLDER);
-
-export function folderHint(os) {
-  const make = "沒有這個資料夾的話，在選取視窗裡按「新增資料夾」建立。";
-  if (os === "mac") return `在選取資料夾的視窗按 Cmd+Shift+G，貼上這個路徑再按 Enter。${make}`;
-  if (os === "win") return `在選取資料夾視窗的網址列貼上這個路徑再按 Enter。${make}`;
-  return `在你方便找到的地方建立一個空的資料夾（建議取名 ${FOLDER}）。選取視窗裡可以按「新增資料夾」。`;
-}
+// The folder is made by the person, so it is only a name to type or paste (it does not exist yet, so a path would lead nowhere).
+export const FOLDER_NAME = "YT批量下載器";
+export const FOLDER_HINTS = [
+  "在下一步的選取視窗按「新增資料夾」，貼上這個名稱就好。瀏覽器不能替你預先填好名稱，所以才做了複製按鈕。",
+  "也可以直接選一個已經有東西的資料夾：我會在裡面自動建立同名的資料夾，不會動到其他檔案。Chrome 可能不允許直接選「下載」「文件」「桌面」本身，請選它們裡面的資料夾。",
+];
 
 // ---------------- the steps, and whether it works ----------------
 
-// "done" | "now" | "todo" for the four steps: write the files, load them in Chrome, install the host, connect.
-export function stepStates({ detected, wroteFiles, status }) {
+export const STEP_LABELS = ["建立資料夾", "取得檔案", "開啟擴充頁", "載入插件", "安裝小程式", "完成"];
+
+// "done" | "now" | "todo" for each step, and the number (1-6) of the step to show: the first one that is not done.
+// What cannot be seen from a web page (the folder, the extension page) counts as done once what follows it is.
+export function wizardSteps({ detected, wroteFiles, status, deployed }) {
   const running = status.state === "running";
   const installed = running || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
-  const done = [detected || wroteFiles, detected, detected && installed, detected && running];
-  const current = done.indexOf(false);
-  return done.map((isDone, index) => (isDone ? "done" : index === current ? "now" : "todo"));
+  const filesDone = wroteFiles || detected;
+  const done = [filesDone, filesDone, detected, detected, detected && installed, Boolean(detected && deployed)];
+  const first = done.indexOf(false);
+  return {
+    states: done.map((isDone, index) => (isDone ? "done" : index === first ? "now" : "todo")),
+    suggested: first === -1 ? STEP_LABELS.length : first + 1,
+  };
+}
+
+// The line on the last step: where the connection stands, and whether that is good.
+export function connectSummary({ detected, deployed, status }) {
+  if (deployed) return { ok: true, text: "一切正常，已經連線" };
+  if (!detected) return { ok: false, text: "還沒偵測到擴充功能（步驟 1～4）" };
+  if (status.state === "running") return { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" };
+  return { ok: false, text: "還沒連上本機小程式（步驟 5）" };
 }
 
 // Everything a download needs is there: the extension (not older than this page), a current host that runs, and its parts.
@@ -67,9 +78,9 @@ function hostItem({ status, hostOutdated, gaveUp }) {
       ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}，或在側邊面板「版本與更新」按「更新」`)
       : item("host", "ok", `本機小程式已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
   }
-  if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 3）：Mac 貼一行指令，Windows 下載後雙擊");
+  if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 5）：Mac 貼一行指令，Windows 下載後雙擊");
   if (status.state === "forbidden") {
-    return item("host", "error", "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 3）");
+    return item("host", "error", "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 5）");
   }
   if (gaveUp) return item("host", "error", "本機小程式啟動後馬上又關閉了", status.detail ?? "", REINSTALL);
   return item("host", "warn", "正在連線本機小程式…", status.detail ?? "", "等幾秒；一直連不上就" + REINSTALL);
@@ -89,12 +100,12 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   if (!detected) {
     return [everDetected
       ? item("extension", "error", "與擴充功能的連線中斷", "", "到 chrome://extensions 確認它已啟用；恢復後這裡會自動連上，也可以重新整理本頁")
-      : item("extension", "error", "還沒偵測到擴充功能", "", "到步驟 1、2：把擴充功能寫入資料夾，再到 Chrome 載入（這個網頁需要電腦版 Chrome）")];
+      : item("extension", "error", "還沒偵測到擴充功能", "", "照步驟 1～4：建立資料夾、取得檔案、開啟擴充頁、載入插件（這個網頁需要電腦版 Chrome）")];
   }
   const list = [item("extension", "ok", `擴充功能${extensionVersion ? ` v${extensionVersion}` : "已偵測到"}`)];
   if (versionNotice({ extensionVersion, pageVersion })) {
     list.push(item("version", "error", `擴充功能 v${extensionVersion} 比網頁版 v${pageVersion} 舊，還在跑舊版`, "",
-      "到步驟 1 重新寫入檔案，再到 chrome://extensions 按這個擴充功能的重新載入"));
+      "到步驟 2 重新取得檔案，再到 chrome://extensions 按這個擴充功能的重新載入"));
   }
   list.push(hostItem({ status, hostOutdated, gaveUp }));
   if (status.state === "running") {

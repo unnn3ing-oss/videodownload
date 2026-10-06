@@ -7,7 +7,8 @@ import path from "node:path";
 import { gitBlobSha } from "../lib/gitsha.js";
 import { UpdateError } from "../lib/updater.js";
 import { buildZip, crc32 } from "../lib/zip.js";
-import { assertDeployFolder, buildExtensionZip, deployToFolder, fetchExtensionFiles } from "../lib/deploy.js";
+import { buildExtensionZip, deployToFolder, fetchExtensionFiles, inspectFolder } from "../lib/deploy.js";
+import { FOLDER_NAME } from "../lib/setup-flow.js";
 import { EXTENSION_NAME } from "../lib/constants.js";
 
 const enc = (text) => new TextEncoder().encode(text);
@@ -39,9 +40,9 @@ function fakeDir({ files = {}, name = "chosen", onWrite = () => {} } = {}) {
         async createWritable() { return { async write(bytes) { store.set(full, dec(bytes)); onWrite(full); }, async close() {} }; },
       };
     },
-    async getDirectoryHandle(child) { dirs.add(prefix + child); return make(`${prefix}${child}/`, child); },
+    async getDirectoryHandle(child, { create } = {}) { if (create) dirs.add(prefix + child); return make(`${prefix}${child}/`, child); },
   });
-  return { ...make("", name), store };
+  return { ...make("", name), store, dirs };
 }
 
 async function blobItem(file, content) {
@@ -100,13 +101,12 @@ print(json.dumps({"bad": z.testzip(), "names": z.namelist(), "text": z.read("dir
   assert.deepEqual(JSON.parse(out), { bad: null, names: ["dir/測試.js", "empty.txt", "big.bin"], text: "// 你好", big: 70000, empty: 0 });
 });
 
-test("assertDeployFolder accepts an empty folder or this extension's own folder only", async () => {
-  await assertDeployFolder(fakeDir());
-  await assertDeployFolder(fakeDir({ files: { "manifest.json": JSON.stringify({ name: EXTENSION_NAME }), "lib/a.js": "x" } }));
-  await assert.rejects(assertDeployFolder(fakeDir({ files: { "photo.jpg": "x" }, name: "文件" })),
-    (e) => e instanceof UpdateError && /「文件」裡已經有其他檔案/.test(e.message));
-  await assert.rejects(assertDeployFolder(fakeDir({ files: { "manifest.json": JSON.stringify({ name: "別的擴充功能" }) } })), /已經有其他檔案/);
-  await assert.rejects(assertDeployFolder(fakeDir({ files: { "manifest.json": "{not json" } })), /已經有其他檔案/);
+test("inspectFolder tells an empty folder, this extension's own folder and any other folder apart", async () => {
+  assert.equal(await inspectFolder(fakeDir()), "empty");
+  assert.equal(await inspectFolder(fakeDir({ files: { "manifest.json": JSON.stringify({ name: EXTENSION_NAME }), "lib/a.js": "x" } })), "ours");
+  assert.equal(await inspectFolder(fakeDir({ files: { "photo.jpg": "x" } })), "other");
+  assert.equal(await inspectFolder(fakeDir({ files: { "manifest.json": JSON.stringify({ name: "別的擴充功能" }) } })), "other");
+  assert.equal(await inspectFolder(fakeDir({ files: { "manifest.json": "{not json" } })), "other");
 });
 
 test("fetchExtensionFiles returns only extension files, verified, tests excluded", async () => {
@@ -122,27 +122,50 @@ test("fetchExtensionFiles gives nothing at all when one download does not match"
     /a\.js.*不一致/);
 });
 
-test("deployToFolder refuses a wrong folder before downloading anything", async () => {
-  const calls = [];
-  const dir = fakeDir({ files: { "other.txt": "x" } });
-  await assert.rejects(deployToFolder(dir, { fetchFn: await githubFor(SITE, { calls }), repo: REPO }), /已經有其他檔案/);
-  assert.deepEqual(calls, []);
-  assert.deepEqual([...dir.store.keys()], ["other.txt"]);
-});
+const deploy = (dir, extra = {}) => deployToFolder(dir, { fetchFn: extra.fetchFn, repo: REPO, ...extra });
 
-test("deployToFolder writes everything and manifest.json last", async () => {
+test("an empty folder gets the files itself, and this extension's own folder is updated in place", async () => {
   const written = [];
-  const dir = fakeDir({ onWrite: (p) => written.push(p) });
-  const count = await deployToFolder(dir, { fetchFn: await githubFor(SITE), repo: REPO });
-  assert.equal(count, 3);
-  assert.equal(written.at(-1), "manifest.json");
+  const empty = fakeDir({ onWrite: (p) => written.push(p) });
+  assert.deepEqual(await deploy(empty, { fetchFn: await githubFor(SITE) }), { count: 3, inside: null });
+  assert.equal(written.at(-1), "manifest.json", "manifest.json last");
   assert.deepEqual([...written].sort(), ["installers/x.cmd", "lib/a.js", "manifest.json"]);
+  const ours = fakeDir({ files: { "manifest.json": JSON.stringify({ name: EXTENSION_NAME }), "lib/old.js": "x" } });
+  assert.deepEqual(await deploy(ours, { fetchFn: await githubFor(SITE) }), { count: 3, inside: null });
 });
 
-test("deployToFolder writes nothing when a download is tampered with", async () => {
-  const dir = fakeDir();
-  await assert.rejects(deployToFolder(dir, { fetchFn: await githubFor(SITE, { tamper: "extension/manifest.json" }), repo: REPO }), /不一致/);
-  assert.equal(dir.store.size, 0);
+test("a folder that already has other things in it gets a folder with the suggested name inside, and nothing else is touched", async () => {
+  const written = [];
+  const dir = fakeDir({ files: { "photo.jpg": "keep me", "notes/a.txt": "keep me too" }, name: "文件", onWrite: (p) => written.push(p) });
+  const result = await deploy(dir, { fetchFn: await githubFor(SITE) });
+  assert.deepEqual(result, { count: 3, inside: FOLDER_NAME });
+  assert.deepEqual([...written].sort(), [`${FOLDER_NAME}/installers/x.cmd`, `${FOLDER_NAME}/lib/a.js`, `${FOLDER_NAME}/manifest.json`].sort());
+  assert.equal(written.at(-1), `${FOLDER_NAME}/manifest.json`);
+  assert.equal(dir.store.get("photo.jpg"), "keep me");
+  assert.equal(dir.store.get("notes/a.txt"), "keep me too");
+  assert.ok(dir.dirs.has(FOLDER_NAME));
+  assert.ok([...dir.dirs].every((d) => d === FOLDER_NAME || d.startsWith(`${FOLDER_NAME}/`)), "every new folder is inside it");
+});
+
+test("a folder of that name that already holds other things is refused before anything is downloaded", async () => {
+  const calls = [];
+  const dir = fakeDir({ files: { "photo.jpg": "x", [`${FOLDER_NAME}/mine.txt`]: "x" }, name: "文件" });
+  await assert.rejects(deploy(dir, { fetchFn: await githubFor(SITE, { calls }) }),
+    (e) => e instanceof UpdateError && e.message.includes("文件") && e.message.includes(`「${FOLDER_NAME}」`) && /其他檔案/.test(e.message));
+  assert.deepEqual(calls, []);
+  assert.equal(dir.dirs.size, 0);
+});
+
+test("a folder of that name from an earlier install is updated in place", async () => {
+  const dir = fakeDir({ files: { "photo.jpg": "x", [`${FOLDER_NAME}/manifest.json`]: JSON.stringify({ name: EXTENSION_NAME }) } });
+  assert.deepEqual(await deploy(dir, { fetchFn: await githubFor(SITE) }), { count: 3, inside: FOLDER_NAME });
+});
+
+test("deployToFolder writes nothing, and makes no folder, when a download is tampered with", async () => {
+  const dir = fakeDir({ files: { "photo.jpg": "x" } });
+  await assert.rejects(deploy(dir, { fetchFn: await githubFor(SITE, { tamper: "extension/manifest.json" }) }), /不一致/);
+  assert.deepEqual([...dir.store.keys()], ["photo.jpg"]);
+  assert.equal(dir.dirs.size, 0);
 });
 
 test("buildExtensionZip packs the verified files under one folder", async () => {

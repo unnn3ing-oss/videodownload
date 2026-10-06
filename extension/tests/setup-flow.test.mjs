@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import {
-  FIRST_SHOW_DELAY_MS, SETTLE_MS, decideView, defaultFolder, detectOs, folderHint, isDeployed, macInstallCommand, macInstallUrl,
-  selfCheckItems, stepStates,
+  FIRST_SHOW_DELAY_MS, FOLDER_HINTS, FOLDER_NAME, SETTLE_MS, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand,
+  macInstallUrl, selfCheckItems, wizardSteps,
 } from "../lib/setup-flow.js";
 
 test("the one-line Mac command fetches the installer from the repository's main branch and hands it to bash", () => {
@@ -37,14 +37,13 @@ test("detectOs tells a Mac, a Windows PC and anything else apart", () => {
   assert.equal(detectOs(undefined), "other");
 });
 
-test("the suggested folder for the extension is the same place every time, written the way each system understands", () => {
-  assert.equal(defaultFolder("mac"), "~/YT批量下載器擴充功能");
-  assert.equal(defaultFolder("win"), "%USERPROFILE%\\YT批量下載器擴充功能");
-  assert.equal(defaultFolder("other"), "YT批量下載器擴充功能");
-  assert.equal(defaultFolder("nonsense"), "YT批量下載器擴充功能");
-  assert.match(folderHint("mac"), /Cmd\+Shift\+G/);
-  assert.match(folderHint("win"), /網址列/);
-  for (const os of ["mac", "win", "other"]) assert.match(folderHint(os), /新增資料夾/, `${os}: says how to make the folder`);
+test("the suggested folder is a plain name, not a path (the folder does not exist yet), and the hints say how to make it", () => {
+  assert.equal(FOLDER_NAME, "YT批量下載器");
+  assert.ok(!/[\\/~%:]/.test(FOLDER_NAME), "nothing that could be taken for a path");
+  assert.match(FOLDER_HINTS[0], /新增資料夾/);
+  assert.match(FOLDER_HINTS[0], /貼上這個名稱/);
+  assert.match(FOLDER_HINTS[1], /同名的資料夾/);
+  assert.match(FOLDER_HINTS[1], /下載.*文件.*桌面/);
 });
 
 // ---------------- the steps ----------------
@@ -52,20 +51,36 @@ test("the suggested folder for the extension is the same place every time, writt
 const running = { state: "running", ready: { hostVersion: "0.2.3", ytdlpVersion: "2026.08.19", ffmpegOk: true, jsRuntimeOk: true }, detail: null };
 const stopped = { state: "stopped", ready: null, detail: null };
 
-test("stepStates follows the person from step to step", () => {
-  assert.deepEqual(stepStates({ detected: false, wroteFiles: false, status: stopped }), ["now", "todo", "todo", "todo"]);
-  assert.deepEqual(stepStates({ detected: false, wroteFiles: true, status: stopped }), ["done", "now", "todo", "todo"]);
-  assert.deepEqual(stepStates({ detected: true, wroteFiles: false, status: { state: "not_installed", ready: null, detail: "not found" } }), ["done", "done", "now", "todo"]);
-  assert.deepEqual(stepStates({ detected: true, wroteFiles: false, status: stopped }), ["done", "done", "now", "todo"]);
-  assert.deepEqual(stepStates({ detected: true, wroteFiles: false, status: { state: "stopped", ready: null, detail: "Native host has exited." } }), ["done", "done", "done", "now"]);
-  assert.deepEqual(stepStates({ detected: true, wroteFiles: false, status: { state: "forbidden", ready: null, detail: "x" } }), ["done", "done", "done", "now"]);
-  assert.deepEqual(stepStates({ detected: true, wroteFiles: false, status: running }), ["done", "done", "done", "done"]);
-  assert.deepEqual(stepStates({ detected: false, wroteFiles: false, status: running }), ["now", "todo", "todo", "todo"], "no extension, no progress");
+test("the six steps, in the order the person does them", () => {
+  assert.deepEqual(STEP_LABELS, ["建立資料夾", "取得檔案", "開啟擴充頁", "載入插件", "安裝小程式", "完成"]);
+});
+
+test("wizardSteps follows the person through the six steps and says which one to show", () => {
+  const at = (overrides) => wizardSteps({ detected: false, wroteFiles: false, status: stopped, deployed: false, ...overrides });
+  assert.deepEqual(at({}), { states: ["now", "todo", "todo", "todo", "todo", "todo"], suggested: 1 });
+  assert.deepEqual(at({ wroteFiles: true }), { states: ["done", "done", "now", "todo", "todo", "todo"], suggested: 3 });
+  assert.deepEqual(at({ detected: true }), { states: ["done", "done", "done", "done", "now", "todo"], suggested: 5 });
+  assert.deepEqual(at({ detected: true, status: { state: "not_installed", ready: null, detail: "not found" } }).suggested, 5);
+  assert.deepEqual(at({ detected: true, status: { state: "stopped", ready: null, detail: "Native host has exited." } }),
+    { states: ["done", "done", "done", "done", "done", "now"], suggested: 6 });
+  assert.equal(at({ detected: true, status: { state: "forbidden", ready: null, detail: "x" } }).suggested, 6);
+  assert.deepEqual(at({ detected: true, status: running }).states, ["done", "done", "done", "done", "done", "now"], "it runs, but is not known to work yet");
+  assert.deepEqual(at({ detected: true, status: running, deployed: true }), { states: Array(6).fill("done"), suggested: 6 });
+  assert.deepEqual(at({ detected: false, status: running }).suggested, 1, "no extension, no progress");
+});
+
+test("the last step says in a line where the connection stands", () => {
+  const say = (overrides) => connectSummary({ detected: true, deployed: false, status: running, ...overrides });
+  assert.deepEqual(say({ deployed: true }), { ok: true, text: "一切正常，已經連線" });
+  assert.deepEqual(say({ detected: false }), { ok: false, text: "還沒偵測到擴充功能（步驟 1～4）" });
+  assert.deepEqual(say({}), { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" });
+  assert.deepEqual(say({ status: { state: "not_installed", ready: null, detail: "x" } }), { ok: false, text: "還沒連上本機小程式（步驟 5）" });
+  assert.deepEqual(say({ status: stopped }), { ok: false, text: "還沒連上本機小程式（步驟 5）" });
 });
 
 // ---------------- does it work? ----------------
 
-const good = { detected: true, status: running, hostOutdated: false, extensionVersion: "0.2.3", pageVersion: "0.2.3" };
+const good ={ detected: true, status: running, hostOutdated: false, extensionVersion: "0.2.3", pageVersion: "0.2.3" };
 
 test("the install counts as working only when everything that a download needs is there", () => {
   assert.equal(isDeployed(good), true);

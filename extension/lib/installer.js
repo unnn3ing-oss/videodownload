@@ -38,7 +38,7 @@ export async function downloadInstaller({ runtime, downloads, fetchFn = fetch, p
     if (!response.ok) throw new Error(String(response.status));
     bytes = new Uint8Array(await response.arrayBuffer());
   } catch {
-    return { ok: false, error: `找不到安裝檔（${name}）。請回到網頁版的步驟 1 重新部署擴充功能，再試一次。` };
+    return { ok: false, error: `找不到安裝檔（${name}）。請回到網頁版的步驟 2 重新部署擴充功能，再試一次。` };
   }
   const mime = MIME[name.slice(name.lastIndexOf("."))] ?? "application/octet-stream";
   try {

@@ -77,6 +77,6 @@ test("versionNotice warns only when the extension is older than this page, and s
   const text = versionNotice({ extensionVersion: "0.2.0", pageVersion: "0.2.1" });
   assert.match(text, /0\.2\.0/);
   assert.match(text, /0\.2\.1/);
-  assert.match(text, /步驟 1/);
+  assert.match(text, /步驟 2/);
   assert.match(text, /重新載入/);
 });

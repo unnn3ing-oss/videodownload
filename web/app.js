@@ -9,7 +9,8 @@ import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from ".
 import { installerPendingText } from "../extension/lib/installer.js";
 import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
 import {
-  decideView, defaultFolder, detectOs, folderHint, isDeployed, macInstallCommand, selfCheckItems, stepStates,
+  FOLDER_HINTS, FOLDER_NAME, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand, selfCheckItems,
+  wizardSteps,
 } from "../extension/lib/setup-flow.js";
 
 const $ = (id) => document.getElementById(id);
@@ -17,6 +18,7 @@ const client = createBridgeClient();
 let status = { state: "stopped", ready: null, detail: null };
 let queue = null;
 let wroteFiles = false;
+let loadFolder = null; // where the files went, for the "load unpacked" step: { name, inside }
 let everDetected = false; // the extension answered at some point in this page session
 let hostWasRunning = false; // so is the host
 let gaveUp = false; // automatic launching of the host stopped (it keeps closing right away)
@@ -34,17 +36,47 @@ function setNote(id, text, kind = "info") {
 }
 
 // ---------- rendering ----------
-function renderSteps() {
+const wizard = () => wizardSteps({ detected: client.detected(), wroteFiles, status, deployed: deployed() });
+
+// The window shows one step at a time. `cursor` is the one shown; it starts at the first step that is not done, and follows
+// the install along while the person stays on the front step (the extension showing up moves them on to the next).
+let cursor = 1;
+let lastSuggested = 1;
+
+function renderWizard() {
   const detected = client.detected();
   const version = detected ? client.version() : null;
-  setText($("ext-version"), version ? `（v${version}）` : "");
+  const { states, suggested } = wizard();
+  if (suggested > lastSuggested && cursor === lastSuggested) cursor = suggested;
+  lastSuggested = suggested;
+
   const stale = versionNotice({ extensionVersion: version, pageVersion });
   setText($("ext-version-note"), stale ?? "");
   setHidden($("ext-version-note"), !stale);
-  const states = stepStates({ detected, wroteFiles, status });
-  document.querySelectorAll("#steps .st").forEach((step, index) => {
-    step.dataset.s = states[index];
+  setText($("ext-version"), version ? `（v${version}）` : "");
+  setHidden($("ext-found"), !detected);
+  const summary = connectSummary({ detected, deployed: deployed(), status });
+  setText($("connect-status"), `${summary.ok ? "✓ " : ""}${summary.text}`);
+  $("connect-status").dataset.ok = String(summary.ok);
+  const where = loadFolder ? `檔案放在「${loadFolder.name}」${loadFolder.inside ? `裡面新建的「${loadFolder.inside}」` : ""}。載入時請選${loadFolder.inside ? "那個" : "這個"}資料夾。` : "";
+  setText($("load-where"), where);
+  setHidden($("load-where"), !where);
+
+  document.querySelectorAll("#steps .sp").forEach((step) => {
+    const n = Number(step.dataset.step);
+    step.dataset.s = states[n - 1];
+    step.classList.toggle("here", n === cursor);
+    step.classList.toggle("passed", n < cursor);
+    step.querySelector(".sp-btn").setAttribute("aria-current", n === cursor ? "step" : "false");
   });
+  document.querySelectorAll(".pane").forEach((pane) => setHidden(pane, Number(pane.dataset.pane) !== cursor));
+  $("step-prev").disabled = cursor === 1;
+  setText($("step-next"), cursor === STEP_LABELS.length ? "完成" : "下一步");
+}
+
+function goToStep(n) {
+  cursor = Math.min(STEP_LABELS.length, Math.max(1, n));
+  renderWizard();
 }
 
 function renderQueueArea() {
@@ -103,7 +135,7 @@ function renderQueueArea() {
 }
 
 function render() {
-  renderSteps();
+  renderWizard();
   renderQueueArea();
   renderSetupWindow();
 }
@@ -131,12 +163,14 @@ const deployed = () => isDeployed({
 function showView(name) {
   $("view-steps").hidden = name !== "steps";
   $("view-check").hidden = name !== "check";
-  $("tab-steps").setAttribute("aria-selected", String(name === "steps"));
-  $("tab-check").setAttribute("aria-selected", String(name === "check"));
+  setHidden($("sd-foot"), name !== "steps");
+  $("tab-check").setAttribute("aria-pressed", String(name === "check"));
   if (name === "check") renderCheck();
+  else renderWizard();
 }
 
 function openSetup(name) {
+  if (name === "steps") cursor = wizard().suggested; // (the step that is next to do)
   showView(name);
   if (!dialog.open) dialog.showModal();
   if (name === "check") refreshDoctor();
@@ -194,9 +228,14 @@ function renderSetupWindow() {
 
 $("open-setup").addEventListener("click", () => { dismissed = false; openSetup("steps"); });
 $("setup-close").addEventListener("click", () => dialog.close());
-$("tab-steps").addEventListener("click", () => showView("steps"));
 $("tab-check").addEventListener("click", () => { showView("check"); refreshDoctor(); });
-$("check-to-steps").addEventListener("click", () => showView("steps"));
+$("check-to-steps").addEventListener("click", () => { cursor = wizard().suggested; showView("steps"); });
+$("step-prev").addEventListener("click", () => goToStep(cursor - 1));
+$("step-next").addEventListener("click", () => {
+  if (cursor < STEP_LABELS.length) goToStep(cursor + 1);
+  else dialog.close(); // "完成": the person is done with the window (it also closes by itself once everything works)
+});
+document.querySelectorAll("#steps .sp").forEach((step) => step.querySelector(".sp-btn").addEventListener("click", () => goToStep(Number(step.dataset.step))));
 $("check-again").addEventListener("click", () => {
   autoConnect.reset();
   gaveUp = false;
@@ -234,10 +273,10 @@ client.onChange((detected) => {
   }
 });
 client.onState((state) => { queue = state; renderQueueArea(); });
-client.onVersion(() => renderSteps());
+client.onVersion(() => renderWizard());
 fetch("extension/manifest.json", { cache: "no-cache" })
   .then((response) => (response.ok ? response.json() : null))
-  .then((manifest) => { pageVersion = manifest?.version ?? null; renderSteps(); })
+  .then((manifest) => { pageVersion = manifest?.version ?? null; renderWizard(); })
   .catch(() => {}); // without it the page just cannot compare versions
 client.onStatus((next) => { setStatus(next); render(); });
 
@@ -325,9 +364,10 @@ $("deploy-pick").addEventListener("click", async () => {
   }
   setNote("deploy-status", "準備中…");
   try {
-    const count = await deployToFolder(dir, { onProgress: (p) => setNote("deploy-status", progressText(p)) });
+    const { count, inside } = await deployToFolder(dir, { onProgress: (p) => setNote("deploy-status", progressText(p)) });
     wroteFiles = true;
-    setNote("deploy-status", `已寫入 ${count} 個檔案。下一步：到 Chrome 載入未封裝項目，選這個資料夾。`, "ok");
+    loadFolder = { name: dir.name, inside };
+    setNote("deploy-status", `已寫入 ${count} 個檔案${inside ? `（「${dir.name}」裡已經有其他東西，所以我在裡面新建了「${inside}」資料夾）` : ""}。按「下一步」。`, "ok");
     render();
   } catch (error) {
     setNote("deploy-status", error.message, "error");
@@ -344,36 +384,41 @@ $("deploy-zip").addEventListener("click", async () => {
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 10000);
     wroteFiles = true;
-    setNote("deploy-status", `已下載 ZIP（${count} 個檔案）。請先解壓縮，載入時選解壓縮後的資料夾。`, "ok");
+    loadFolder = null;
+    setNote("deploy-status", `已下載 ZIP（${count} 個檔案）。請先解壓縮，載入時選解壓縮後的資料夾。按「下一步」。`, "ok");
     render();
   } catch (error) {
     setNote("deploy-status", error.message, "error");
   }
 });
 
-// Every "copy" button: the text goes to the clipboard and the button says so for a moment.
-function copyButton(id, text, failure) {
+// Every "copy" button: the text goes to the clipboard and the button says so for a moment; when it cannot, `noteId` says what to type.
+function copyButton(id, text, noteId, failure) {
   const button = $(id);
   const label = button.textContent;
   button.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(typeof text === "function" ? text() : text);
+      setNote(noteId, "");
       button.textContent = "已複製";
       clearTimeout(button._copied);
       button._copied = setTimeout(() => { button.textContent = label; }, 2000);
     } catch {
-      setNote("deploy-status", failure, "error");
+      setNote(noteId, failure, "error");
     }
   });
 }
-copyButton("deploy-copy", "chrome://extensions", "無法自動複製，請自己在網址列輸入 chrome://extensions");
-copyButton("copy-folder", () => defaultFolder(os), `無法自動複製，請自己輸入資料夾名稱：${defaultFolder(os)}`);
-copyButton("copy-folder-2", () => defaultFolder(os), `無法自動複製，請自己輸入資料夾名稱：${defaultFolder(os)}`);
-copyButton("copy-mac-command", () => macInstallCommand(), `無法自動複製，請自己輸入：${macInstallCommand()}`);
+const typeFolder = `無法自動複製，請自己輸入資料夾名稱：${FOLDER_NAME}`;
+copyButton("deploy-copy", "chrome://extensions", "copy-note-3", "無法自動複製，請自己在網址列輸入 chrome://extensions");
+copyButton("copy-folder", FOLDER_NAME, "copy-note-1", typeFolder);
+copyButton("copy-folder-2", FOLDER_NAME, "copy-note-4", typeFolder);
+copyButton("copy-mac-command", () => macInstallCommand(), "installer-status", `無法自動複製，請自己輸入：${macInstallCommand()}`);
 
 // what this computer is shown
-$("default-folder").textContent = defaultFolder(os);
-$("folder-hint").textContent = folderHint(os);
+$("default-folder").textContent = FOLDER_NAME;
+$("default-folder-2").textContent = FOLDER_NAME;
+$("folder-hint").textContent = FOLDER_HINTS[0];
+$("folder-hint-2").textContent = FOLDER_HINTS[1];
 $("mac-command").textContent = macInstallCommand();
 setHidden($("mac-install"), os === "win"); // (an unknown system sees both)
 setHidden($("installer-hint"), os === "mac");
@@ -382,10 +427,10 @@ if (os === "mac") $("deploy-installer").textContent = "改下載安裝檔（備�
 $("deploy-installer").addEventListener("click", async () => {
   try {
     const result = await send({ type: "deploy_installer" });
-    if (result?.ok && result.pending) setNote("deploy-status", installerPendingText(result.name), "info");
-    else setNote("deploy-status", result?.ok ? `已下載「${result.name}」。請執行一次，完成後這裡會自動連線。` : result?.error ?? "無法下載安裝檔", result?.ok ? "ok" : "error");
+    if (result?.ok && result.pending) setNote("installer-status", installerPendingText(result.name), "info");
+    else setNote("installer-status", result?.ok ? `已下載「${result.name}」。請執行一次，完成後這裡會自動連線。` : result?.error ?? "無法下載安裝檔", result?.ok ? "ok" : "error");
   } catch (error) {
-    setNote("deploy-status", `需要先完成步驟 1、2：${error.message}`, "error");
+    setNote("installer-status", `需要先完成步驟 1～4：${error.message}`, "error");
   }
 });
 

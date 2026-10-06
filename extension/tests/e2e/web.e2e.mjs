@@ -10,7 +10,7 @@ import { chromium } from "playwright-core";
 import { PAGES_URL, launchExtension, manifest, registerNativeHost, root, servePages, shotter } from "./helpers.mjs";
 import { buildFixture } from "./fake-github.mjs";
 import { startFakeYtimg } from "./fake-ytimg.mjs";
-import { macInstallCommand } from "../../lib/setup-flow.js";
+import { FOLDER_NAME, macInstallCommand } from "../../lib/setup-flow.js";
 
 const executablePath = process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium";
 const opfsPicker = (extra = "") => `
@@ -20,7 +20,8 @@ const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
 // ---------------------------------------------------------------- A. a browser without the extension
 async function withoutExtension() {
-  const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
+  // (UTF-8 locale: this Linux Chromium dies on a file name with Chinese characters otherwise, and the files get such a folder)
+  const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"], env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" } });
   try {
     const context = await browser.newContext({ acceptDownloads: true });
     await servePages(context);
@@ -35,25 +36,48 @@ async function withoutExtension() {
     const { width, height } = page.viewportSize();
     assert.ok(Math.abs(dialogBox.x + dialogBox.width / 2 - width / 2) < 30, "centered horizontally");
     assert.ok(Math.abs(dialogBox.y + dialogBox.height / 2 - height / 2) < 30, "and vertically");
-    assert.equal(await page.textContent("#default-folder"), "YT批量下載器擴充功能", "an unknown system gets the plain folder name");
+    assert.equal(await page.textContent("#default-folder"), FOLDER_NAME, "a plain folder name, not a path");
     await page.waitForSelector("#no-extension:not([hidden])");
     assert.equal(await page.isDisabled("#add-btn"), true);
-    // "copy the folder path" puts it on the clipboard
+    // It is a wizard: one step at a time, the first one first, with the stepper above and back/next below.
+    const shown = () => page.$$eval(".pane", (panes) => panes.filter((pane) => !pane.hidden).map((pane) => pane.dataset.pane));
+    assert.deepEqual(await shown(), ["1"]);
+    assert.equal(await page.locator("#steps li").count(), 6);
+    assert.equal(await page.isDisabled("#step-prev"), true, "nothing before the first step");
+    assert.equal(await page.textContent("#step-next"), "下一步");
+    assert.match(await page.textContent("#folder-hint"), /新增資料夾.*貼上這個名稱/);
+    assert.match(await page.textContent("#folder-hint-2"), /同名的資料夾/);
+    // "copy the folder name" puts just the name on the clipboard
     await page.click("#copy-folder");
     await page.waitForFunction(() => document.getElementById("copy-folder").textContent === "已複製"); // (the write is done)
     await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.getElementById("setup-dialog").append(t); t.focus(); });
     await page.keyboard.press("Control+V");
-    assert.equal(await page.inputValue("#paste-probe"), "YT批量下載器擴充功能");
+    assert.equal(await page.inputValue("#paste-probe"), FOLDER_NAME);
     await page.evaluate(() => document.getElementById("paste-probe").remove());
-    // closing it by hand keeps it closed, and the button beside the sidebar title brings it back
+    // next / back, and jumping through the stepper
+    await page.click("#step-next");
+    assert.deepEqual(await shown(), ["2"]);
+    assert.equal(await page.isDisabled("#step-prev"), false);
+    await page.click("#step-prev");
+    assert.deepEqual(await shown(), ["1"]);
+    await page.click('#steps li[data-step="6"] button');
+    assert.deepEqual(await shown(), ["6"]);
+    assert.equal(await page.textContent("#step-next"), "完成", "the last step ends the wizard");
+    assert.equal(await page.getAttribute('#steps li[data-step="6"] button', "aria-current"), "step");
+    await page.click('#steps li[data-step="1"] button');
+    // closing it by hand keeps it closed, and the button beside the sidebar title brings it back (at the step that is next to do)
     await page.click("#setup-close");
     assert.equal(await page.locator("#setup-dialog").evaluate((d) => d.open), false);
     await page.click("#open-setup");
     assert.equal(await page.locator("#setup-dialog").evaluate((d) => d.open), true);
     assert.equal(await page.locator('#steps li[data-step="1"]').getAttribute("data-s"), "now");
+    assert.deepEqual(await shown(), ["1"]);
 
+    // Step 2 writes the files into the chosen (empty) folder itself.
+    await page.click("#step-next");
     await page.click("#deploy-pick");
     await page.waitForFunction(() => /已寫入/.test(document.getElementById("deploy-status").textContent), null, { timeout: 30000 });
+    assert.doesNotMatch(await page.textContent("#deploy-status"), /新建/, "an empty folder gets the files directly");
     const written = await page.evaluate(async () => {
       const dir = await navigator.storage.getDirectory();
       const names = [];
@@ -63,8 +87,48 @@ async function withoutExtension() {
     });
     assert.equal(written.manifestName, manifest.name);
     assert.ok(written.names.includes("background.js") && written.names.includes("bridge.js") && !written.names.includes("tests"));
-    assert.equal(await page.locator('#steps li[data-step="1"]').getAttribute("data-s"), "done");
-    assert.equal(await page.locator('#steps li[data-step="2"]').getAttribute("data-s"), "now");
+    assert.equal(await page.locator('#steps li[data-step="2"]').getAttribute("data-s"), "done");
+    assert.equal(await page.locator('#steps li[data-step="3"]').getAttribute("data-s"), "now");
+
+    // A folder that already has other things in it is left alone: the files go into a folder of the suggested name inside it.
+    await page.evaluate(async () => {
+      const dir = await navigator.storage.getDirectory();
+      const names = [];
+      for await (const [name] of dir.entries()) names.push(name);
+      for (const name of names) await dir.removeEntry(name, { recursive: true });
+      const stray = await (await dir.getFileHandle("我的照片.txt", { create: true })).createWritable();
+      await stray.write("keep me");
+      await stray.close();
+    });
+    await page.click("#deploy-pick");
+    await page.waitForFunction(() => /新建/.test(document.getElementById("deploy-status").textContent), null, { timeout: 30000 });
+    assert.match(await page.textContent("#deploy-status"), /YT批量下載器/);
+    const nested = await page.evaluate(async (name) => {
+      const dir = await navigator.storage.getDirectory();
+      const top = [];
+      for await (const [entry] of dir.entries()) top.push(entry);
+      const child = await dir.getDirectoryHandle(name);
+      const inside = [];
+      for await (const [entry] of child.entries()) inside.push(entry);
+      const kept = await (await dir.getFileHandle("我的照片.txt")).getFile();
+      return { top: top.sort(), inside, kept: await kept.text() };
+    }, FOLDER_NAME);
+    assert.deepEqual(nested.top, [FOLDER_NAME, "我的照片.txt"].sort(), "nothing else was created next to their files");
+    assert.ok(nested.inside.includes("manifest.json") && nested.inside.includes("background.js"));
+    assert.equal(nested.kept, "keep me", "their file was not touched");
+    await page.click('#steps li[data-step="4"] button');
+    assert.match(await page.textContent("#load-where"), /裡面新建的「YT批量下載器」.*那個資料夾/, "step 4 says which folder to pick in Chrome");
+    // Writing again over a folder of that name holding other things is refused, with the reason.
+    await page.evaluate(async (name) => {
+      const dir = await navigator.storage.getDirectory();
+      await dir.removeEntry(name, { recursive: true });
+      const child = await dir.getDirectoryHandle(name, { create: true });
+      await (await child.getFileHandle("別人的.txt", { create: true })).createWritable().then(async (w) => { await w.write("x"); await w.close(); });
+    }, FOLDER_NAME);
+    await page.click('#steps li[data-step="2"] button');
+    await page.click("#deploy-pick");
+    await page.waitForFunction(() => /已經有一個叫/.test(document.getElementById("deploy-status").textContent), null, { timeout: 30000 });
+    assert.equal(await page.getAttribute("#deploy-status", "data-kind"), "error");
 
     const [download] = await Promise.all([page.waitForEvent("download"), page.click("#deploy-zip")]);
     const zipPath = path.join(fs.mkdtempSync(path.join(process.env.E2E_TMP ?? "/tmp", "web-zip-")), "e.zip");
@@ -81,20 +145,21 @@ async function withoutExtension() {
 
 // ---------------------------------------------------------------- A2. what each system is shown
 const AGENTS = {
-  mac: ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "~/YT批量下載器擴充功能"],
-  win: ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "%USERPROFILE%\\YT批量下載器擴充功能"],
+  mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  win: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
 };
 async function perSystem(browser) {
-  for (const [os, [userAgent, folder]] of Object.entries(AGENTS)) {
+  for (const [os, userAgent] of Object.entries(AGENTS)) {
     const context = await browser.newContext({ userAgent, acceptDownloads: true });
     try {
       await servePages(context);
       const page = await context.newPage();
       await page.goto(PAGES_URL);
       await page.waitForSelector("#setup-dialog[open]", { timeout: 10000 });
-      assert.equal(await page.textContent("#default-folder"), folder, `${os}: the suggested folder`);
-      assert.match(await page.textContent("#folder-hint"), os === "mac" ? /Cmd\+Shift\+G/ : /網址列/, `${os}: how to paste it`);
+      assert.equal(await page.textContent("#default-folder"), FOLDER_NAME, `${os}: the suggested folder is just a name`);
+      await page.click('#steps li[data-step="5"] button');
       assert.equal(await page.isVisible("#mac-install"), os === "mac", `${os}: the one-line command is for Macs`);
+      assert.equal(await page.isVisible("#installer-hint"), os === "win", `${os}: the SmartScreen hint is for Windows`);
       if (os === "mac") {
         assert.equal(await page.textContent("#mac-command"), macInstallCommand());
         await page.click("#copy-mac-command");
@@ -138,10 +203,15 @@ async function withExtension() {
     // B1. The extension is found by itself; the host is not installed yet. The first visit shows the setup window.
     await untilDialog(true);
     assert.equal(await flag(), null, "nothing is remembered before the install works");
-    await untilStep(2, "done");
+    await untilStep(4, "done");
     await shot("web-0-setup-window");
-    assert.equal(await stepState(1), "done");
-    assert.equal(await stepState(3), "now");
+    assert.equal(await stepState(2), "done");
+    assert.equal(await stepState(5), "now");
+    assert.deepEqual(await web.$$eval(".pane", (panes) => panes.filter((pane) => !pane.hidden).map((pane) => pane.dataset.pane)), ["5"],
+      "the window moved on to the step that is next to do (it was waiting on the front step)");
+    await web.click('#steps li[data-step="4"] button');
+    assert.equal(await web.isVisible("#ext-found"), true, "step 4 says the extension was found");
+    await web.click('#steps li[data-step="5"] button');
     assert.equal(await web.isVisible("#no-extension"), false);
     assert.equal(await web.isDisabled("#add-btn"), false);
     assert.equal(await web.isDisabled("#start-all"), true);
@@ -172,8 +242,8 @@ async function withExtension() {
     const worker = context.serviceWorkers().find((w) => w.url().includes(extId));
     await worker.evaluate(() => { chrome.runtime.getPlatformInfo = async () => ({ os: "mac", arch: "x86-64", nacl_arch: "x86-64" }); });
     await web.click("#deploy-installer");
-    await web.waitForFunction(() => /已下載「|無法/.test(document.getElementById("deploy-status").textContent), null, { timeout: 20000 });
-    assert.match(await web.textContent("#deploy-status"), /已下載「install-mac\.zip」/);
+    await web.waitForFunction(() => /已下載「|無法/.test(document.getElementById("installer-status").textContent), null, { timeout: 20000 });
+    assert.match(await web.textContent("#installer-status"), /已下載「install-mac\.zip」/);
     const saved = await worker.evaluate(() => chrome.downloads.search({}).then((all) => all.map((d) => ({ state: d.state, error: d.error ?? null, filename: d.filename }))));
     assert.deepEqual(saved.map((d) => [d.state, d.error]), [["complete", null]], "Chrome finished the download");
     assert.deepEqual(fs.readFileSync(saved[0].filename), fs.readFileSync(path.join(root, "extension/installers/install-mac.zip")), "and it is the installer, byte for byte");
@@ -184,8 +254,8 @@ async function withExtension() {
     fs.writeFileSync(wrapper, goodWrapper);
     fs.chmodSync(wrapper, 0o755);
     registerNativeHost({ userData, wrapperPath: wrapper, extId });
-    await untilStep(4, "done", 20000);
-    assert.equal(await stepState(3), "done");
+    await untilStep(5, "done", 20000);
+    assert.equal(await stepState(4), "done");
     // It works: the window closes by itself and the page remembers that the install has worked.
     await untilDialog(false);
     assert.equal(await flag(), "1");
@@ -351,6 +421,7 @@ async function withExtension() {
     // It has not worked for a while, so the self-check came up by itself (not the steps), and it names the host.
     await untilDialog(true, 30000);
     assert.equal(await web.locator("#view-check").isVisible(), true);
+    assert.equal(await web.locator("#sd-foot").isVisible(), false, "the self-check has no back/next");
     await shot("web-0-self-check");
     const stuck = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
     assert.ok(stuck.some((r) => r.status === "error" && /本機小程式/.test(r.text)), "the host is named as the problem");
@@ -379,10 +450,12 @@ async function withExtension() {
     assert.deepEqual([...viaBrowser.subarray(0, 3)], [0xff, 0xd8, 0xff]);
     assert.match(viaBrowser.toString("latin1"), /v1:hq720/, "the original-size cover");
     fs.writeFileSync(wrapper, goodWrapper);
-    await web.click("#open-setup"); // the button beside the sidebar title brings the steps back; step 4 starts the host
+    await web.click("#open-setup"); // the button beside the sidebar title brings the steps back, at the last one: that one starts the host
+    assert.deepEqual(await web.$$eval(".pane", (panes) => panes.filter((pane) => !pane.hidden).map((pane) => pane.dataset.pane)), ["6"]);
+    assert.match(await web.textContent("#connect-status"), /還沒連上本機小程式/, "the last step says where the connection stands");
     await web.click("#start");
     await web.waitForSelector("#conn-note", { state: "hidden", timeout: 20000 });
-    await untilStep(4, "done");
+    await untilStep(6, "done");
     await untilDialog(false); // it works again: the window closes by itself
 
     // B11. A later visit while everything works: the window stays shut.
@@ -403,7 +476,7 @@ async function withExtension() {
     fs.writeFileSync(wrapper, goodWrapper);
     await web.click("#check-again");
     await untilDialog(false, 30000);
-    await untilStep(4, "done");
+    await untilStep(6, "done");
 
     // B8. Narrow and wide layouts.
     for (const width of [320, 480]) {
@@ -413,6 +486,7 @@ async function withExtension() {
       assert.ok(narrow.x >= 0 && narrow.x + narrow.width <= width, `the resolution choice fits at ${width}px`);
       await shot(`web-3-width-${width}`);
       await web.click("#open-setup");
+      assert.equal(await web.evaluate(() => { const bar = document.getElementById("steps"); return bar.scrollWidth <= bar.clientWidth; }), true, `the stepper fits at ${width}px`);
       const small = await web.locator("#setup-dialog").boundingBox();
       assert.ok(small.x >= 0 && small.y >= 0 && small.x + small.width <= width && small.y + small.height <= 900, `the setup window fits at ${width}px`);
       assert.equal(await web.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `no overflow with the window open at ${width}px`);
