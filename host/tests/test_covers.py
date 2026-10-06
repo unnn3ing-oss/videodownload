@@ -64,3 +64,19 @@ def test_largest_cover_fits_in_one_native_message():
     biggest = base64.b64encode(b"\xff\xd8\xff" + b"\x00" * (MAX_COVER_BYTES - 3)).decode()
     message = json.dumps({"type": "save_cover", "id": "x" * 64, "title": "題" * 200, "data": biggest, "reqId": "bg:123456"})
     assert len(message.encode("utf-8")) < protocol.MAX_IN
+
+
+@pytest.mark.parametrize("entry", ["notes.docx", "../escape.jpg", ".ytdl-covers.json", "", "no-extension", ".hidden.jpg"])
+def test_save_cover_ignores_registry_entries_that_are_not_plain_jpg_names(tmp_path, entry):
+    victim = tmp_path / "notes.docx"
+    victim.write_bytes(b"keep me")
+    (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": entry}), encoding="utf-8")
+    path = save_cover(tmp_path, "v1", "標題", JPEG)
+    assert path.name == "標題.jpg"
+    assert victim.read_bytes() == b"keep me"
+    assert json.loads((tmp_path / ".ytdl-covers.json").read_text(encoding="utf-8")) == {"v1": "標題.jpg"}
+
+
+def test_save_cover_reuses_a_registered_jpg_name_in_any_letter_case(tmp_path):
+    (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": "舊名字.JPG"}), encoding="utf-8")
+    assert save_cover(tmp_path, "v1", "完全不同的新標題", JPEG).name == "舊名字.JPG"

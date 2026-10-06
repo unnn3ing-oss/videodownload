@@ -36,6 +36,7 @@ test("buildCopyText keeps the title on one line and never interprets markup", ()
   assert.equal(buildCopyText("第一行\n  第二行\r\n第三行", ["x"]), "【第一行 第二行 第三行】\n#x");
   assert.equal(buildCopyText('<img src=x onerror="1">', []), '【<img src=x onerror="1">】');
   assert.equal(buildCopyText("  前後空白  ", []), "【前後空白】");
+  assert.equal(buildCopyText("甲\u0085乙\u2028丙\u2029丁", []), "【甲 乙 丙 丁】", "NEL and the unicode line separators are line breaks too");
 });
 
 test("coverName agrees with the Python implementation on the shared fixture", () => {

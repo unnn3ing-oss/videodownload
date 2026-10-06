@@ -29,14 +29,20 @@ def cover_name(title: str, video_id: str) -> str:
     return sanitize_filename(kept[:NAME_CHARS] or video_id)
 
 
+def _is_cover_name(name: str) -> bool:
+    """A file name this module could have written: a plain, visible name ending in .jpg."""
+    return name.lower().endswith(".jpg") and not name.startswith(".") and "/" not in name and "\\" not in name
+
+
 def _registry(directory: Path) -> dict[str, str]:
+    """Video id -> cover file name. Entries that are not plain .jpg names are ignored (the file is user-editable)."""
     try:
         data = json.loads((directory / REGISTRY).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
         return {}
-    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and _is_cover_name(v)}
 
 
 def _record(directory: Path, video_id: str, filename: str) -> None:

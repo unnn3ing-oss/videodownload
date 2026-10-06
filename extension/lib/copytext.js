@@ -15,7 +15,8 @@ export function extractHashtags(description, max = 3) {
   return tags;
 }
 
+// (JavaScript's \s leaves out U+0085, a line break in Unicode)
 export function buildCopyText(title, tags) {
-  const line = `【${String(title ?? "").replace(/\s+/g, " ").trim()}】`;
+  const line = `【${String(title ?? "").replace(/[\s\u0085]+/g, " ").trim()}】`;
   return tags.length ? `${line}\n${tags.map((tag) => `#${tag}`).join(" ")}` : line;
 }
