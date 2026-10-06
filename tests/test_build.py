@@ -160,6 +160,7 @@ case "$url" in
   *SHA2-256SUMS) if [ -f "$STUB_DIR/sums_ok" ]; then cat "$STUB_DIR/sums"; else exit 22; fi;;
   *yt-dlp_macos.zip) cp "$STUB_DIR/ytdlp.zip" "$out";;
   *deno*) cp "$STUB_DIR/deno.zip" "$out";;
+  *ffmpeg*) cp "$STUB_DIR/ffmpeg.gz" "$out";;
   *) exit 22;;
 esac
 """
@@ -187,9 +188,10 @@ def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wr
         info = zipfile.ZipInfo("deno")
         info.external_attr = (0o100000 | 0o755) << 16
         z.writestr(info, "#!/bin/sh\necho deno 2\n")
-    for name, body in (("curl", CURL_STUB), ("ffmpeg", "#!/bin/sh\n" + ffmpeg_body)):
-        (bin_dir / name).write_text(body)
-        (bin_dir / name).chmod(0o755)
+    import gzip
+    (stub / "ffmpeg.gz").write_bytes(gzip.compress(("#!/bin/sh\n" + ffmpeg_body).encode()))
+    (bin_dir / "curl").write_text(CURL_STUB)
+    (bin_dir / "curl").chmod(0o755)
     if before:
         before(home / "Library/Application Support/YTDownloader/bin")
     script = tmp_path / "install-mac.command"
@@ -276,14 +278,14 @@ def test_running_the_mac_installer_again_repairs_parts_that_exist_but_do_not_run
     bin_dir = home / "Library/Application Support/YTDownloader/bin"
     assert subprocess.run([str(bin_dir / "deno"), "--version"], capture_output=True).returncode == 0
     assert subprocess.run([str(bin_dir / "ffmpeg"), "-version"], capture_output=True).returncode == 0
-    assert "下載 Deno" in proc.stdout and "準備 ffmpeg" in proc.stdout
+    assert proc.stdout.count("已安裝") == 2, "Deno and ffmpeg were installed again"
+    assert "ffmpeg（把影片和聲音合併成一個檔案）" in proc.stdout
 
 
-def test_mac_installer_does_not_call_it_done_when_the_check_finds_a_problem(tmp_path):
+def test_mac_installer_does_not_call_it_done_when_a_part_does_not_run(tmp_path):
     proc, _ = run_mac_installer(tmp_path, ffmpeg_body="exit 1\n")
     assert proc.returncode != 0
-    assert "✘" in proc.stdout and "ffmpeg 無法執行" in proc.stdout and "→" in proc.stdout
-    assert "安裝尚未完成" in proc.stdout and "安裝完成！" not in proc.stdout
+    assert "安裝失敗" in proc.stdout and "ffmpeg 已下載，但無法執行" in proc.stdout and "安裝完成！" not in proc.stdout
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed")
@@ -305,7 +307,7 @@ def test_mac_installer_works_when_piped_into_bash_like_the_one_line_command(tmp_
     assert subprocess.run([str(bin_dir / "yt-dlp"), "--version"], capture_output=True, text=True).stdout.strip() == "2099.01.01"
     (tmp_path / "broken").mkdir()
     broken, _ = run_mac_installer(tmp_path / "broken", piped=True, ffmpeg_body="exit 1\n")
-    assert broken.returncode != 0 and "安裝尚未完成" in broken.stdout
+    assert broken.returncode != 0 and "安裝失敗" in broken.stdout and "安裝完成！" not in broken.stdout
 
 
 def test_the_windows_bootstrap_does_not_break_on_an_apostrophe_in_its_own_path():

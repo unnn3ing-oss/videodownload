@@ -8,6 +8,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -40,7 +41,9 @@ URL = {
     "deno_mac_arm": f"{_GH}/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip",
     "deno_mac_x64": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip",
     "ffmpeg_win": f"{_GH}/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
-    "ffmpeg_mac": "https://evermeet.cx/ffmpeg/getrelease/zip",
+    # Built for each chip (so Apple Silicon needs no Rosetta); a fixed release, so what is downloaded does not change under us.
+    "ffmpeg_mac_arm": f"{_GH}/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz",
+    "ffmpeg_mac_x64": f"{_GH}/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64.gz",
 }
 
 Run = Callable[[list], tuple]
@@ -146,10 +149,33 @@ def _verified_ytdlp_exe(bin_dir: Path, fetch_file_: Callable, fetch_text_: Calla
     os.replace(part, target)
 
 
+def _extract_gz(gz_path: Path, dest: Path) -> None:
+    tmp = dest.with_name(dest.name + ".part")
+    try:
+        with gzip.open(gz_path, "rb") as src, open(tmp, "wb") as out:
+            shutil.copyfileobj(src, out)
+    except (OSError, EOFError) as exc:
+        tmp.unlink(missing_ok=True)
+        raise SetupError(f"下載的壓縮檔損毀：{exc}") from exc
+    os.replace(tmp, dest)
+    dest.chmod(0o755)
+
+
+def _must_run(path: Path, arg: str, label: str, run: Run, hint: str = "") -> None:
+    """A part that was just installed has to run; if not, say which and why it might be."""
+    code, out, err = run([str(path), arg])
+    if code != 0:
+        detail = (err or out).strip()[-200:]
+        raise SetupError(f"{label} 已下載，但無法執行（結束碼 {code}）{('：' + detail) if detail else ''}。{hint}".rstrip())
+
+
 def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_file: Callable = fetch_file,
-                 fetch_text: Callable = fetch_text, machine: str | None = None, which: Callable = shutil.which,
+                 fetch_text: Callable = fetch_text, machine: str | None = None,
                  install_engine: Callable[[Path], str] = macos_engine.install) -> list[str]:
-    """yt-dlp, Deno and ffmpeg: each one is judged by whether it runs, and only what does not is (re)installed."""
+    """yt-dlp, Deno and ffmpeg: each one is judged by whether it runs, and only what does not is (re)installed.
+
+    Every part says what it is for and what it did, also when there was nothing to do.
+    """
     home = Path(home)
     bin_dir = home / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -157,17 +183,22 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
     done: list[str] = []
     win = platform.startswith("win")
     mac = platform == "darwin"
+    chip = machine or platform_module.machine()
     try:
         engine = bin_dir / _exe("yt-dlp", platform)
-        if doctor._check_engine(home, platform, run).status == "error":
-            step("下載 yt-dlp 並驗證校驗碼")
+        step("下載引擎 yt-dlp（真正下載影片的程式）")
+        if doctor._check_engine(home, platform, run).status != "error":
+            say("    已可使用，略過")
+        else:
             if mac:  # the unpacked build (see macos_engine): the single file one is blocked by macOS when Chrome starts it
+                say("    下載官方的免解壓縮版並核對校驗碼")
                 try:
                     say(f"    yt-dlp {install_engine(bin_dir)}")
                 except macos_engine.EngineInstallError as exc:
                     raise SetupError(f"yt-dlp 安裝失敗：{exc}") from exc
             elif win:
                 engine.unlink(missing_ok=True)
+                say("    下載官方的 yt-dlp.exe 並核對校驗碼")
                 _verified_ytdlp_exe(bin_dir, fetch_file, fetch_text)
                 if not _works(engine, "--version", run):  # its first start (virus scan, unpacking) is slow: it happens here, not in the self test
                     raise SetupError("下載的 yt-dlp.exe 無法啟動：可能被防毒軟體攔截。請暫時允許 " + str(engine) + " 後重新執行安裝檔。")
@@ -176,29 +207,38 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
             done.append("yt-dlp")
 
         deno = bin_dir / _exe("deno", platform)
-        if not _works(deno, "--version", run):
-            step("下載 Deno（YouTube 解題需要）")
+        step("Deno（YouTube 解題需要的 JavaScript 執行環境）")
+        if _works(deno, "--version", run):
+            say("    已可使用，略過")
+        else:
             deno.unlink(missing_ok=True)
-            if win:
-                url = URL["deno_win"]
-            else:
-                url = URL["deno_mac_arm"] if (machine or platform_module.machine()) == "arm64" else URL["deno_mac_x64"]
+            url = URL["deno_win"] if win else URL["deno_mac_arm"] if chip == "arm64" else URL["deno_mac_x64"]
             archive = work / "deno.zip"
             fetch_file(url, archive)
             _extract_member(archive, _exe("deno", platform), deno)
+            _must_run(deno, "--version", "Deno", run)
+            say("    已安裝")
             done.append("Deno")
 
         ffmpeg = bin_dir / _exe("ffmpeg", platform)
-        if not _works(ffmpeg, "-version", run):
-            step("準備 ffmpeg")
+        step("ffmpeg（把影片和聲音合併成一個檔案）")
+        if not ffmpeg.is_symlink() and _works(ffmpeg, "-version", run):  # (a link to somebody else's copy breaks when that one is removed)
+            say("    已可使用，略過")
+        else:
+            if ffmpeg.is_symlink():
+                say("    這是連到別處的連結，改成這裡自己的一份（別處的 ffmpeg 被移除時才不會壞掉）")
             ffmpeg.unlink(missing_ok=True)
-            found = None if win else which("ffmpeg")
-            if found:
-                ffmpeg.symlink_to(found)
-            else:
+            if win:
                 archive = work / "ffmpeg.zip"
-                fetch_file(URL["ffmpeg_win"] if win else URL["ffmpeg_mac"], archive)
-                _extract_member(archive, _exe("ffmpeg", platform), ffmpeg)
+                fetch_file(URL["ffmpeg_win"], archive)
+                _extract_member(archive, "ffmpeg.exe", ffmpeg)
+            else:
+                archive = work / "ffmpeg.gz"
+                fetch_file(URL["ffmpeg_mac_arm"] if chip == "arm64" else URL["ffmpeg_mac_x64"], archive)
+                _extract_gz(archive, ffmpeg)
+            _must_run(ffmpeg, "-version", "ffmpeg", run,
+                      "Apple Silicon 若出現 bad CPU type，先在終端機執行 softwareupdate --install-rosetta，再重新執行安裝檔。" if mac else "")
+            say("    已安裝")
             done.append("ffmpeg")
     finally:
         shutil.rmtree(work, ignore_errors=True)

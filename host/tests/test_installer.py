@@ -48,10 +48,13 @@ class Net:
 
 
 def runs_ok(code_for=None):
-    """A `run` that answers by program name; default 0 with a version-like output."""
+    """A `run` that answers by program name (default 0); a file that holds the text "broken" never runs."""
     def run(cmd):
         name = Path(cmd[0]).name
+        path = Path(cmd[0])
         code = (code_for or {}).get(name, 0)
+        if path.exists() and not path.is_symlink() and path.read_bytes()[:6] == b"broken":
+            code = 3
         return code, "ok 1.0\n" if code == 0 else "", "" if code == 0 else "broken"
     return run
 
@@ -105,42 +108,76 @@ def test_a_part_that_exists_but_does_not_run_is_replaced(tmp_path):
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin/deno.exe").write_text("broken")
     net = win_net()
-    done = setup.ensure_tools(tmp_path, "win32", run=runs_ok({"deno.exe": 3}), fetch_file=net.file, fetch_text=net.text)
+    done = setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
     assert "Deno" in done
     assert (tmp_path / "bin/deno.exe").read_text() == "deno"
+
+
+def gz_bytes(text: str) -> bytes:
+    import gzip
+    return gzip.compress(text.encode())
 
 
 def mac_net():
     return Net({
         "deno-aarch64-apple-darwin.zip": zip_bytes({"deno": "deno-arm"}),
         "deno-x86_64-apple-darwin.zip": zip_bytes({"deno": "deno-x64"}),
-        "evermeet.cx/ffmpeg": zip_bytes({"ffmpeg": "ffmpeg-mac"}),
+        "ffmpeg-darwin-arm64.gz": gz_bytes("ffmpeg-arm"),
+        "ffmpeg-darwin-x64.gz": gz_bytes("ffmpeg-x64"),
     })
 
 
-@pytest.mark.parametrize("machine, body", [("arm64", "deno-arm"), ("x86_64", "deno-x64")])
-def test_mac_tools_use_the_unpacked_engine_and_the_deno_for_this_chip(tmp_path, machine, body):
+@pytest.mark.parametrize("machine, deno_body, ffmpeg_body", [("arm64", "deno-arm", "ffmpeg-arm"), ("x86_64", "deno-x64", "ffmpeg-x64")])
+def test_mac_tools_use_the_unpacked_engine_and_deno_and_ffmpeg_built_for_this_chip(tmp_path, machine, deno_body, ffmpeg_body):
     net = mac_net()
     engines = []
-    done = setup.ensure_tools(tmp_path, "darwin", run=runs_ok({"deno": 127, "ffmpeg": 127, "yt-dlp": 127}),
-                              fetch_file=net.file, fetch_text=net.text, machine=machine, which=lambda name: None,
+    done = setup.ensure_tools(tmp_path, "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine=machine,
                               install_engine=lambda bin_dir: engines.append(Path(bin_dir)) or "2099.01.01")
     assert engines == [tmp_path / "bin"]
     assert sorted(done) == ["Deno", "ffmpeg", "yt-dlp"]
-    assert (tmp_path / "bin/deno").read_text() == body
+    assert (tmp_path / "bin/deno").read_text() == deno_body and (tmp_path / "bin/ffmpeg").read_text() == ffmpeg_body
     assert os.access(tmp_path / "bin/deno", os.X_OK) and os.access(tmp_path / "bin/ffmpeg", os.X_OK)
 
 
-def test_mac_uses_the_ffmpeg_that_is_already_on_the_computer(tmp_path):
-    system_ffmpeg = tmp_path / "usr/ffmpeg"
+def test_mac_ffmpeg_is_downloaded_even_when_one_is_installed_elsewhere_and_an_old_link_to_it_is_replaced(tmp_path):
+    system_ffmpeg = tmp_path / "brew/ffmpeg"
     system_ffmpeg.parent.mkdir()
     system_ffmpeg.write_text("#!/bin/sh\necho ffmpeg\n")
+    system_ffmpeg.chmod(0o755)
+    (tmp_path / "home/bin").mkdir(parents=True)
+    (tmp_path / "home/bin/ffmpeg").symlink_to(system_ffmpeg)  # what an earlier installer left: it breaks when that one is uninstalled
     net = mac_net()
-    setup.ensure_tools(tmp_path / "home", "darwin", run=runs_ok({"ffmpeg": 127 if not (tmp_path / "home/bin/ffmpeg").exists() else 0}),
-                       fetch_file=net.file, fetch_text=net.text, machine="arm64", which=lambda name: str(system_ffmpeg),
-                       install_engine=lambda bin_dir: "1")
-    assert (tmp_path / "home/bin/ffmpeg").is_symlink()
-    assert not any("evermeet" in url for url in net.asked)
+    done = setup.ensure_tools(tmp_path / "home", "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine="arm64",
+                              install_engine=lambda bin_dir: "1")
+    assert "ffmpeg" in done
+    target = tmp_path / "home/bin/ffmpeg"
+    assert not target.is_symlink() and target.read_text() == "ffmpeg-arm", "its own copy, not a link"
+    assert system_ffmpeg.read_text() == "#!/bin/sh\necho ffmpeg\n", "the one elsewhere is not touched"
+
+
+def test_a_tool_that_still_does_not_run_after_it_was_installed_stops_the_install_with_the_reason(tmp_path, capsys):
+    net = mac_net()
+    with pytest.raises(SetupError, match="ffmpeg.*無法執行"):
+        setup.ensure_tools(tmp_path, "darwin", run=runs_ok({"ffmpeg": 86}), fetch_file=net.file, fetch_text=net.text, machine="arm64",
+                           install_engine=lambda bin_dir: "1")
+
+
+def test_every_step_says_what_it_is_for_and_what_it_did_also_when_it_had_nothing_to_do(tmp_path, capsys):
+    (tmp_path / "bin").mkdir()
+    for name in ("yt-dlp.exe", "deno.exe", "ffmpeg.exe"):
+        (tmp_path / "bin" / name).write_text("works")
+    setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=lambda *a: None, fetch_text=lambda *a: "")
+    out = capsys.readouterr().out
+    assert out.count("已可使用，略過") == 3
+    for header in ("yt-dlp（真正下載影片的程式）", "Deno（YouTube 解題需要", "ffmpeg（把影片和聲音合併成一個檔案）"):
+        assert header in out, header
+
+
+def test_the_ffmpeg_step_explains_what_it_is_for_and_what_it_did(tmp_path, capsys):
+    net = mac_net()
+    setup.ensure_tools(tmp_path, "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine="arm64", install_engine=lambda b: "1")
+    section = capsys.readouterr().out.split("==> ffmpeg")[1]
+    assert "把影片和聲音合併成一個檔案" in section.splitlines()[0] and "已安裝" in section
 
 
 # ---------------------------------------------------------------- registering with Chrome
@@ -428,7 +465,7 @@ def test_an_old_single_file_yt_dlp_on_a_mac_is_replaced_even_though_it_runs(tmp_
     (tmp_path / "bin/yt-dlp").write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 8)  # a compiled Mac program: Chrome cannot start it
     net = mac_net()
     engines = []
-    setup.ensure_tools(tmp_path, "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine="arm64", which=lambda n: None,
+    setup.ensure_tools(tmp_path, "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine="arm64",
                        install_engine=lambda bin_dir: engines.append(bin_dir) or "1")
     assert engines == [tmp_path / "bin"]
 
