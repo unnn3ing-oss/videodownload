@@ -47,11 +47,11 @@ test("the side panel may also run updates", () => {
 test("the allowlists are exactly the documented sets", () => {
   assert.deepEqual([...WEB_ALLOWED].sort(), [
     "deploy_installer", "doctor", "get_status", "ping", "queue_add", "queue_copy_text", "queue_download_cover", "queue_get",
-    "queue_remove", "queue_retry", "queue_start", "queue_stop", "set_output_dir", "settings_set", "start",
+    "queue_remove", "queue_retry", "queue_start", "queue_stop", "set_output_dir", "settings_set", "start", "update_apply", "update_info",
   ]);
   assert.deepEqual([...PANEL_ALLOWED].sort(), [
     "deploy_installer", "doctor", "get_status", "queue_add", "queue_copy_text", "queue_download_cover",
     "queue_get", "queue_remove", "queue_retry", "queue_start", "queue_stop", "set_output_dir",
-    "settings_set", "start", "update_check", "update_commit", "update_engine", "update_rollback", "update_stage",
+    "settings_set", "start", "update_apply", "update_check", "update_commit", "update_engine", "update_info", "update_rollback", "update_stage",
   ]);
 });

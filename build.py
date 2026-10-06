@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import stat
 import sys
 import zipfile
@@ -13,20 +14,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 HOST_NAME = "com.ytdl.batch_downloader"  # must match extension/lib/constants.js (tests enforce)
-VERSION = "0.1.0"
+VERSION = re.search(r'VERSION = "([^"]+)"', (ROOT / "host" / "version.py").read_text(encoding="utf-8")).group(1)
 OUT = ROOT / "extension" / "installers"
 TEMPLATES = ROOT / "installers" / "templates"
 
-_GH = "https://github.com"
+# The only address the installers themselves need: the Python they run host/installer.py with on Windows (a Mac has one).
+# Every other download address lives in host/installer.py, so it can be fixed without a new installer.
 DEPS = {
     "URL_PYTHON_WIN": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
-    "URL_YTDLP_WIN": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-    "URL_YTDLP_SUMS": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
-    "URL_DENO_WIN": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip",
-    "URL_DENO_MAC_ARM": f"{_GH}/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip",
-    "URL_DENO_MAC_X64": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip",
-    "URL_FFMPEG_WIN": f"{_GH}/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
-    "URL_FFMPEG_MAC": "https://evermeet.cx/ffmpeg/getrelease/zip",
 }
 _ZIP_DATE = (1980, 1, 1, 0, 0, 0)  # fixed so output is reproducible
 
@@ -62,10 +57,28 @@ def payload_b64() -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _extension_files() -> list[Path]:
+    root = ROOT / "extension"
+    skipped = {"tests", "installers", "__pycache__"}  # (the installers would contain themselves)
+    return sorted(p for p in root.rglob("*") if p.is_file() and not skipped & set(p.relative_to(root).parts))
+
+
+def extension_b64() -> str:
+    """The extension's files (what the browser loads), for the installer to put in the person's folder."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in _extension_files():
+            info = zipfile.ZipInfo(path.relative_to(ROOT / "extension").as_posix(), _ZIP_DATE)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            z.writestr(info, path.read_bytes())
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def _render(template: str) -> str:
     text = (TEMPLATES / template).read_text(encoding="utf-8")
     values = {**DEPS, "HOST_NAME": HOST_NAME, "EXT_ID": extension_id(read_manifest_key()),
-              "VERSION": VERSION, "PAYLOAD_B64": payload_b64()}
+              "VERSION": VERSION, "PAYLOAD_B64": payload_b64(), "EXTENSION_B64": extension_b64()}
     for name, value in values.items():
         text = text.replace(f"@@{name}@@", value)
     if "@@" in text:

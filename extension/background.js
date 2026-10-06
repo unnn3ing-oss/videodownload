@@ -4,6 +4,7 @@ import { HOST_NAME } from "./lib/constants.js";
 import { classifyConnectError } from "./lib/platform.js";
 import { downloadInstaller } from "./lib/installer.js";
 import { checkLatest } from "./lib/updater.js";
+import { applyUpdate, collectUpdateInfo } from "./lib/update-pipeline.js";
 import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
 import { classifySender, isAllowed } from "./lib/messages.js";
@@ -179,7 +180,58 @@ async function runDoctor(msg) {
   }
 }
 
+// ---- "check for updates" and "update to the latest", for the web page and the side panel ----
+let updating = false;
+
+const hostRequestIfConnected = () => (host.connected() ? (message, timeout) => host.request(message, timeout) : null);
+
+async function currentUpdateInfo() {
+  const { version, key } = chrome.runtime.getManifest();
+  return collectUpdateInfo({ hostRequest: hostRequestIfConnected(), version, key });
+}
+
+async function checkForUpdate() {
+  try {
+    const info = await currentUpdateInfo();
+    await saveSummary(summarizeCheck(info)).catch(() => {});
+    await applyBadge(info.hasUpdate).catch(() => {});
+    return {
+      ok: true,
+      info: {
+        current: info.current, latestVersion: info.latestVersion, sha: info.sha, date: info.date, message: info.message,
+        extCount: info.extChanged.length, hostCount: info.hostChanged.length, hostChecked: info.hostChecked,
+        canUpdateHere: info.extChanged.length === 0 || Boolean(info.extensionFolder), hasUpdate: info.hasUpdate,
+      },
+    };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+async function runUpdateNow(msg) {
+  if (updating) return { ok: false, error: "正在更新中" };
+  if (!host.connected()) return { ok: false, error: "請先讓本機小程式連線（按「啟動」），再更新" };
+  updating = true;
+  const progress = (p) => { const m = { type: "update_progress", ...p }; chrome.runtime.sendMessage(m).catch(() => {}); postToWeb(m); };
+  try {
+    const info = await currentUpdateInfo();
+    if (typeof msg.sha === "string" && msg.sha !== info.sha) return { ok: false, error: "GitHub 上又有更新的版本了，請再按一次「檢查更新」" };
+    if (!info.hasUpdate) return { ok: true, nothing: true };
+    const result = await applyUpdate({ info, hostRequest: (message, timeout) => host.request(message, timeout), key: info.key, onProgress: progress });
+    setTimeout(() => chrome.runtime.reload(), 800); // (after the answer below has gone out; it also restarts the host on its new files)
+    return { ok: true, ...result, latestVersion: info.latestVersion, reloading: true };
+  } catch (error) {
+    return { ok: false, error: error.message, code: error.code ?? null };
+  } finally {
+    updating = false;
+  }
+}
+
+// While an update runs nothing else may touch the same files (the host's staging folder, the extension's own files).
+const UPDATE_WORK = new Set(["update_info", "update_check", "update_stage", "update_commit", "update_rollback"]);
+
 async function handle(msg) {
+  if (updating && UPDATE_WORK.has(msg.type)) return { ok: false, error: "正在更新中，請稍候" };
   const controller = await controllerReady;
   switch (msg.type) {
     case "ping": return { ok: true, pong: true };
@@ -196,6 +248,8 @@ async function handle(msg) {
     case "settings_set": controller.setSettings(msg.settings); return { ok: true };
     case "deploy_installer": return deployInstaller();
     case "doctor": return runDoctor(msg);
+    case "update_info": return checkForUpdate();
+    case "update_apply": return runUpdateNow(msg);
     default: break;
   }
   if (msg.type === "set_output_dir") return setOutputDir(msg.path);

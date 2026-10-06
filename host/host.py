@@ -11,7 +11,9 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Callable
 
+import extupdate
 import selfupdate
+from install_record import recorded_extension_folder
 from config import ConfigStore
 from covers import CoverError, save_cover
 from jobs import JobRunner
@@ -24,7 +26,7 @@ import macos_engine
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta", "enqueue", "remove", "doctor"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "update_ext", "update_ext_rollback", "save_cover", "meta", "enqueue", "remove", "doctor"}
 MAX_LIMIT = 1000
 MAX_COOLDOWN = 300
 
@@ -255,7 +257,9 @@ class Host:
             self._update_error(msg, exc)
             return
         changed = selfupdate.changed_files(self.home / "host", files)
-        self._reply(msg, {"type": "update_status", "changed": changed, "total": len(files)})
+        folder = recorded_extension_folder(self.home)
+        self._reply(msg, {"type": "update_status", "changed": changed, "total": len(files),
+                          "extensionFolder": str(folder) if folder else None})
 
     def _on_update_stage(self, msg: dict) -> None:
         if self._busy(msg):
@@ -297,6 +301,48 @@ class Host:
             self._update_error(msg, exc)
             return
         self._reply(msg, {"type": "update_rolled_back"})
+
+    def _on_update_ext(self, msg: dict) -> None:
+        if self._busy(msg):
+            return
+        files, raw = msg.get("files"), msg.get("contents")
+        if not isinstance(raw, dict):
+            self._error(msg, "update_bad_file", "更新內容格式不正確")
+            return
+        decoded = {}
+        for name, value in raw.items():
+            try:
+                if not isinstance(value, str):
+                    raise ValueError("not text")
+                decoded[name] = base64.b64decode(value, validate=True)
+            except ValueError:
+                self._error(msg, "update_bad_file", f"{name} 的內容不是有效的編碼")
+                return
+
+        def work() -> None:
+            try:
+                count = extupdate.apply(self.home, files, decoded)
+            except extupdate.ExtUpdateError as exc:
+                payload = {"type": "error", "code": exc.code, "message": exc.message}
+                if exc.rolled_back:
+                    payload["rolledBack"] = True
+                self._reply(msg, payload)
+                return
+            except Exception as exc:  # (a thread that dies silently leaves the extension waiting for its answer)
+                self._error(msg, "internal", f"更新擴充功能失敗：{exc}")
+                return
+            folder = recorded_extension_folder(self.home)
+            self._reply(msg, {"type": "update_ext_applied", "count": count, "folder": str(folder)})
+
+        self._background(work)
+
+    def _on_update_ext_rollback(self, msg: dict) -> None:
+        try:
+            extupdate.rollback(self.home)
+        except extupdate.ExtUpdateError as exc:
+            self._error(msg, exc.code, exc.message)
+            return
+        self._reply(msg, {"type": "update_ext_rolled_back"})
 
     def _on_doctor(self, msg: dict) -> None:
         ext = msg.get("extensionId")

@@ -42,7 +42,7 @@ test("mapTree maps extension and host files and applies exclusions", () => {
     { path: "host/notes.txt", type: "blob", sha: h("3"), size: 5 },
     { path: "tests/test_build.py", type: "blob", sha: h("4"), size: 5 },
   ]);
-  assert.deepEqual(out.extension.map((e) => e.path), ["manifest.json", "lib/updater.js", "installers/install-mac.zip"]);
+  assert.deepEqual(out.extension.map((e) => e.path), ["manifest.json", "lib/updater.js"]);
   assert.deepEqual(out.extension[0], { path: "manifest.json", repoPath: "extension/manifest.json", sha: h("c"), size: 100 });
   assert.deepEqual(out.host, [{ path: "host.py", sha: h("1"), size: 50 }]);
 });

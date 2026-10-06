@@ -3,6 +3,7 @@
 // asks Chrome to download a chrome-extension:// address itself, Chrome fails the download with NETWORK_FAILED.
 import { installerFor } from "./platform.js";
 import { toBase64 } from "./base64.js";
+import { WEB_ORIGIN, WEB_PATH } from "./constants.js";
 
 const MIME = { ".zip": "application/zip" };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -32,13 +33,20 @@ export async function downloadInstaller({ runtime, downloads, fetchFn = fetch, p
   const installer = installerFor(info.os);
   if (!installer) return { ok: false, error: "目前只支援 Windows 與 Mac" };
   const name = installer.file.split("/").pop();
-  let bytes;
-  try {
-    const response = await fetchFn(runtime.getURL(installer.file));
-    if (!response.ok) throw new Error(String(response.status));
-    bytes = new Uint8Array(await response.arrayBuffer());
-  } catch {
-    return { ok: false, error: `找不到安裝檔（${name}）。請回到網頁版的步驟 2 重新部署擴充功能，再試一次。` };
+  // The extension's own copy when it has one; the installer puts the extension in a folder without the installers
+  // (they contain the extension), so then the copy on the web page, which always is the latest.
+  let bytes = null;
+  for (const url of [runtime.getURL(installer.file), `${WEB_ORIGIN}${WEB_PATH}extension/${installer.file}`]) {
+    try {
+      const response = await fetchFn(url);
+      if (response.ok) {
+        bytes = new Uint8Array(await response.arrayBuffer());
+        break;
+      }
+    } catch { /* try the next place */ }
+  }
+  if (!bytes) {
+    return { ok: false, error: `找不到安裝檔（${name}）。請到網頁版重新下載安裝檔，或把擴充功能更新到最新版再試一次。` };
   }
   const mime = MIME[name.slice(name.lastIndexOf("."))] ?? "application/octet-stream";
   try {

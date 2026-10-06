@@ -10,7 +10,7 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
   let nextId = 1;
   const pending = new Map();
   let version = null; // the extension's version, from its hello
-  const listeners = { change: [], state: [], status: [], version: [] };
+  const listeners = { change: [], state: [], status: [], version: [], progress: [] };
   const emit = (kind, value) => listeners[kind].forEach((callback) => callback(value));
 
   function setDetected(value) {
@@ -39,6 +39,7 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
     }
     if (data.push?.type === "queue_state") emit("state", data.push.state);
     if (data.push?.type === "status") emit("status", data.push);
+    if (data.push?.type === "update_progress") emit("progress", data.push);
     if (data.id !== undefined && pending.has(data.id)) {
       const { resolve, timer } = pending.get(data.id);
       clearTimeout(timer);
@@ -67,6 +68,7 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
     onChange: (callback) => listeners.change.push(callback),
     onState: (callback) => listeners.state.push(callback),
     onStatus: (callback) => listeners.status.push(callback),
+    onProgress: (callback) => listeners.progress.push(callback),
     request(message, timeoutMs = 20000) {
       if (!detected) return Promise.reject(new Error("尚未偵測到擴充功能"));
       const id = nextId++;

@@ -9,9 +9,10 @@ export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 export class UpdateError extends Error {
-  constructor(message) {
+  constructor(message, code = null) {
     super(message);
     this.name = "UpdateError";
+    this.code = code;
   }
 }
 

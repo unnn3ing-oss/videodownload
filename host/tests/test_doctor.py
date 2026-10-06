@@ -235,7 +235,7 @@ def new_host(tmp_path):
 
 def test_the_host_answers_a_doctor_request_with_the_checks(tmp_path, monkeypatch):
     h, events = new_host(tmp_path)
-    monkeypatch.setattr(doctor, "_default_manifest", lambda platform: manifest(tmp_path))
+    monkeypatch.setattr(doctor, "default_manifest", lambda platform: manifest(tmp_path))
     h.handle({"type": "doctor", "reqId": 3, "extensionId": "abc"})
     h.wait(30)
     [reply] = events
@@ -248,7 +248,7 @@ def test_the_host_answers_a_doctor_request_with_the_checks(tmp_path, monkeypatch
 
 def test_a_doctor_request_with_fix_repairs_first_and_checks_afterwards(tmp_path, monkeypatch):
     h, events = new_host(tmp_path)
-    monkeypatch.setattr(doctor, "_default_manifest", lambda platform: manifest(tmp_path))
+    monkeypatch.setattr(doctor, "default_manifest", lambda platform: manifest(tmp_path))
     seen = []
     monkeypatch.setattr(host_mod.doctor, "repair", lambda home, **kw: seen.append(home) or ["已建立存放資料夾"])
     h.handle({"type": "doctor", "fix": True})
@@ -258,7 +258,29 @@ def test_a_doctor_request_with_fix_repairs_first_and_checks_afterwards(tmp_path,
 
 def test_garbage_in_a_doctor_request_does_not_break_it(tmp_path, monkeypatch):
     h, events = new_host(tmp_path)
-    monkeypatch.setattr(doctor, "_default_manifest", lambda platform: manifest(tmp_path))
+    monkeypatch.setattr(doctor, "default_manifest", lambda platform: manifest(tmp_path))
     h.handle({"type": "doctor", "extensionId": {"x": 1}, "fix": "yes"})
     h.wait(30)
     assert events[0]["type"] == "doctor" and events[0]["fixed"] == []
+
+
+# ---------------------------------------------------------------- the extension's folder (when the installer put it there)
+
+def test_no_install_record_means_no_extension_folder_line(tmp_path):
+    home = make_home(tmp_path)
+    checks = diagnose(home, native_manifest=manifest(tmp_path / "m"), output_dir=tmp_path / "out", run=Fake(), platform="linux", network=False)
+    assert "extension" not in by_id(checks)
+
+
+def test_the_recorded_extension_folder_is_checked(tmp_path):
+    from install_record import EXTENSION_NAME, write_record
+    home = make_home(tmp_path)
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    write_record(home, extension_folder=ext, version="1")
+    common = dict(native_manifest=manifest(tmp_path / "m"), output_dir=tmp_path / "out", run=Fake(), platform="linux", network=False)
+    gone = by_id(diagnose(home, **common))["extension"]
+    assert gone.status == "warn" and str(ext) in gone.detail and "重新執行安裝檔" in gone.fix
+    (ext / "manifest.json").write_text(json.dumps({"name": EXTENSION_NAME}))
+    fine = by_id(diagnose(home, **common))["extension"]
+    assert fine.status == "ok" and str(ext) in fine.detail

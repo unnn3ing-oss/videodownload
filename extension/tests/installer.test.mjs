@@ -65,8 +65,18 @@ test("an extension folder without the installer says so, and says what to do", a
   const { env, calls } = setup({ status: 404 });
   const result = await downloadInstaller(env);
   assert.equal(result.ok, false);
-  assert.match(result.error, /找不到安裝檔.*重新部署/);
+  assert.match(result.error, /找不到安裝檔.*網頁版/);
   assert.deepEqual(calls.downloaded, []);
+  assert.equal(calls.fetched.length, 2, "its own copy, then the one on the web page");
+});
+
+test("an extension folder that the installer wrote (no installers in it) gets the installer from the web page", async () => {
+  const { env, calls } = setup();
+  const real = env.fetchFn;
+  env.fetchFn = async (url) => (url.startsWith("chrome-extension://") ? (calls.fetched.push(url), { ok: false, status: 404 }) : real(url));
+  assert.deepEqual(await downloadInstaller(env), { ok: true, os: "mac", name: "install-mac.zip", pending: false });
+  assert.deepEqual(calls.fetched, ["chrome-extension://abc/installers/install-mac.zip", "https://unnn3ing-oss.github.io/videodownload/extension/installers/install-mac.zip"]);
+  assert.deepEqual(decode(calls.downloaded[0].url), BYTES);
 });
 
 test("success is reported only after Chrome has finished the download", async () => {
