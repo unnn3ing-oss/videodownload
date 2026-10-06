@@ -198,6 +198,34 @@ test("stop does not trigger a restart", async () => {
   assert.equal(ctl.getState().running, false);
 });
 
+test("stop pressed while the start request is still in flight cancels the job as soon as it has started", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  host.replies.download = async () => {
+    ctl.stop(); // the host has not answered yet: nothing is running as far as the list knows
+    assert.deepEqual(host.sends, [], "nothing to cancel yet");
+    return { type: "started", jobId: "j" };
+  };
+  assert.deepEqual(await ctl.start(), { ok: true });
+  assert.deepEqual(host.sends, [{ type: "cancel" }]);
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { cancelled: true } });
+  await ctl.idle();
+  assert.equal(ctl.getState().running, false);
+  assert.equal(host.of("download").length, 1, "a cancelled job is not restarted");
+});
+
+test("a stop that came during a start that failed does not cancel the next start", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  host.replies.download = async () => {
+    ctl.stop();
+    return { type: "error", code: "bad", message: "x" };
+  };
+  assert.equal((await ctl.start()).ok, false);
+  host.replies.download = { type: "started", jobId: "j2" };
+  assert.deepEqual(await ctl.start(), { ok: true });
+  assert.deepEqual(host.sends, []);
+  assert.equal(ctl.getState().running, true);
+});
+
 test("removing the earliest copy during a run enqueues the duplicate that was promoted", async () => {
   const { host, ctl } = await withVideos(["a", "b", "a"]);
   await ctl.start();

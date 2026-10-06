@@ -25,6 +25,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   let starting = false;
   let restartAfterDone = false;
   let stopRequested = false;
+  let stopAfterStart = false; // stop pressed while the start request was still waiting for the host's answer
 
   const commit = (next) => {
     state = next;
@@ -76,6 +77,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   async function startRun(items) {
     starting = true;
     stopRequested = false;
+    stopAfterStart = false;
     try {
       // "busy" while we think nothing runs means the host is still wrapping up the previous job: wait a moment.
       for (let attempt = 0; ; attempt += 1) {
@@ -93,13 +95,20 @@ export function createController({ host, save, notify, fetchFn = fetch, download
         if (attempt >= 2) return fail(event.message ?? "無法開始下載");
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
+      if (stopAfterStart) cancelJob(); // the job exists now, so there is something to cancel
     } catch (error) {
       return fail(error.message);
     } finally {
       starting = false;
+      stopAfterStart = false;
     }
     syncRun();
     return { ok: true };
+  }
+
+  function cancelJob() {
+    stopRequested = true;
+    try { host.send({ type: "cancel" }); } catch { /* host gone */ }
   }
 
   // While a job runs, anything that became startable (new rows, retries, promoted duplicates) joins it.
@@ -183,9 +192,8 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     },
 
     stop() {
-      if (!state.running) return;
-      stopRequested = true;
-      try { host.send({ type: "cancel" }); } catch { /* host gone */ }
+      if (state.running) cancelJob();
+      else if (starting) stopAfterStart = true;
     },
 
     setSettings(patch) {
