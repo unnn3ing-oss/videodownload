@@ -28,12 +28,9 @@ step "寫入本機小程式"
 printf '%s' "$PAYLOAD" | "$PY" -c 'import base64, io, sys, zipfile; zipfile.ZipFile(io.BytesIO(base64.b64decode(sys.stdin.read()))).extractall(sys.argv[1])' "$HOME_DIR/host"
 
 step "下載 yt-dlp 並驗證校驗碼"
-curl -fL --retry 3 -o "$HOME_DIR/bin/yt-dlp" "@@URL_YTDLP_MAC@@" || fail "yt-dlp 下載失敗"
-SUMS="$(curl -fsSL "@@URL_YTDLP_SUMS@@")" || fail "無法取得 yt-dlp 的校驗碼清單"
-EXPECTED="$(printf '%s\n' "$SUMS" | grep -E '[[:space:]]\*?yt-dlp_macos$' | awk '{print $1}' | head -n 1 || true)"
-ACTUAL="$(shasum -a 256 "$HOME_DIR/bin/yt-dlp" | awk '{print $1}')"
-[ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || fail "yt-dlp 校驗碼不符，檔案可能損毀，請重新執行"
-chmod +x "$HOME_DIR/bin/yt-dlp"
+# The unpacked ("onedir") build, unpacked here once: the single-file build unpacks itself on every run, and when Chrome
+# starts the host macOS marks those files "downloaded by Chrome" and refuses to load them ("Python.framework is damaged").
+"$PY" "$HOME_DIR/host/macos_engine.py" install "$HOME_DIR/bin" || fail "yt-dlp 安裝失敗（原因請看上面的訊息）"
 
 if [ ! -x "$HOME_DIR/bin/deno" ]; then
   step "下載 Deno（YouTube 解題需要）"

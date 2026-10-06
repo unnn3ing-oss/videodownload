@@ -18,12 +18,17 @@ from protocol import BadMessage, ProtocolError, read_message, write_message
 from quality import parse_quality
 from security import VIDEO_ID, is_allowed_url
 from version import VERSION
+import macos_engine
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
            "update_check", "update_stage", "update_commit", "update_rollback", "save_cover", "meta", "enqueue", "remove"}
 MAX_LIMIT = 1000
 MAX_COOLDOWN = 300
+
+
+def _uses_macos_engine() -> bool:
+    return sys.platform == "darwin"
 
 
 def locate_engine(home: Path) -> Engine:
@@ -292,18 +297,24 @@ class Host:
         self._reply(msg, {"type": "update_rolled_back"})
 
     def _on_update_engine(self, msg: dict) -> None:
-        if not self._engine_present():
+        # On a Mac the engine is the unpacked build, which cannot update itself (`-U`): it is installed again instead,
+        # which also replaces a broken or single-file install.
+        mac = _uses_macos_engine()
+        if not mac and not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
             return
 
         def work() -> None:
             try:
-                code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
+                if mac:
+                    macos_engine.install(self.engine.ytdlp.parent)
+                else:
+                    code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
+                    if code != 0:
+                        self._error(msg, "update_failed", f"更新失敗：{(err or out).strip()[-200:]}")
+                        return
             except Exception as exc:
                 self._error(msg, "update_failed", f"更新失敗：{exc}")
-                return
-            if code != 0:
-                self._error(msg, "update_failed", f"更新失敗：{(err or out).strip()[-200:]}")
                 return
             self._reply(msg, {"type": "engine_updated", "ytdlpVersion": self._version()})
 

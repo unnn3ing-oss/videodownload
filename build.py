@@ -21,7 +21,6 @@ _GH = "https://github.com"
 DEPS = {
     "URL_PYTHON_WIN": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
     "URL_YTDLP_WIN": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-    "URL_YTDLP_MAC": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos",
     "URL_YTDLP_SUMS": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
     "URL_DENO_WIN": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip",
     "URL_DENO_MAC_ARM": f"{_GH}/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip",

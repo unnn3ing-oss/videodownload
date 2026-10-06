@@ -122,23 +122,28 @@ while [ $# -gt 0 ]; do
 done
 case "$url" in
   *SHA2-256SUMS) if [ -f "$STUB_DIR/sums_ok" ]; then cat "$STUB_DIR/sums"; else exit 22; fi;;
-  *yt-dlp_macos) cp "$STUB_DIR/ytdlp" "$out";;
+  *yt-dlp_macos.zip) cp "$STUB_DIR/ytdlp.zip" "$out";;
   *deno*) cp "$STUB_DIR/deno.zip" "$out";;
   *) exit 22;;
 esac
 """
 
 
-def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n"):
+def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False):
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
     home, stub, bin_dir = tmp_path / "home", tmp_path / "stub", tmp_path / "bin"
     for d in (home, stub, bin_dir):
         d.mkdir()
-    ytdlp = stub / "ytdlp"
-    ytdlp.write_text("#!/bin/sh\n" + ytdlp_body)
-    (stub / "sums").write_text(f"{hashlib.sha256(ytdlp.read_bytes()).hexdigest()}  yt-dlp_macos\n")
+    with zipfile.ZipFile(stub / "ytdlp.zip", "w") as z:  # the unpacked ("onedir") yt-dlp build
+        exe = zipfile.ZipInfo("yt-dlp_macos")
+        exe.create_system = 3
+        exe.external_attr = (0o100000 | 0o755) << 16
+        z.writestr(exe, "#!/bin/sh\n" + ytdlp_body)
+        z.writestr("_internal/lib.txt", "needed at run time")
+    digest = "0" * 64 if wrong_sum else hashlib.sha256((stub / "ytdlp.zip").read_bytes()).hexdigest()
+    (stub / "sums").write_text(f"{digest}  yt-dlp_macos.zip\n")
     if sums_ok:
         (stub / "sums_ok").write_text("")
     with zipfile.ZipFile(stub / "deno.zip", "w") as z:
@@ -163,6 +168,17 @@ def test_mac_installer_happy_path(tmp_path):
     assert json.loads(manifest.read_text(encoding="utf-8"))["allowed_origins"] == [
         f"chrome-extension://{build.extension_id(KEY)}/"]
     assert os.access(home / "Library/Application Support/YTDownloader/host.sh", os.X_OK)
+    bin_dir = home / "Library/Application Support/YTDownloader/bin"
+    # yt-dlp is the unpacked build, started through a small launcher (nothing unpacks itself at run time)
+    assert (bin_dir / "yt-dlp_dir" / "yt-dlp_macos").is_file() and (bin_dir / "yt-dlp_dir" / "_internal" / "lib.txt").is_file()
+    assert subprocess.run([str(bin_dir / "yt-dlp"), "--version"], capture_output=True, text=True).stdout.strip() == "2099.01.01"
+    assert "exec " in (bin_dir / "yt-dlp").read_text() and not (bin_dir / "yt-dlp").read_bytes().startswith(b"\xcf\xfa")
+
+
+def test_mac_installer_does_not_use_the_single_file_yt_dlp():
+    script = mac_script(build.render_mac())
+    assert "macos_engine.py" in script
+    assert "releases/latest/download/yt-dlp_macos\"" not in script and "-o \"$HOME_DIR/bin/yt-dlp\"" not in script
 
 
 def test_mac_installer_reports_checksum_fetch_failure(tmp_path):
@@ -173,3 +189,9 @@ def test_mac_installer_reports_checksum_fetch_failure(tmp_path):
 def test_mac_installer_reports_unrunnable_ytdlp(tmp_path):
     proc, _ = run_mac_installer(tmp_path, ytdlp_body="exit 3\n")
     assert proc.returncode != 0 and "安裝失敗" in proc.stdout and "安裝完成" not in proc.stdout
+
+
+def test_mac_installer_rejects_a_download_whose_checksum_does_not_match(tmp_path):
+    proc, home = run_mac_installer(tmp_path, wrong_sum=True)
+    assert proc.returncode != 0 and "校驗碼不符" in proc.stdout and "安裝完成" not in proc.stdout
+    assert not (home / "Library/Application Support/YTDownloader/bin/yt-dlp").exists()
