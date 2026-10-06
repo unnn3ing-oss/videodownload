@@ -77,7 +77,7 @@ def _curl_download(url: str, dest: Path) -> bool:
     if sys.platform.startswith("win"):
         cmd.insert(1, "--ssl-no-revoke")
     try:
-        return subprocess.run(cmd, stdout=subprocess.DEVNULL, timeout=1800).returncode == 0
+        return subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=1800).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 

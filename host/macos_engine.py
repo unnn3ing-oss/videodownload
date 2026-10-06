@@ -42,7 +42,7 @@ def _tail(text: str) -> str:
 
 def _curl_text(url: str) -> str:
     try:
-        done = subprocess.run(["curl", "-fsSL", "--retry", "3", url], capture_output=True, text=True,
+        done = subprocess.run(["curl", "-fsSL", "--retry", "3", url], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EngineInstallError(f"無法取得 yt-dlp 的校驗碼清單：{exc}") from exc
@@ -53,7 +53,7 @@ def _curl_text(url: str) -> str:
 
 def _curl_file(url: str, dest: Path) -> None:
     try:
-        done = subprocess.run(["curl", "-fL", "--retry", "3", "-o", str(dest), url], stdout=subprocess.DEVNULL,
+        done = subprocess.run(["curl", "-fL", "--retry", "3", "-o", str(dest), url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                               timeout=_TIMEOUT)  # (curl's progress meter goes to stderr: visible in the installer)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EngineInstallError(f"yt-dlp 下載失敗：{exc}") from exc
@@ -65,7 +65,7 @@ def _unzip(zip_path: Path, dest: Path) -> None:
     # The system unzip, not zipfile: the build contains symbolic links and executable files, which zipfile would flatten.
     dest.mkdir(parents=True, exist_ok=True)
     try:
-        done = subprocess.run(["unzip", "-q", "-o", str(zip_path), "-d", str(dest)], capture_output=True, text=True,
+        done = subprocess.run(["unzip", "-q", "-o", str(zip_path), "-d", str(dest)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EngineInstallError(f"解壓縮 yt-dlp 失敗：{exc}") from exc
@@ -79,14 +79,14 @@ def _strip_quarantine(path: Path) -> None:
     if not xattr:  # not a Mac
         return
     try:
-        subprocess.run([xattr, "-dr", "com.apple.quarantine", str(path)], capture_output=True, timeout=300, check=False)
+        subprocess.run([xattr, "-dr", "com.apple.quarantine", str(path)], stdin=subprocess.DEVNULL, capture_output=True, timeout=300, check=False)
     except (OSError, subprocess.TimeoutExpired):
         pass  # the check below shows whether it still runs
 
 
 def _run_version(exe: Path) -> str:
     try:
-        done = subprocess.run([str(exe), "--version"], capture_output=True, text=True, encoding="utf-8",
+        done = subprocess.run([str(exe), "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EngineInstallError(f"下載的 yt-dlp 無法執行：{exc}") from exc

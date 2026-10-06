@@ -313,3 +313,11 @@ def test_mac_installer_works_when_piped_into_bash_like_the_one_line_command(tmp_
 def test_the_windows_bootstrap_does_not_break_on_an_apostrophe_in_its_own_path():
     text = build.render_windows()
     assert "$env:SELF" in text and "'%~f0'" not in text
+
+
+def test_both_installers_clear_the_cached_bytecode_before_the_host_is_laid_down():
+    # every file in the payload carries the same fixed date, so an old .pyc of the same size would pass for current
+    windows = build.render_windows()
+    assert windows.index('__pycache__') < windows.index('Expand-Archive -Force -Path $payload')
+    mac = mac_script(build.render_mac())
+    assert mac.index('rm -rf "$HOME_DIR/host/__pycache__"') < mac.index('extractall')

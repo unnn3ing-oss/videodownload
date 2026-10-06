@@ -103,6 +103,11 @@ def _rmtree(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+def _drop_bytecode(host_dir: Path) -> None:
+    """Python trusts a cached .pyc when the source's date and size match; a swapped-in file can match by accident."""
+    _rmtree(Path(host_dir) / "__pycache__")
+
+
 def _staged_names(staging: Path) -> list[str]:
     try:
         names = json.loads((staging / "_files.json").read_text(encoding="utf-8"))
@@ -123,7 +128,7 @@ def self_check(home: Path, python: str | None = None) -> None:
         for name in _staged_names(_staging(home)):
             shutil.copy2(_staging(home) / name, check / name)
         try:
-            done = subprocess.run([python or sys.executable, "-c", _CHECK_CODE, str(check)],
+            done = subprocess.run([python or sys.executable, "-c", _CHECK_CODE, str(check)], stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=30)
         except Exception as exc:
             raise UpdateError("update_selfcheck_failed", f"新版小程式無法檢查：{exc}") from exc
@@ -207,6 +212,7 @@ def _restore(home: Path) -> int:
     for name in added:
         (host_dir / name).unlink(missing_ok=True)
     (backup / "_backup.json").unlink(missing_ok=True)
+    _drop_bytecode(host_dir)
     return len(replaced) + len(added)
 
 
@@ -236,6 +242,7 @@ def commit_update(home: Path) -> int:
         except Exception:
             pass
         raise UpdateError("update_install_failed", f"安裝更新失敗，已還原：{exc}", rolled_back=True) from exc
+    _drop_bytecode(host_dir)
     _rmtree(staging)
     return len(names)
 

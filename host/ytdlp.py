@@ -163,7 +163,7 @@ def _popen_kwargs() -> dict:
 
 def run_capture(cmd: list[str]) -> tuple[int, str, str]:
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=600, **_popen_kwargs())
     except subprocess.TimeoutExpired:
         return 124, "", "timed out"
@@ -245,7 +245,7 @@ def fetch_meta(engine: Engine, url: str,
 
 def _kill_tree(proc: subprocess.Popen) -> None:
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL, capture_output=True,
                        creationflags=_CREATE_NO_WINDOW)
         return
     try:
@@ -259,7 +259,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 def stream_download(cmd: list[str], on_line: Callable[[str], None],
                     cancel: threading.Event) -> StreamResult:
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace", **_popen_kwargs())
     stderr_parts: list[str] = []
     drain = threading.Thread(target=lambda: stderr_parts.append(proc.stderr.read()), daemon=True)

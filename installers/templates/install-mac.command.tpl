@@ -20,6 +20,8 @@ fi
 echo "    $PY"
 
 mkdir -p "$HOME_DIR/host"
+# The files in the zip all carry the same fixed date, so an old __pycache__ would pass for current: drop it.
+rm -rf "$HOME_DIR/host/__pycache__"
 printf '%s' "$PAYLOAD" | "$PY" -c 'import base64, io, sys, zipfile; zipfile.ZipFile(io.BytesIO(base64.b64decode(sys.stdin.read()))).extractall(sys.argv[1])' "$HOME_DIR/host"
 printf '%s' "$EXTENSION" | "$PY" -c 'import base64, sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > "$HOME_DIR/extension.zip"
 

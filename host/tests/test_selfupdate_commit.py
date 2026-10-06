@@ -92,3 +92,27 @@ def test_only_one_previous_version_is_kept(tmp_path):
     put_staged(home, {"version.py": b"V = 3\n"})
     commit_update(home)
     assert (home / "backup" / "host" / "version.py").read_bytes() == b"V = 2\n"
+
+
+def plant_bytecode(home: Path) -> Path:
+    cache = home / "host" / "__pycache__"
+    cache.mkdir()
+    (cache / "version.cpython-312.pyc").write_bytes(b"stale")
+    return cache
+
+
+def test_commit_drops_cached_bytecode_so_a_same_size_file_is_not_run_from_an_old_cache(tmp_path):
+    home = make_home(tmp_path)
+    cache = plant_bytecode(home)
+    put_staged(home, {"version.py": b'VERSION = "9.9.9"\n'})
+    commit_update(home)
+    assert not cache.exists()
+
+
+def test_rollback_drops_cached_bytecode(tmp_path):
+    home = make_home(tmp_path)
+    put_staged(home, {"version.py": b'VERSION = "9.9.9"\n'})
+    commit_update(home)
+    cache = plant_bytecode(home)
+    rollback_update(home)
+    assert not cache.exists()

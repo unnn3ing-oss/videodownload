@@ -34,6 +34,8 @@ try {
     Step '寫入本機小程式'
     $payload = Join-Path $Tmp 'host.zip'
     [IO.File]::WriteAllBytes($payload, [Convert]::FromBase64String('@@PAYLOAD_B64@@'))
+    # The files in the zip all carry the same fixed date, so an old __pycache__ would pass for current: drop it.
+    Remove-Item -Recurse -Force -Path (Join-Path $HostDir '__pycache__') -ErrorAction SilentlyContinue
     Expand-Archive -Force -Path $payload -DestinationPath $HostDir
     [IO.File]::WriteAllBytes((Join-Path $Root 'extension.zip'), [Convert]::FromBase64String('@@EXTENSION_B64@@'))
 
