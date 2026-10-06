@@ -64,6 +64,10 @@
     <section class="card add">
       <div class="add-row">
         <input id="add-url" type="text" placeholder="貼上 YouTube 網址，按 Enter 或「增加」" spellcheck="false" autocomplete="off" aria-label="影片網址">
+        <div id="quality" class="segmented" role="radiogroup" aria-label="解析度">
+          <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
+          <label><input type="radio" name="quality" value="720"><span>720p</span></label>
+        </div>
         <button id="add-btn" class="btn primary" type="button">增加</button>
       </div>
       <p id="add-note" class="add-note" role="status" aria-live="polite" hidden></p>
@@ -78,13 +82,6 @@
       <ul id="queue-list" class="qlist"></ul>
       <p id="queue-empty" class="queue-empty">清單是空的。貼上網址按「增加」，影片的標題和封面會自動帶進來。</p>
       <div class="queue-set">
-        <div class="field">
-          <span id="quality-label" class="field-label">解析度</span>
-          <div id="quality" class="segmented" role="radiogroup" aria-labelledby="quality-label">
-            <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
-            <label><input type="radio" name="quality" value="720"><span>720p</span></label>
-          </div>
-        </div>
         <div class="field">
           <label for="cooldown" class="field-label">每支間隔</label>
           <div class="suffix">

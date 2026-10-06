@@ -114,6 +114,10 @@ try {
 
   step("6. Settings reach the background script");
   // 6. Settings reach the background script.
+  const [field, group, addButton] = await Promise.all(["#add-url", "#quality", "#add-btn"].map((sel) => page.locator(sel).boundingBox()));
+  assert.ok(group.y >= field.y + field.height - 1, "the resolution choice sits under the address box");
+  assert.ok(Math.abs(group.y + group.height / 2 - (addButton.y + addButton.height / 2)) < 4 && group.x + group.width <= addButton.x, "on the same line as the add button, to its left");
+  assert.equal(await page.locator(".queue-set #quality").count(), 0, "and no longer in the settings below the list");
   await page.click('label:has(input[name="quality"][value="720"])');
   await page.fill("#cooldown", "3");
   await page.dispatchEvent("#cooldown", "change");

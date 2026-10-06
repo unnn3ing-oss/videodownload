@@ -176,8 +176,11 @@ textarea:focus-visible, input:focus-visible { outline: none; border-color: var(-
 .tab-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- add ---------- */
-.add-row { display: flex; gap: 8px; }
-.add-row input { flex: 1; }
+.add-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.add-row input { flex: 1 1 100%; }
+.add-row .segmented { flex: 1 1 0; min-width: 0; }
+.add-row .segmented label { display: flex; }
+.add-row .segmented span { flex: 1; display: grid; place-items: center; }
 .add-note { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
 .add-note[data-kind="error"] { color: var(--err); }
 
