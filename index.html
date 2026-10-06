@@ -72,13 +72,6 @@
       <section aria-labelledby="settings-title">
         <h2 id="settings-title">下載設定</h2>
         <div class="field">
-          <span id="quality-label" class="field-label">解析度</span>
-          <div id="quality" class="segmented" role="radiogroup" aria-labelledby="quality-label">
-            <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
-            <label><input type="radio" name="quality" value="720"><span>720p</span></label>
-          </div>
-        </div>
-        <div class="field">
           <label for="cooldown" class="field-label">每支影片間隔（冷卻）</label>
           <div class="slide">
             <input id="cooldown" type="range" min="3" max="60" step="1" value="10">
@@ -111,6 +104,10 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
           <input id="add-url" type="text" placeholder="貼上 YouTube 網址，按 Enter 或「增加」" autocomplete="off" spellcheck="false" aria-label="影片網址">
         </label>
+        <div id="quality" class="segmented" role="radiogroup" aria-label="解析度">
+          <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
+          <label><input type="radio" name="quality" value="720"><span>720p</span></label>
+        </div>
         <button id="add-btn" class="btn primary" type="button">增加</button>
         <p id="add-note" class="add-note" role="status" aria-live="polite" hidden></p>
       </section>

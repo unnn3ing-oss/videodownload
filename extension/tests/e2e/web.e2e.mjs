@@ -86,6 +86,14 @@ async function withExtension() {
     assert.equal(await web.isDisabled("#start-all"), true);
     await shot("web-1-setup");
 
+    // B1a. The resolution choice sits on the add line, between the address box and the "add" button.
+    const box = (selector) => web.locator(selector).boundingBox();
+    const [field, group, addButton] = [await box("#add-url"), await box("#quality"), await box("#add-btn")];
+    assert.ok(group.x >= field.x + field.width && group.x + group.width <= addButton.x, "resolution is between the box and the add button");
+    assert.ok(Math.abs(group.y + group.height / 2 - (addButton.y + addButton.height / 2)) < 4, "and on the same line");
+    assert.equal(await web.locator("aside #quality").count(), 0, "it is no longer in the settings list");
+    assert.equal(await web.locator('#quality[role="radiogroup"]').getAttribute("aria-label"), "解析度");
+
     // B1b. "Download installer" really saves the installer. (This machine is Linux, so the worker is told it is a Mac.)
     const worker = context.serviceWorkers().find((w) => w.url().includes(extId));
     await worker.evaluate(() => { chrome.runtime.getPlatformInfo = async () => ({ os: "mac", arch: "x86-64", nacl_arch: "x86-64" }); });
@@ -118,6 +126,10 @@ async function withExtension() {
       range.dispatchEvent(new Event("input", { bubbles: true }));
       range.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await web.click('#quality label:has(input[value="720"])');
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 720);
+    await web.click('#quality label:has(input[value="1080"])');
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 1080);
     await web.fill("#add-url", watch("v1"));
     await web.press("#add-url", "Enter");
     await web.waitForSelector('#queue-list .qrow[data-kind="waiting"]');
@@ -208,6 +220,8 @@ async function withExtension() {
     for (const width of [320, 480]) {
       await web.setViewportSize({ width, height: 900 });
       assert.equal(await web.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `no horizontal overflow at ${width}px`);
+      const narrow = await box("#quality");
+      assert.ok(narrow.x >= 0 && narrow.x + narrow.width <= width, `the resolution choice fits at ${width}px`);
       await shot(`web-3-width-${width}`);
     }
   } finally {

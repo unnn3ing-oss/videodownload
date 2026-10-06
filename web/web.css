@@ -108,6 +108,9 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 .addc .in input { flex: 1; border: 0; background: transparent; padding: 11px 0; box-shadow: none; }
 .addc .in input:focus-visible { box-shadow: none; background: transparent; }
 .addc .btn { min-height: 42px; padding: 0 22px; }
+.addc .segmented { flex: none; min-height: 42px; box-sizing: border-box; }
+.addc .segmented label { display: flex; }
+.addc .segmented span { flex: 1; display: grid; place-items: center; padding: 0 14px; }
 .add-note { flex-basis: 100%; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
 .add-note[data-kind="error"] { color: var(--err); }
 .qh { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
@@ -127,6 +130,9 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 }
 @media (max-width: 520px) {
   :root { --cover-w: 92px; }
+  .addc .in { flex-basis: 100%; }
+  .addc .segmented { flex: 1; }
+  .addc .segmented span { padding: 0 8px; }
   .qh .act { width: 100%; margin: 0; }
   .qh .act .btn { flex: 1; }
 }
