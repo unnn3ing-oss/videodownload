@@ -3,12 +3,21 @@ import assert from "node:assert/strict";
 import { createAutoConnect, extensionNotice, hostNotice } from "../lib/connection.js";
 
 const stopped = { state: "stopped", ready: null, detail: "Native host has exited." };
+const closed = () => ({ ...stopped }); // every launch that ends makes the extension send a new report
 
 test("auto connect keeps trying to launch the host a few times, then gives up with a note", () => {
   const auto = createAutoConnect({ maxTries: 3 });
-  const outcomes = [1, 2, 3, 4, 5].map(() => auto.next(true, stopped));
+  const outcomes = [1, 2, 3, 4, 5].map(() => auto.next(true, closed()));
   assert.deepEqual(outcomes.map((o) => o.send), [true, true, true, false, false]);
   assert.deepEqual(outcomes.map((o) => o.gaveUp), [false, false, false, true, true]);
+});
+
+test("a host that is slow to start (no new report yet) is not counted as closing", () => {
+  const auto = createAutoConnect({ maxTries: 2 });
+  const same = closed();
+  for (let i = 0; i < 20; i += 1) assert.equal(auto.next(true, same).gaveUp, false);
+  assert.deepEqual(auto.next(true, closed()), { send: true, gaveUp: false }, "its first failure: one more launch");
+  assert.deepEqual(auto.next(true, closed()), { send: false, gaveUp: true }, "its second failure: that was the last launch");
 });
 
 test("a host that is simply not installed yet is waited for without limit", () => {
@@ -26,15 +35,15 @@ test("nothing is sent while the extension is missing, the host runs, or Chrome f
 
 test("reset (the start button, the host running, the extension coming back) gives the tries back", () => {
   const auto = createAutoConnect({ maxTries: 2 });
-  auto.next(true, stopped); auto.next(true, stopped);
-  assert.equal(auto.next(true, stopped).gaveUp, true);
+  auto.next(true, closed()); auto.next(true, closed());
+  assert.equal(auto.next(true, closed()).gaveUp, true);
   auto.reset();
-  assert.deepEqual(auto.next(true, stopped), { send: true, gaveUp: false });
-  auto.next(true, stopped);
+  assert.deepEqual(auto.next(true, closed()), { send: true, gaveUp: false });
+  auto.next(true, closed());
   auto.next(true, { state: "running", ready: {}, detail: null }); // connected: the count starts over
-  assert.deepEqual(auto.next(true, stopped), { send: true, gaveUp: false });
-  assert.deepEqual(auto.next(true, stopped), { send: true, gaveUp: false });
-  assert.equal(auto.next(true, stopped).gaveUp, true);
+  assert.deepEqual(auto.next(true, closed()), { send: true, gaveUp: false });
+  assert.deepEqual(auto.next(true, closed()), { send: true, gaveUp: false });
+  assert.equal(auto.next(true, closed()).gaveUp, true);
 });
 
 test("extensionNotice tells apart 'not found yet' from 'connection lost'", () => {

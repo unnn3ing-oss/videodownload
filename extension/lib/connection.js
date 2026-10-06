@@ -24,24 +24,35 @@ export function hostNotice({ detected, status, wasRunning, gaveUp }) {
 }
 
 // Once the extension is there the page keeps asking it to launch the host until it answers: the person may still
-// be running the installer. A host that is launched and closes right away is not retried forever, though.
+// be running the installer. A host that is launched and closes right away is not retried forever, though: every
+// new "stopped" report that follows one of our requests is a launch that ended, and `maxTries` of them end the
+// retrying. A host that is merely slow to start sends no new report, so it is never taken for a failing one.
 export function createAutoConnect({ maxTries = 5 } = {}) {
-  let tries = 0;
+  let asked = 0; // requests sent since the last reset
+  let failures = 0; // launches that ended
+  let lastReport = null;
+  const reset = () => {
+    asked = 0;
+    failures = 0;
+    lastReport = null;
+  };
   return {
     next(detected, status) {
       if (!detected || status.state === "forbidden") return { send: false, gaveUp: false };
       if (status.state === "running") {
-        tries = 0;
+        reset();
         return { send: false, gaveUp: false };
       }
       if (status.state === "stopped") {
-        if (tries >= maxTries) return { send: false, gaveUp: true };
-        tries += 1;
+        if (status !== lastReport) {
+          lastReport = status;
+          if (asked > 0) failures += 1;
+        }
+        if (failures >= maxTries) return { send: false, gaveUp: true };
+        asked += 1;
       }
       return { send: true, gaveUp: false };
     },
-    reset() {
-      tries = 0;
-    },
+    reset,
   };
 }
