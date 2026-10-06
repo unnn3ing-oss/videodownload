@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../lib/connection.js";
+import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, versionNotice } from "../lib/connection.js";
 
 const stopped = { state: "stopped", ready: null, detail: "Native host has exited." };
 const closed = () => ({ ...stopped }); // every launch that ends makes the extension send a new report
@@ -79,4 +79,20 @@ test("versionNotice warns only when the extension is older than this page, and s
   assert.match(text, /0\.2\.1/);
   assert.match(text, /更新到最新版/);
   assert.match(text, /重新載入/);
+});
+
+test("hostVersionNotice warns when the local program and the extension are not the same version, either way round", () => {
+  assert.equal(hostVersionNotice({ extensionVersion: "0.2.9", hostVersion: "0.2.9" }), null);
+  const older = hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0" });
+  assert.match(older, /本機小程式是 v0\.2\.0/);
+  assert.match(older, /擴充功能是 v0\.2\.7/);
+  assert.match(older, /更新到最新版/);
+  assert.match(older, /重新執行安裝檔/);
+  assert.match(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.3.0" }), /不一致/);
+});
+
+test("hostVersionNotice says nothing while either version is not known", () => {
+  assert.equal(hostVersionNotice({ extensionVersion: null, hostVersion: "0.2.0" }), null);
+  assert.equal(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: undefined }), null);
+  assert.equal(hostVersionNotice({ extensionVersion: "abc", hostVersion: "0.2.0" }), null, "not a version number");
 });

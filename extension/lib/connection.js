@@ -33,6 +33,14 @@ export function versionNotice({ extensionVersion, pageVersion }) {
   return `網頁版是 v${pageVersion}，但你的擴充功能是 v${extensionVersion}，還在跑舊版。請關閉這個視窗，按頁面左側「版本與更新」的「更新到最新版」（會自動重新載入），或重新執行安裝檔。`;
 }
 
+// The local program and the extension are released together. When they differ (one was not updated, or an update stopped
+// halfway) things can misbehave in ways that are hard to tell apart, so say so instead of claiming everything is current.
+export function hostVersionNotice({ extensionVersion, hostVersion }) {
+  const known = (version) => Boolean(version) && versionAtLeast(version, "0");
+  if (!known(extensionVersion) || !known(hostVersion) || extensionVersion === hostVersion) return null;
+  return `本機小程式是 v${hostVersion}，擴充功能是 v${extensionVersion}，兩者版本不一致，功能可能異常。請按「更新到最新版」，或重新執行安裝檔。`;
+}
+
 // Once the extension is there the page keeps asking it to launch the host until it answers: the person may still
 // be running the installer. A host that is launched and closes right away is not retried forever, though: every
 // new "stopped" report that follows one of our requests is a launch that ended, and `maxTries` of them end the

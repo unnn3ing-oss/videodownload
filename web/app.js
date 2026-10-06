@@ -5,7 +5,7 @@ import { copyRowText, downloadRowCover, renderHostNote, renderQueue, setHidden, 
 import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
-import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../extension/lib/connection.js";
+import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, versionNotice } from "../extension/lib/connection.js";
 import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
 import {
   FOLDER_HINTS, FOLDER_NAME, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand, selfCheckItems,
@@ -377,6 +377,12 @@ function updateAdvice(info, connected) {
   return "有新版本可以更新。";
 }
 
+// The local program and the extension should be the same version (see hostVersionNotice).
+const versionMismatch = () => hostVersionNotice({
+  extensionVersion: client.detected() ? client.version() : null,
+  hostVersion: status.state === "running" ? status.ready?.hostVersion : null,
+});
+
 function renderUpdate() {
   const detected = client.detected();
   const connected = detected && status.state === "running";
@@ -386,13 +392,19 @@ function renderUpdate() {
   let latest = "尚未檢查";
   if (updateInfo) {
     if (updateInfo.hasUpdate) latest = `${updateInfo.latestVersion ? `v${updateInfo.latestVersion}` : "有新版本"}（${updateInfo.message}）`;
+    else if (versionMismatch()) latest = "檔案已是最新，但小程式與擴充功能的版本不一致";
     else latest = updateInfo.hostChecked ? "已是最新版" : "擴充功能已是最新（小程式尚未連線，沒有比對）";
   }
   setText($("up-latest"), latest);
   $("up-check").disabled = !detected || updateBusy;
   setHidden($("up-apply"), !updateInfo?.hasUpdate);
   $("up-apply").disabled = !(updateInfo?.hasUpdate && updateInfo.canUpdateHere && connected) || updateBusy;
-  const note = !upNote.text && updateInfo?.hasUpdate ? { kind: "info", text: updateAdvice(updateInfo, connected) } : upNote;
+  const mismatch = versionMismatch();
+  let note = upNote;
+  if (!upNote.text) {
+    if (mismatch) note = { kind: "error", text: mismatch };
+    else if (updateInfo?.hasUpdate) note = { kind: "info", text: updateAdvice(updateInfo, connected) };
+  }
   setNote("up-note", note.text, note.kind);
   if (connected && !autoChecked && !updateBusy) { // once per visit, quietly
     autoChecked = true;
@@ -410,7 +422,9 @@ async function checkUpdate({ quiet = false, inside = false } = {}) {
       updateInfo = result.info;
       if (!quiet) {
         const none = result.info.hostChecked ? "已是最新版。" : "擴充功能已是最新；小程式還沒連線，沒有比對它。";
-        upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : none, kind: result.info.hasUpdate ? "info" : "ok" };
+        const mismatch = versionMismatch();
+        if (!result.info.hasUpdate && mismatch) upNote = { text: mismatch, kind: "error" }; // (never "up to date" while they differ)
+        else upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : none, kind: result.info.hasUpdate ? "info" : "ok" };
       }
     } else if (!quiet) {
       upNote = { text: result?.error ?? "檢查失敗", kind: "error" };

@@ -30,6 +30,7 @@ for (const name of ["yt-dlp", "ffmpeg", "deno"]) {
   fs.writeFileSync(file, name === "yt-dlp" ? fs.readFileSync(path.join(root, "host/tests/stub_ytdlp.py")) : `#!/bin/sh\necho ${name} 1.0\n`);
   fs.chmodSync(file, 0o755);
 }
+fs.writeFileSync(path.join(home, "host/version.py"), 'VERSION = "0.2.0"\n'); // the oldest local program that still works, but not the extension's version
 // the extension as the installer would have put it in the person's folder (no tests, no installers)
 fs.cpSync(path.join(root, "extension"), extFolder, { recursive: true, filter: (src) => !/[\\/](tests|installers)([\\/]|$)/.test(src) });
 fs.writeFileSync(path.join(home, "install.json"), JSON.stringify({ extensionFolder: extFolder, version: manifest.version }));
@@ -57,6 +58,7 @@ try {
   assert.match(await text("up-current"), new RegExp(`擴充功能 v${manifest.version.replaceAll(".", "\\.")} · 小程式 v`));
   assert.match(await text("up-latest"), /v9\.9\.9（release: v9\.9\.9）/);
   assert.equal(await web.isDisabled("#up-apply"), false);
+  assert.match(await text("up-note"), /本機小程式是 v0\.2\.0，擴充功能是 v.*版本不一致/, "the page says the two versions differ");
 
   // 2. A tampered download is refused before anything local changes.
   tamper.add("extension/background.js");

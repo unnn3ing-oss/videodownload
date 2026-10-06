@@ -1,7 +1,7 @@
 // The web page's setup flow as plain functions: which step is where, whether the install works, what to tell the
 // person when it does not. The page only draws what these return. See the setup-flow tests.
 import { UPDATE_REPO } from "./update-config.js";
-import { versionNotice } from "./connection.js";
+import { hostVersionNotice, versionNotice } from "./connection.js";
 
 const SAFE = /^[A-Za-z0-9._-]+$/;
 
@@ -109,6 +109,11 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
       "關閉這個視窗，按頁面左側「版本與更新」的「更新到最新版」（會自動重新載入），或重新執行安裝檔"));
   }
   list.push(hostItem({ status, hostOutdated, gaveUp }));
+  const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
+  if (hostVersionNotice({ extensionVersion, hostVersion })) {
+    list.push(item("hostVersion", "error", `本機小程式 v${hostVersion} 和擴充功能 v${extensionVersion} 版本不一致`, "",
+      "按頁面左側「版本與更新」的「更新到最新版」，或重新執行安裝檔"));
+  }
   if (status.state === "running") {
     list.push(...(Array.isArray(doctor) && doctor.length ? doctor.map((c) => item(c.id, c.status, c.title, c.detail, c.fix)) : partItems(status.ready ?? {})));
   }

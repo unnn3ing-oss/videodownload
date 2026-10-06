@@ -2,6 +2,7 @@ import { classifyTabUrl } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
+import { hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { summarize } from "./lib/queue.js";
 import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
@@ -185,6 +186,9 @@ function renderUpdate() {
     if (lastSummary?.error) note = { text: lastSummary.error, kind: "error" };
     else if (lastSummary?.sha && !(hasUpdate() || (!updateInfo && lastSummary.hasUpdate))) note = { text: "已是最新版", kind: "ok" };
   }
+  // never "up to date" while the local program and the extension are different versions
+  const mismatch = hostVersionNotice({ extensionVersion: manifest.version, hostVersion });
+  if (mismatch && updateWorking !== "check" && note?.kind !== "error") note = { text: mismatch, kind: "error" };
   noteEl.hidden = !note;
   noteEl.textContent = note?.text ?? "";
   noteEl.dataset.kind = note?.kind ?? "info";

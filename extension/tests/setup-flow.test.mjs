@@ -188,3 +188,11 @@ test("a window the person closed stays closed, and success always wins", () => {
   assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, unhealthyMs: 99999, dismissed: true }), "hidden");
   assert.equal(decideView({ firstVisit: true, deployed: true, detected: true, unhealthyMs: 9000, dismissed: false }), "hidden");
 });
+
+test("the self-check names a local program whose version differs from the extension's", () => {
+  const list = byId(items({ extensionVersion: "0.2.3", status: { ...running, ready: { ...running.ready, hostVersion: "0.2.0" } } }));
+  assert.equal(list.hostVersion.status, "error");
+  assert.match(list.hostVersion.title, /0\.2\.0.*0\.2\.3/);
+  assert.match(list.hostVersion.fix, /更新到最新版/);
+  assert.equal(byId(items({})).hostVersion, undefined, "same versions: no line");
+});
