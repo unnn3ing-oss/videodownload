@@ -106,7 +106,7 @@ async function withExtension() {
 
     // B2. Installing the host is enough: the page connects without any click.
     const wrapper = path.join(work, "host.sh");
-    const goodWrapper = `#!/bin/sh\necho $$ > "${path.join(work, "host.pid")}"\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexec python3 "${path.join(root, "host/host.py")}"\n`;
+    const goodWrapper = `#!/bin/sh\necho $$ > "${path.join(work, "host.pid")}"\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexport YTDL_STUB_LOG="${path.join(work, "downloads.log")}"\nexec python3 "${path.join(root, "host/host.py")}"\n`;
     fs.writeFileSync(wrapper, goodWrapper);
     fs.chmodSync(wrapper, 0o755);
     registerNativeHost({ userData, wrapperPath: wrapper, extId });
@@ -176,6 +176,8 @@ async function withExtension() {
       assert.equal(await view.locator('.qrow[data-kind="failed"]').count(), 0);
     }
     assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).sort(), ["影片 v2.mp4", "影片 v3.mp4", "影片 v4.mp4", "範例影片.mp4"].sort());
+    // (files alone would not show a video that was downloaded twice: the yt-dlp stub logs every real download)
+    assert.deepEqual(fs.readFileSync(path.join(work, "downloads.log"), "utf8").trim().split("\n").sort(), ["v1", "v2", "v3", "v4"], "each video was downloaded exactly once");
 
     // B5. Removing a row in the web page removes it in the panel too.
     await web.locator(".qrow", { hasText: "影片 v4" }).locator(".qx").click();
@@ -247,6 +249,26 @@ async function withExtension() {
     assert.equal(count(), 5, "five launches, no more");
     await new Promise((resolve) => setTimeout(resolve, 7000));
     assert.equal(count(), 5, "and it stays that way");
+
+    // B10b. With the host gone the cover still arrives, through Chrome's own download (under the same name).
+    await worker.evaluate(() => { // (Playwright renames saved files, so note what the extension asked Chrome for)
+      self.__asked = [];
+      const original = chrome.downloads.download.bind(chrome.downloads);
+      chrome.downloads.download = (options) => { self.__asked.push(options); return original(options); };
+    });
+    const sample = web.locator(".qrow", { hasText: "範例影片" });
+    await sample.locator(".qcover").click();
+    await sample.locator(".qcover[data-state='ok']").waitFor({ timeout: 20000 });
+    assert.match(await sample.locator(".qflash").textContent(), /已存到下載資料夾/);
+    const fallback = await worker.evaluate(async () => ({
+      asked: self.__asked,
+      items: (await chrome.downloads.search({})).filter((d) => d.url.includes("i.ytimg.com")).map((d) => ({ state: d.state, error: d.error ?? null, filename: d.filename })),
+    }));
+    assert.deepEqual(fallback.items.map((d) => [d.state, d.error]), [["complete", null]]);
+    assert.deepEqual(fallback.asked.map((o) => [o.url, o.filename]), [["https://i.ytimg.com/vi/v1/hq720.jpg", "範例影片.jpg"]], "the original-size address, named after the title");
+    const viaBrowser = fs.readFileSync(fallback.items[0].filename);
+    assert.deepEqual([...viaBrowser.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+    assert.match(viaBrowser.toString("latin1"), /v1:hq720/, "the original-size cover");
     fs.writeFileSync(wrapper, goodWrapper);
     await web.click("#start");
     await web.waitForSelector("#conn-note", { state: "hidden", timeout: 20000 });

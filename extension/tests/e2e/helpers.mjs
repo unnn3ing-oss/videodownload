@@ -28,6 +28,8 @@ export async function launchExtension({ viewport = { width: 400, height: 860 }, 
       executablePath: process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium",
       headless: false,
       viewport,
+      // Chromium turns a non-ASCII file name given to chrome.downloads into "Invalid filename" unless the locale is UTF-8
+      env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" },
       args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, ...args],
     });
     let [worker] = context.serviceWorkers();
@@ -48,6 +50,10 @@ export function registerNativeHost({ userData, wrapperPath, extId }) {
     allowed_origins: [`chrome-extension://${extId}/`],
   }));
 }
+
+// Headless Chromium reports "(hover: none)"; with these flags it behaves like a computer with a mouse,
+// which the hover styles of the list need in order to be tested at all.
+export const HOVER_ARGS = ["--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"];
 
 // Optional review screenshots: set E2E_SHOTS to a directory.
 export const shotter = (page) => async (name) => {

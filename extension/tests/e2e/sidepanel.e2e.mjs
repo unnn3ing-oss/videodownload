@@ -4,13 +4,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { launchExtension, manifest, registerNativeHost, root, shotter } from "./helpers.mjs";
+import { HOVER_ARGS, launchExtension, manifest, registerNativeHost, root, shotter } from "./helpers.mjs";
 import { startFakeYtimg } from "./fake-ytimg.mjs";
 
 const ytimg = await startFakeYtimg({ covers: {
   v1: ["hq720", "mqdefault"], v2: ["mqdefault"], xss1: ["mqdefault"],
 } });
-const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 }, args: ytimg.args() });
+const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 }, args: [...ytimg.args(), ...HOVER_ARGS] });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });
@@ -142,10 +142,19 @@ try {
 
   step("9. The cover");
   // 9. The cover: grey with a download symbol on hover; a click saves the original size next to the videos.
+  assert.equal(await page.evaluate(() => matchMedia("(hover: hover)").matches), true, "this browser can hover (otherwise the checks below prove nothing)");
   const cover = rowByTitle("範例影片").first().locator(".qcover");
+  const thumbFilter = () => cover.locator(".qthumb").evaluate((n) => getComputedStyle(n).filter);
+  const symbolOpacity = () => cover.locator(".qdl").evaluate((n) => getComputedStyle(n).opacity);
+  await page.mouse.move(0, 0);
+  assert.equal(await thumbFilter(), "none", "the cover is in colour without the pointer");
+  assert.equal(await symbolOpacity(), "0", "and shows no symbol");
   await cover.hover();
-  assert.match(await cover.locator(".qthumb").evaluate((n) => getComputedStyle(n).filter), /grayscale/);
-  assert.equal(await cover.locator(".qdl").evaluate((n) => getComputedStyle(n).opacity), "1");
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll(".qrow")].find((r) => r.textContent.includes("範例影片"));
+    return getComputedStyle(row.querySelector(".qdl")).opacity === "1" && /grayscale/.test(getComputedStyle(row.querySelector(".qthumb")).filter);
+  }, null, { timeout: 3000 });
+  assert.match(await thumbFilter(), /grayscale/, "grey with the pointer over it");
   await cover.click();
   await page.waitForFunction(() => document.querySelector(".qrow .qcover[data-state='ok']"));
   const saved = fs.readFileSync(path.join(outDir, "範例影片.jpg"));
