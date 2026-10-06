@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
   createState, describeItem, hostLost, markRunning, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
-  setSettings, setTags, summarize,
+  setCover, setSettings, setTags, summarize,
 } from "../lib/queue.js";
 
 const url = (id) => `https://www.youtube.com/watch?v=${id}`;
@@ -34,7 +34,7 @@ test("createState starts empty with the default settings", () => {
   assert.equal(state.running, false);
   assert.equal(state.cooldown, null);
   assert.deepEqual(state.settings, DEFAULT_SETTINGS);
-  assert.deepEqual(DEFAULT_SETTINGS, { quality: 1080, cooldownSec: 10, limit: 50 });
+  assert.deepEqual(DEFAULT_SETTINGS, { quality: 1080, cooldownSec: 10, limit: 50, autoCover: true });
 });
 
 test("addPlaceholder inserts a fetching row and validates the url", () => {
@@ -294,7 +294,7 @@ test("createState restores a saved queue conservatively", () => {
   assert.equal(state.items[0].percent, null);
   assert.equal(state.items[1].error, null, "a row that never got its title is resolved again, not failed");
   assert.equal(state.items[3].dupOf, 5, "duplicates are recomputed on restore");
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 50 });
+  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 50, autoCover: true }, "saved before this setting existed: on");
   assert.equal(addPlaceholder(state, url("n")).uid, 9, "new uids continue after the saved ones");
   assert.deepEqual(createState("nope").items, []);
   assert.deepEqual(createState({ items: "x" }).items, []);
@@ -302,9 +302,9 @@ test("createState restores a saved queue conservatively", () => {
 
 test("setSettings clamps values and ignores the unknown", () => {
   let state = setSettings(createState(), { quality: "720", cooldownSec: 1, limit: 5000, bogus: 1 });
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 3, limit: 1000 });
+  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 3, limit: 1000, autoCover: true });
   state = setSettings(state, { quality: 480, cooldownSec: 61.4, limit: 0 });
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 1 });
+  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 1, autoCover: true });
   state = setSettings(state, { cooldownSec: "abc" });
   assert.equal(state.settings.cooldownSec, 60);
   assert.equal("bogus" in state.settings, false);
@@ -369,4 +369,68 @@ test("state transitions never mutate their input", () => {
   state = hostLost(deepFreeze(state));
   state = setSettings(deepFreeze(state), { quality: 720 });
   assert.equal(state.settings.quality, 720);
+});
+
+test("the automatic cover setting is on by default, switches off and on, and ignores anything that is not true or false", () => {
+  let state = createState();
+  assert.equal(state.settings.autoCover, true);
+  state = setSettings(state, { autoCover: false });
+  assert.equal(state.settings.autoCover, false);
+  for (const junk of ["no", 0, null, undefined, "false", {}]) {
+    assert.equal(setSettings(state, { autoCover: junk }).settings.autoCover, false, `${String(junk)} changes nothing`);
+  }
+  assert.equal(setSettings(state, { autoCover: true }).settings.autoCover, true);
+  assert.equal(setSettings(state, { quality: 720 }).settings.autoCover, false, "other settings leave it alone");
+  assert.equal(createState(JSON.parse(JSON.stringify(state))).settings.autoCover, false, "restored from storage");
+  assert.equal(createState({ items: [], settings: { autoCover: "x" } }).settings.autoCover, true, "a bad saved value falls back to on");
+});
+
+function doneRow() {
+  let state = stateWith(ref("a"));
+  state = applyHostEvent(state, { type: "item_done", itemId: "a", file: "/a.mp4", height: 1080 }, 0);
+  return { state, uid: byId(state, "a").uid };
+}
+
+test("a row shows what happened to its cover next to the video's resolution", () => {
+  const { state, uid } = doneRow();
+  const sub = (s) => describeItem(s, byId(s, "a"), 0).sub;
+  assert.equal(byId(state, "a").cover, null);
+  assert.equal(sub(state), "1080p");
+  assert.equal(sub(setCover(state, uid, { status: "saving" })), "1080p · 封面下載中…");
+  assert.equal(sub(setCover(state, uid, { status: "saved", where: "folder" })), "1080p · 封面已存");
+  assert.equal(sub(setCover(state, uid, { status: "saved", where: "downloads" })), "1080p · 封面已存到下載資料夾");
+  assert.equal(sub(setCover(state, uid, { status: "failed", error: "找不到封面圖片" })), "1080p · 封面失敗：找不到封面圖片");
+  assert.equal(sub(setCover(setCover(state, uid, { status: "saved", where: "folder" }), uid, null)), "1080p", "cleared again");
+});
+
+test("setCover leaves other rows and unknown rows alone, and a failed cover never changes the video's own status", () => {
+  const two = stateWith(ref("a"), ref("b"));
+  const next = setCover(two, two.items[1].uid, { status: "failed", error: "x" });
+  assert.equal(next.items[0].cover, null);
+  assert.equal(next.items[1].status, "waiting");
+  assert.equal(setCover(two, 999, { status: "saved", where: "folder" }), two, "unknown row: same state back");
+});
+
+test("a cover that was still being saved when the browser closed is not shown as saving after a restart", () => {
+  const { state, uid } = doneRow();
+  const saving = JSON.parse(JSON.stringify(setCover(state, uid, { status: "saving" })));
+  assert.equal(createState(saving).items[0].cover, null);
+  const saved = JSON.parse(JSON.stringify(setCover(state, uid, { status: "saved", where: "folder" })));
+  assert.deepEqual(createState(saved).items[0].cover, { status: "saved", where: "folder" });
+  const failed = JSON.parse(JSON.stringify(setCover(state, uid, { status: "failed", error: "x" })));
+  assert.deepEqual(createState(failed).items[0].cover, { status: "failed", error: "x" });
+  const junk = JSON.parse(JSON.stringify(state));
+  junk.items[0].cover = "nonsense";
+  assert.equal(createState(junk).items[0].cover, null);
+});
+
+test("retrying a video forgets the old cover result", () => {
+  let state = stateWith(ref("a"));
+  const uid = state.items[0].uid;
+  state = setCover(state, uid, { status: "saved", where: "folder" }); // (the cover button was pressed before the download)
+  state = applyHostEvent(state, { type: "item_failed", itemId: "a", reason: "x" }, 0);
+  assert.equal(state.items[0].status, "failed");
+  assert.deepEqual(state.items[0].cover, { status: "saved", where: "folder" });
+  const retried = retryItem(state, uid);
+  assert.deepEqual([retried.items[0].status, retried.items[0].cover], ["waiting", null]);
 });

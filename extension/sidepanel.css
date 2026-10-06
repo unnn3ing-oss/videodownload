@@ -124,6 +124,8 @@ textarea:focus-visible, input:focus-visible { outline: none; border-color: var(-
 .row { display: flex; gap: 8px; align-items: center; }
 .row input { flex: 1; }
 .row.between { justify-content: space-between; font-size: 13px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 .suffix { display: flex; align-items: center; gap: 8px; }
 .suffix input { font-family: var(--mono); }
 .suffix span { color: var(--muted); font-size: 13px; }

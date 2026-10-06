@@ -59,7 +59,7 @@ function renderQueueArea() {
   setText($("conn-note"), hostText?.text ?? "");
   $("conn-note").dataset.kind = hostText?.kind ?? "info";
   setHidden($("conn-note"), !hostText);
-  for (const id of ["add-url", "add-btn", "cooldown", "limit"]) $(id).disabled = !detected;
+  for (const id of ["add-url", "add-btn", "cooldown", "limit", "auto-cover"]) $(id).disabled = !detected;
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
   $("outdir").disabled = !connected;
   $("save-outdir").disabled = !connected;
@@ -97,6 +97,7 @@ function renderQueueArea() {
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   $("cooldown-out").textContent = `${queue.settings.cooldownSec} 秒`;
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);
+  $("auto-cover").checked = queue.settings.autoCover !== false;
 }
 
 function render() {
@@ -191,6 +192,7 @@ $("quality").addEventListener("change", (event) => send({ type: "settings_set", 
 $("cooldown").addEventListener("input", () => { $("cooldown-out").textContent = `${$("cooldown").value} 秒`; });
 $("cooldown").addEventListener("change", () => send({ type: "settings_set", settings: { cooldownSec: Number($("cooldown").value) } }));
 $("limit").addEventListener("change", () => send({ type: "settings_set", settings: { limit: Number($("limit").value) } }));
+$("auto-cover").addEventListener("change", () => send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } }));
 $("save-outdir").addEventListener("click", async () => {
   try {
     const result = await send({ type: "set_output_dir", path: $("outdir").value });

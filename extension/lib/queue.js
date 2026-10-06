@@ -4,7 +4,7 @@ import { isYouTubeUrl } from "./urls.js";
 import { formatEta, formatSpeed } from "./format.js";
 
 export const MAX_ITEMS = 500;
-export const DEFAULT_SETTINGS = { quality: 1080, cooldownSec: 10, limit: 50 };
+export const DEFAULT_SETTINGS = { quality: 1080, cooldownSec: 10, limit: 50, autoCover: true };
 const STATUSES = new Set(["fetching", "waiting", "downloading", "done", "skipped", "failed"]);
 
 export class QueueError extends Error {
@@ -27,14 +27,31 @@ function cleanSettings(patch, base = DEFAULT_SETTINGS) {
     if (Number.isFinite(Number(patch.limit)) && patch.limit !== "" && patch.limit !== null) {
       next.limit = clamp(Math.round(Number(patch.limit)), 1, 1000);
     }
+    if (typeof patch.autoCover === "boolean") next.autoCover = patch.autoCover;
   }
   return next;
 }
 
 const blankItem = (uid, fields) => ({
   uid, id: null, url: "", title: "", duration: null, tags: null, status: "waiting", dupOf: null,
-  percent: null, speed: null, eta: null, file: null, height: null, error: null, sent: false, ...fields,
+  percent: null, speed: null, eta: null, file: null, height: null, error: null, sent: false, cover: null, ...fields,
 });
+
+// What happened to a row's cover: { status: "saving" } | { status: "saved", where: "folder" | "downloads" } | { status: "failed", error }.
+// Only a result that is final survives a restart: a cover that was still being saved is not shown as saving forever.
+function cleanCover(cover) {
+  if (!cover || typeof cover !== "object") return null;
+  if (cover.status === "saved") return { status: "saved", where: cover.where === "downloads" ? "downloads" : "folder" };
+  if (cover.status === "failed" && typeof cover.error === "string") return { status: "failed", error: cover.error };
+  return null;
+}
+
+function coverText(cover) {
+  if (!cover) return "";
+  if (cover.status === "saving") return "封面下載中…";
+  if (cover.status === "saved") return cover.where === "downloads" ? "封面已存到下載資料夾" : "封面已存";
+  return `封面失敗：${cover.error ?? "未知原因"}`;
+}
 
 const titleKey = (title) => String(title ?? "").normalize("NFKC").trim().toLowerCase();
 
@@ -69,7 +86,7 @@ export function createState(saved = null) {
   const items = [];
   for (const raw of saved.items) {
     if (!raw || typeof raw !== "object" || !Number.isInteger(raw.uid) || !STATUSES.has(raw.status)) continue;
-    let item = { ...blankItem(raw.uid, raw), sent: false }; // a restart ends the host's job
+    let item = { ...blankItem(raw.uid, raw), sent: false, cover: cleanCover(raw.cover) }; // a restart ends the host's job
     if (item.status === "downloading") item = { ...item, status: "waiting", percent: null, speed: null, eta: null };
     if (item.status === "fetching") item = { ...item, title: item.title || item.url }; // resolved again once the host is there
     items.push(item);
@@ -120,10 +137,12 @@ export function retryItem(state, uid) {
   const item = state.items.find((i) => i.uid === uid);
   if (!item || item.status !== "failed" || !item.id) return state;
   return withItems(state, state.items.map((i) => (i.uid === uid
-    ? { ...i, status: "waiting", error: null, percent: null, speed: null, eta: null, sent: false } : i)));
+    ? { ...i, status: "waiting", error: null, percent: null, speed: null, eta: null, sent: false, cover: null } : i)));
 }
 
 export const setSettings = (state, patch) => ({ ...state, settings: cleanSettings(patch, state.settings) });
+export const setCover = (state, uid, cover) => (state.items.some((i) => i.uid === uid)
+  ? { ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, cover } : i)) } : state);
 export const setTags = (state, uid, tags) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, tags } : i)) });
 // `outdated`: the host is there but too old for this version of the extension (it needs updating first).
 export const setHostConnected = (state, connected, outdated = false) => ({
@@ -209,9 +228,10 @@ export function describeItem(state, item, now) {
     case "waiting": {
       const length = item.duration ? formatEta(item.duration) : "";
       const cooling = state.cooldown && state.cooldown.nextId === item.id && now < state.cooldown.until;
+      const sub = [length, coverText(item.cover)].filter(Boolean).join(" · ");
       return cooling
-        ? { ...base, kind: "cooling", label: `冷卻中，${Math.ceil((state.cooldown.until - now) / 1000)} 秒後開始`, sub: length }
-        : { ...base, kind: "waiting", label: "等待中", sub: length };
+        ? { ...base, kind: "cooling", label: `冷卻中，${Math.ceil((state.cooldown.until - now) / 1000)} 秒後開始`, sub }
+        : { ...base, kind: "waiting", label: "等待中", sub };
     }
     case "downloading": {
       const percent = item.percent ?? 0;
@@ -220,9 +240,9 @@ export function describeItem(state, item, now) {
       return { ...base, label: item.percent == null ? "下載中…" : `下載中 ${Math.floor(percent)}%`, sub: [rate, left].filter(Boolean).join(" · "), percent };
     }
     case "done":
-      return { ...base, label: "完成", sub: item.height ? `${item.height}p` : "", percent: 100 };
+      return { ...base, label: "完成", sub: [item.height ? `${item.height}p` : "", coverText(item.cover)].filter(Boolean).join(" · "), percent: 100 };
     case "skipped":
-      return { ...base, label: "略過", sub: "已下載過，略過", percent: 100 };
+      return { ...base, label: "略過", sub: ["已下載過，略過", coverText(item.cover)].filter(Boolean).join(" · "), percent: 100 };
     default:
       return { ...base, kind: "failed", label: "失敗", sub: item.error ?? "" };
   }

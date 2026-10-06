@@ -2,7 +2,7 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  markSent, pendingDownloads, removeItem, retryItem, setHostConnected, setSettings, setTags, QueueError,
+  markSent, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
 import { buildCopyText, extractHashtags } from "./copytext.js";
 import { coverName } from "./covername.js";
@@ -26,6 +26,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   let restartAfterDone = false;
   let stopRequested = false;
   let stopAfterStart = false; // stop pressed while the start request was still waiting for the host's answer
+  let coverChain = Promise.resolve(); // covers are saved one after another
 
   const commit = (next) => {
     state = next;
@@ -129,6 +130,50 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   function cancelJob() {
     stopRequested = true;
     try { host.send({ type: "cancel" }); } catch { /* host gone */ }
+  }
+
+  async function storeCover(item) {
+    const cover = await findCover(item.id, fetchFn);
+    if (!cover) return fail("找不到封面圖片");
+    if (hostUsable()) {
+      try {
+        const event = await host.request({ type: "save_cover", id: item.id, title: item.title, data: toBase64(cover.bytes) }, TIMEOUT.save_cover);
+        if (event.type === "cover_saved") return { ok: true, where: "folder", file: event.file };
+        return fail(event.message ?? "無法儲存封面");
+      } catch { /* host dropped while saving: fall back to the browser download below */ }
+    }
+    try {
+      await downloads.download({ url: cover.url, filename: `${coverName(item.title, item.id)}.jpg`, conflictAction: "uniquify" });
+      return { ok: true, where: "downloads" };
+    } catch (error) {
+      return fail(`無法下載封面：${error.message}`);
+    }
+  }
+
+  const setCoverState = (uid, cover) => {
+    const next = setCover(state, uid, cover);
+    if (next !== state) commit(next);
+  };
+
+  // The cover button and the automatic save both come through here; the row keeps the result.
+  async function saveCover(uid) {
+    const item = find(uid);
+    if (!item || !item.id) return fail("找不到這支影片");
+    setCoverState(uid, { status: "saving" });
+    let result;
+    try {
+      result = await storeCover(item);
+    } catch (error) {
+      result = fail(error.message);
+    }
+    setCoverState(uid, result.ok ? { status: "saved", where: result.where } : { status: "failed", error: result.error });
+    return result;
+  }
+
+  // After a video has been downloaded its cover follows, one at a time, without holding up the host.
+  function queueCover(uid) {
+    coverChain = coverChain.then(() => saveCover(uid));
+    track(coverChain);
   }
 
   // While a job runs, anything that became startable (new rows, retries, promoted duplicates) joins it.
@@ -245,6 +290,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       const next = applyHostEvent(state, event, now());
       if (next !== state) commit(next);
       if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);
+      if (event.type === "item_done" && !event.skipped && state.settings.autoCover) {
+        const finished = state.items.find((i) => i.id === event.itemId && !i.dupOf && i.status === "done");
+        if (finished) queueCover(finished.uid);
+      }
       if (event.type === "done") {
         sentIds.clear();
         const again = restartAfterDone && !stopRequested;
@@ -273,24 +322,6 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       return { ok: true, text: buildCopyText(find(uid)?.title ?? item.title, tags), tagCount: tags.length };
     },
 
-    async downloadCover(uid) {
-      const item = find(uid);
-      if (!item || !item.id) return fail("找不到這支影片");
-      const cover = await findCover(item.id, fetchFn);
-      if (!cover) return fail("找不到封面圖片");
-      if (hostUsable()) {
-        try {
-          const event = await host.request({ type: "save_cover", id: item.id, title: item.title, data: toBase64(cover.bytes) }, TIMEOUT.save_cover);
-          if (event.type === "cover_saved") return { ok: true, where: "folder", file: event.file };
-          return fail(event.message ?? "無法儲存封面");
-        } catch { /* host dropped while saving: fall back to the browser download below */ }
-      }
-      try {
-        await downloads.download({ url: cover.url, filename: `${coverName(item.title, item.id)}.jpg`, conflictAction: "uniquify" });
-        return { ok: true, where: "downloads" };
-      } catch (error) {
-        return fail(`無法下載封面：${error.message}`);
-      }
-    },
+    downloadCover: saveCover,
   };
 }

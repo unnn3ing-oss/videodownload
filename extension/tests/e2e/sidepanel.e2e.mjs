@@ -113,6 +113,18 @@ try {
     return s.quality === 720 && s.cooldownSec === 3;
   });
 
+  step("6b. The automatic cover setting");
+  // 6b. "Save covers automatically" is in "設定與工具", on by default, and reaches the background script.
+  const autoCover = () => page.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover);
+  await page.click("#settings > summary");
+  assert.equal(await page.isChecked("#auto-cover"), true, "on by default");
+  assert.equal(await autoCover(), true);
+  await page.uncheck("#auto-cover");
+  await page.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === false);
+  await page.check("#auto-cover");
+  await page.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === true);
+  await page.click("#settings > summary");
+
   step("7. Start");
   // 7. Start: rows go one by one with progress inside the row and a cooldown in between.
   await page.click("#start-all");
@@ -128,6 +140,12 @@ try {
   assert.ok(fs.existsSync(path.join(outDir, "影片 v2.mp4")));
   assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).length, 3, "the duplicate was not downloaded");
   assert.match(await page.textContent("#start-all"), /全部完成/);
+  // the cover of each finished video was saved by itself (v1 has one; the others are reported as having none)
+  await page.waitForFunction(() => /封面已存/.test(document.querySelector(".qrow .qsub")?.textContent ?? ""));
+  assert.match(await rowByTitle("範例影片").first().locator(".qsub").textContent(), /720p · 封面已存/);
+  assert.match(fs.readFileSync(path.join(outDir, "範例影片.jpg")).toString("latin1"), /v1:hq720/, "saved before anything was clicked");
+  assert.match(await rowByTitle("影片 v2").first().locator(".qsub").textContent(), /封面失敗：找不到封面圖片/);
+  fs.rmSync(path.join(outDir, "範例影片.jpg")); // (so the cover button below really has to save it)
   assert.match(await page.textContent("#queue-stats"), /3/);
   await shot("4-done");
 

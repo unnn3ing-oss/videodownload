@@ -521,3 +521,127 @@ test("the queue is restored from saved state", async () => {
   assert.deepEqual(rows(second.ctl).map((i) => i.id), ["a", "b"]);
   assert.equal(second.ctl.getState().running, false);
 });
+
+// ---- the cover of a finished video is saved by itself (setting "autoCover", on by default) ----
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+async function until(condition, what) { // a bounded wait: a missing feature fails the test instead of hanging it
+  for (let i = 0; i < 200 && !condition(); i += 1) await tick();
+  assert.ok(condition(), `gave up waiting for ${what}`);
+}
+const finish = (ctl, id, extra = {}) => ctl.onHostEvent({ type: "item_done", itemId: id, file: `/out/${id}.mp4`, height: 1080, ...extra });
+
+async function withCovers(ids, { hostOptions, covers } = {}) {
+  const env = setup(hostOptions, { covers: covers ?? Object.fromEntries(ids.map((id) => [coverUrl(id, "maxresdefault"), JPEG])) });
+  for (const id of ids) await env.ctl.add(url(id));
+  await env.ctl.idle();
+  return env;
+}
+
+test("a finished video gets its cover saved next to it, and the row says so", async () => {
+  const { host, ctl } = await withCovers(["a"]);
+  finish(ctl, "a");
+  await ctl.idle();
+  const [request] = host.of("save_cover");
+  assert.deepEqual([request.id, request.title, request.data], ["a", "影片 a", toBase64(JPEG)]);
+  assert.deepEqual([byId(ctl, "a").status, byId(ctl, "a").cover], ["done", { status: "saved", where: "folder" }]);
+});
+
+test("with the setting off nothing is saved by itself, and turning it back on applies to the next videos", async () => {
+  const { host, ctl } = await withCovers(["a", "b"]);
+  ctl.setSettings({ autoCover: false });
+  finish(ctl, "a");
+  await ctl.idle();
+  assert.deepEqual([host.of("save_cover"), byId(ctl, "a").cover], [[], null]);
+  ctl.setSettings({ autoCover: true });
+  finish(ctl, "b");
+  await ctl.idle();
+  assert.deepEqual(host.of("save_cover").map((m) => m.id), ["b"], "only the video that finished after it was turned back on");
+});
+
+test("a video that was skipped (already downloaded) gets no cover", async () => {
+  const { host, ctl } = await withCovers(["a"]);
+  finish(ctl, "a", { skipped: true });
+  await ctl.idle();
+  assert.deepEqual([host.of("save_cover"), byId(ctl, "a").status, byId(ctl, "a").cover], [[], "skipped", null]);
+});
+
+test("a video without any cover is still done; its row says the cover was not found", async () => {
+  const { host, ctl } = await withCovers(["a"], { covers: {} });
+  finish(ctl, "a");
+  await ctl.idle();
+  assert.deepEqual(host.of("save_cover"), []);
+  assert.deepEqual([byId(ctl, "a").status, byId(ctl, "a").cover], ["done", { status: "failed", error: "找不到封面圖片" }]);
+});
+
+test("when the host cannot save the cover the row says why and the video stays done", async () => {
+  const { host, ctl } = await withCovers(["a"]);
+  host.replies.save_cover = { type: "error", code: "bad_path", message: "無法儲存封面：磁碟已滿" };
+  finish(ctl, "a");
+  await ctl.idle();
+  assert.deepEqual([byId(ctl, "a").status, byId(ctl, "a").cover], ["done", { status: "failed", error: "無法儲存封面：磁碟已滿" }]);
+});
+
+test("covers are saved one after another and never hold up what the host is doing", async () => {
+  const { host, ctl } = await withCovers(["a", "b", "c"]);
+  const gates = [];
+  host.replies.save_cover = (m) => new Promise((resolve) => gates.push({ id: m.id, resolve }));
+  finish(ctl, "a");
+  finish(ctl, "b");
+  await until(() => gates.length > 0, "the first cover to be requested");
+  await tick();
+  assert.deepEqual(gates.map((g) => g.id), ["a"], "b waits for a's cover");
+  assert.equal(byId(ctl, "a").cover.status, "saving");
+  ctl.onHostEvent({ type: "progress", itemId: "c", percent: 5 }); // the next download goes on meanwhile
+  assert.equal(byId(ctl, "c").status, "downloading");
+  gates[0].resolve({ type: "cover_saved", file: "/out/a.jpg" });
+  await until(() => gates.length > 1, "the second cover to be requested");
+  assert.deepEqual(gates.map((g) => g.id), ["a", "b"]);
+  gates[1].resolve({ type: "cover_saved", file: "/out/b.jpg" });
+  await ctl.idle();
+  assert.deepEqual([byId(ctl, "a").cover.status, byId(ctl, "b").cover.status], ["saved", "saved"]);
+});
+
+test("a cover still being saved when the whole run ends is finished anyway", async () => {
+  const { host, ctl } = await withCovers(["a"]);
+  let release;
+  host.replies.save_cover = () => new Promise((resolve) => { release = resolve; });
+  finish(ctl, "a");
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: {} });
+  await until(() => release, "the cover to be requested");
+  release({ type: "cover_saved", file: "/out/a.jpg" });
+  await ctl.idle();
+  assert.equal(byId(ctl, "a").cover.status, "saved");
+});
+
+test("a repeated video (marked as a duplicate) is covered once, and a row removed meanwhile is no problem", async () => {
+  const twice = await withCovers(["a", "a"]);
+  finish(twice.ctl, "a");
+  await twice.ctl.idle();
+  assert.equal(twice.host.of("save_cover").length, 1);
+  assert.deepEqual(rows(twice.ctl).map((i) => i.cover?.status ?? null), ["saved", null]);
+
+  const gone = await withCovers(["a"]);
+  let release;
+  gone.host.replies.save_cover = () => new Promise((resolve) => { release = resolve; });
+  finish(gone.ctl, "a");
+  await until(() => release, "the cover to be requested");
+  gone.ctl.remove(rows(gone.ctl)[0].uid);
+  release({ type: "cover_saved", file: "/out/a.jpg" });
+  await gone.ctl.idle();
+  assert.deepEqual(rows(gone.ctl), []);
+});
+
+test("the cover button records its result in the row too, including the browser-download fallback", async () => {
+  const folder = await withCovers(["a"]);
+  assert.equal((await folder.ctl.downloadCover(rows(folder.ctl)[0].uid)).ok, true);
+  assert.deepEqual(byId(folder.ctl, "a").cover, { status: "saved", where: "folder" });
+
+  const old = await withCovers(["a"], { hostOptions: { ver: "0.1.0" } });
+  assert.equal((await old.ctl.downloadCover(rows(old.ctl)[0].uid)).where, "downloads");
+  assert.deepEqual(byId(old.ctl, "a").cover, { status: "saved", where: "downloads" });
+
+  const none = await withCovers(["a"], { covers: {} });
+  assert.equal((await none.ctl.downloadCover(rows(none.ctl)[0].uid)).ok, false);
+  assert.deepEqual(byId(none.ctl, "a").cover, { status: "failed", error: "找不到封面圖片" });
+});

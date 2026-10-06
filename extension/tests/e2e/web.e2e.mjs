@@ -144,6 +144,15 @@ async function withExtension() {
     await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 720);
     await web.click('#quality label:has(input[value="1080"])');
     await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 1080);
+    // the automatic cover setting: on by default, and the page's switch reaches the extension
+    const webAutoCover = () => panel.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover);
+    assert.equal(await web.isChecked("#auto-cover"), true);
+    assert.equal(await webAutoCover(), true);
+    await web.uncheck("#auto-cover");
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === false);
+    await panel.waitForFunction(() => document.getElementById("auto-cover").checked === false); // (the panel shows the same switch)
+    await web.check("#auto-cover");
+    await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover === true);
     await web.fill("#add-url", watch("v1"));
     await web.press("#add-url", "Enter");
     await web.waitForSelector('#queue-list .qrow[data-kind="waiting"]');

@@ -7,7 +7,7 @@ import path from "node:path";
 import { launchExtension, registerNativeHost, root } from "./helpers.mjs";
 import { startFakeYtimg } from "./fake-ytimg.mjs";
 
-const ytimg = await startFakeYtimg({ covers: { vA: ["hq720"] } });
+const ytimg = await startFakeYtimg({ covers: { vA: ["hq720"], vF: ["hq720"] } });
 const { context, extId, work, userData } = await launchExtension({ args: ytimg.args() });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
@@ -73,7 +73,10 @@ try {
     const a = row(state, "vA");
     const b = row(state, "vB");
     if (a.status === "done" && seen.doneA === null) seen.doneA = t;
-    if (b.status === "downloading" && seen.startB === null) seen.startB = t;
+    if (b.status === "downloading" && seen.startB === null) {
+      seen.startB = t;
+      seen.coverBeforeB = fs.existsSync(path.join(outDir, "影片vA.jpg")); // vA's cover comes before vB starts
+    }
     if (state.cooldown?.nextId === "vB") seen.sawCooldown = true;
     if (a.status === "downloading" && !seen.addedC) {
       seen.addedC = true;
@@ -84,6 +87,7 @@ try {
     assert.ok(t < 40000, "the run did not finish");
     await page.waitForTimeout(50);
   }
+  assert.equal(seen.coverBeforeB, true, "vA's cover was already in the folder when vB started");
   assert.ok(seen.sawCooldown, "a cooldown was reported for the next row");
   assert.ok(seen.startB - seen.doneA >= 2500, `vB started ${seen.startB - seen.doneA} ms after vA finished`);
   assert.deepEqual(state.items.map((i) => [i.id, i.status]), [
@@ -91,6 +95,22 @@ try {
   ]);
   assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).sort(),
     ["影片 vA.mp4", "影片 vB.mp4", "影片 vC.mp4", "相同標題.mp4"].sort());
+
+  // 3b. Covers are saved by themselves (on by default); a video without any cover is still done; the setting turns it off.
+  state = await until((s) => row(s, "vA").cover?.status === "saved", "vA's cover to be saved by itself");
+  assert.equal(state.settings.autoCover, true, "on by default");
+  assert.deepEqual(row(state, "vA").cover, { status: "saved", where: "folder" });
+  state = await until((s) => row(s, "vB").cover?.status === "failed", "vB's missing cover to be reported");
+  assert.deepEqual([row(state, "vB").status, row(state, "vB").cover.error], ["done", "找不到封面圖片"]);
+  await send({ type: "settings_set", settings: { autoCover: false } });
+  await send({ type: "queue_add", url: url("vF") });
+  state = await until((s) => row(s, "vF")?.status === "waiting", "vF to resolve");
+  await send({ type: "queue_start" });
+  state = await until((s) => !s.running && row(s, "vF")?.status === "done", "vF to finish", 30000);
+  await page.waitForTimeout(1500);
+  assert.ok(!fs.existsSync(path.join(outDir, "影片vF.jpg")), "no cover with the setting off");
+  assert.equal(row(await queue(), "vF").cover, null);
+  await send({ type: "settings_set", settings: { autoCover: true } });
 
   // 4. Removing the row that is downloading cancels only that one; the run continues.
   await send({ type: "queue_add", url: url("vD") });

@@ -79,6 +79,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* settings */
 .side section + section { padding-top: 4px; }
 .field { display: grid; gap: 6px; margin-bottom: 14px; min-width: 0; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 .field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; gap: 3px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; }
 .segmented label { display: block; cursor: pointer; }

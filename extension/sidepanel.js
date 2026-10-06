@@ -131,6 +131,7 @@ function renderQueueView() {
   $("quality").querySelectorAll("input").forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);
+  $("auto-cover").checked = queue.settings.autoCover !== false;
 }
 
 function renderControls() {
@@ -406,6 +407,9 @@ $("start-all").addEventListener("click", async () => {
 });
 $("quality").addEventListener("change", (event) => {
   send({ type: "settings_set", settings: { quality: Number(event.target.value) } });
+});
+$("auto-cover").addEventListener("change", () => {
+  send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } });
 });
 for (const [id, key] of [["cooldown", "cooldownSec"], ["limit", "limit"]]) {
   $(id).addEventListener("change", () => send({ type: "settings_set", settings: { [key]: Number($(id).value) } }));
