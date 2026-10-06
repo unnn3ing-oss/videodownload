@@ -1,6 +1,7 @@
 import { classifyTabUrl } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runDoctor } from "./lib/doctor-view.js";
+import { macInstallCommand } from "./lib/setup-flow.js";
 import { createRequestIds } from "./lib/ids.js";
 import { summarize } from "./lib/queue.js";
 import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
@@ -422,6 +423,16 @@ $("doctor-fix").addEventListener("click", () => runDoctor(send, doctorUi(), true
 $("save-outdir").addEventListener("click", async () => {
   const result = await send({ type: "set_output_dir", path: $("outdir").value });
   note(result?.ok ? `已改為：${result.outputDir}` : result?.error ?? "無法使用這個資料夾", result?.ok ? "ok" : "error");
+});
+// Mac: the installer can also be run from one line in Terminal (no download, so macOS's security prompts stay out of it)
+chrome.runtime.getPlatformInfo().then((info) => { $("mac-line").hidden = info.os !== "mac"; }, () => {});
+$("copy-mac").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(macInstallCommand());
+    note("已複製。打開「終端機」貼上，再按 Enter。", "ok");
+  } catch {
+    note(`無法自動複製，請自己輸入：${macInstallCommand()}`, "error");
+  }
 });
 $("update").addEventListener("click", () => {
   note("更新中…");

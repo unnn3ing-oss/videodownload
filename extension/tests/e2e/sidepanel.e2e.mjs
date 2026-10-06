@@ -22,6 +22,8 @@ const t0 = Date.now();
 const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
 try {
+  // (the panel asks Chrome which system this is: here it is told "Mac", to see the one-line install command)
+  await context.addInitScript(() => { if (globalThis.chrome?.runtime?.getPlatformInfo) chrome.runtime.getPlatformInfo = async () => ({ os: "mac", arch: "arm64" }); });
   const page = await context.newPage();
   const shot = shotter(page);
   if (process.env.E2E_SCHEME) await page.emulateMedia({ colorScheme: process.env.E2E_SCHEME });
@@ -50,6 +52,13 @@ try {
   assert.match(await page.textContent("#queue-list"), /等待連線本機小程式/);
   assert.equal(await page.isDisabled("#start-all"), true);
   assert.equal(await page.inputValue("#add-url"), "", "the box is emptied after adding");
+  await page.waitForSelector("#mac-line:not([hidden])");
+  await page.click("#copy-mac");
+  await page.waitForFunction(() => /已複製/.test(document.getElementById("note").textContent));
+  await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.body.append(t); t.focus(); });
+  await page.keyboard.press("Control+V");
+  assert.equal(await page.inputValue("#paste-probe"), "curl -fsSL https://raw.githubusercontent.com/unnn3ing-oss/videodownload/main/extension/installers/install-mac.sh | bash");
+  await page.evaluate(() => document.getElementById("paste-probe").remove());
   await shot("1-not-installed");
 
   step("2. Register the real host (python) wired");

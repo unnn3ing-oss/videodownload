@@ -108,9 +108,10 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
 export const FIRST_SHOW_DELAY_MS = 1200; // a working install is not flashed at on its first visit
 export const SETTLE_MS = { extension: 3500, host: 8000 }; // time to find the extension, then to start the host
 
-// "setup" (the step by step window), "check" (the self-check) or "hidden".
-export function decideView({ firstVisit, deployed, detected, sinceLoadMs, dismissed = false }) {
+// "setup" (the step by step window), "check" (the self-check) or "hidden". `unhealthyMs`: how long it has not been working
+// (since the page loaded, or since it stopped working), so a short hiccup never pops a window up.
+export function decideView({ firstVisit, deployed, detected, unhealthyMs, dismissed = false }) {
   if (deployed || dismissed) return "hidden";
-  if (firstVisit) return sinceLoadMs >= FIRST_SHOW_DELAY_MS ? "setup" : "hidden";
-  return sinceLoadMs >= (detected ? SETTLE_MS.host : SETTLE_MS.extension) ? "check" : "hidden";
+  if (firstVisit) return unhealthyMs >= FIRST_SHOW_DELAY_MS ? "setup" : "hidden";
+  return unhealthyMs >= (detected ? SETTLE_MS.host : SETTLE_MS.extension) ? "check" : "hidden";
 }

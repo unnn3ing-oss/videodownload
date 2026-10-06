@@ -20,6 +20,13 @@ try {
   const web = await context.newPage();
   await web.goto(PAGES_URL);
   await web.waitForFunction(() => document.getElementById("outdir").value !== "", null, { timeout: 20000 });
+  // The install does not count as working (the host is too old), so the first visit's window stays up: its self-check says why.
+  await web.waitForSelector("#setup-dialog[open]");
+  await web.click("#tab-check");
+  await web.waitForSelector("#check-list li");
+  const verdict = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
+  assert.ok(verdict.some((r) => r.status === "error" && /版本太舊/.test(r.text)), "the self-check names the old host");
+  await web.click("#setup-close");
 
   await panel.fill("#add-url", "https://www.youtube.com/watch?v=v1");
   await panel.click("#add-btn");

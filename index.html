@@ -17,58 +17,10 @@
         <div><b>YouTube 批量下載器</b><span>網頁版 · 搭配本機小程式</span></div>
       </div>
 
-      <section aria-labelledby="flow-title">
-        <h2 id="flow-title">設定流程</h2>
-        <ol id="steps" class="steps">
-          <li class="st" data-step="1" data-s="now">
-            <span class="st-n">1</span>
-            <div class="st-b">
-              <strong>部署擴充功能</strong>
-              <span>選一個<b>空的</b>資料夾，網頁會把最新版擴充功能寫進去，也可以改下載 ZIP。</span>
-              <div class="st-a">
-                <button id="deploy-pick" class="btn small primary" type="button">選擇資料夾並寫入</button>
-                <button id="deploy-zip" class="btn small" type="button">改下載 ZIP</button>
-              </div>
-              <p id="deploy-status" class="st-note" role="status" aria-live="polite" hidden></p>
-              <p class="st-ok">✓ 已完成</p>
-            </div>
-          </li>
-          <li class="st" data-step="2" data-s="todo">
-            <span class="st-n">2</span>
-            <div class="st-b">
-              <strong>在 Chrome 載入</strong>
-              <span>開啟 chrome://extensions，打開「開發人員模式」，按「載入未封裝項目」，選剛才的資料夾（用 ZIP 要先解壓縮）。</span>
-              <div class="st-a">
-                <button id="deploy-copy" class="btn small" type="button">複製 chrome://extensions</button>
-              </div>
-              <p class="st-ok">✓ 已偵測到擴充功能<span id="ext-version"></span></p>
-              <p id="ext-version-note" class="st-note" data-kind="error" role="status" aria-live="polite" hidden></p>
-            </div>
-          </li>
-          <li class="st" data-step="3" data-s="todo">
-            <span class="st-n">3</span>
-            <div class="st-b">
-              <strong>部署本機小程式</strong>
-              <span>下載安裝檔並執行（Windows 雙擊；Mac 右鍵「打開」）。它同時是修復工具：之後遇到任何問題，重新執行它就會自動檢查並修復，最後列出每一項的結果。</span>
-              <div class="st-a">
-                <button id="deploy-installer" class="btn small" type="button">下載安裝檔</button>
-              </div>
-              <p class="st-ok">✓ 已安裝</p>
-            </div>
-          </li>
-          <li class="st" data-step="4" data-s="todo">
-            <span class="st-n">4</span>
-            <div class="st-b">
-              <strong>連線</strong>
-              <span>安裝完成後會自動連線，不用重新整理。沒有反應時再按「啟動」。</span>
-              <div class="st-a">
-                <button id="start" class="btn small" type="button">啟動</button>
-              </div>
-              <p class="st-ok">✓ 已連線</p>
-            </div>
-          </li>
-        </ol>
+      <section class="setup-chip" aria-label="設定狀態">
+        <button id="open-setup" class="btn" type="button"><span id="setup-dot" class="chip-dot" data-s="todo" aria-hidden="true"></span><span id="setup-chip-text">設定流程</span></button>
       </section>
+
 
       <section aria-labelledby="settings-title">
         <h2 id="settings-title">下載設定</h2>
@@ -142,6 +94,88 @@
       </section>
     </main>
   </div>
+
+  <dialog id="setup-dialog" class="setup-dialog" aria-labelledby="setup-title">
+    <div class="sd-head">
+      <h2 id="setup-title">設定流程</h2>
+      <div class="sd-tabs" role="tablist" aria-label="畫面">
+        <button id="tab-steps" class="btn small" type="button" role="tab" aria-selected="true">設定步驟</button>
+        <button id="tab-check" class="btn small" type="button" role="tab" aria-selected="false">自我檢查</button>
+      </div>
+      <button id="setup-close" class="btn small" type="button" aria-label="關閉">✕</button>
+    </div>
+    <div class="sd-body">
+      <div id="view-steps">
+        <p class="sd-lead">照順序完成四個步驟。完成並確認能下載後，這個視窗會自動關閉。</p>
+        <ol id="steps" class="steps">
+          <li class="st" data-step="1" data-s="now">
+            <span class="st-n">1</span>
+            <div class="st-b">
+              <strong>部署擴充功能</strong>
+              <span>建立一個<b>空的</b>資料夾（建議就用下面這個預設資料夾），網頁會把最新版擴充功能寫進去，也可以改下載 ZIP。</span>
+              <div class="folder-row"><code id="default-folder"></code><button id="copy-folder" class="btn small" type="button">複製資料夾路徑</button></div>
+              <p id="folder-hint" class="st-note"></p>
+              <div class="st-a">
+                <button id="deploy-pick" class="btn small primary" type="button">選擇資料夾並寫入</button>
+                <button id="deploy-zip" class="btn small" type="button">改下載 ZIP</button>
+              </div>
+              <p id="deploy-status" class="st-note" role="status" aria-live="polite" hidden></p>
+              <p class="st-ok">✓ 已完成</p>
+            </div>
+          </li>
+          <li class="st" data-step="2" data-s="todo">
+            <span class="st-n">2</span>
+            <div class="st-b">
+              <strong>在 Chrome 載入</strong>
+              <span>開啟 chrome://extensions，打開「開發人員模式」，按「載入未封裝項目」，選剛才的資料夾（用 ZIP 要先解壓縮）。</span>
+              <div class="st-a">
+                <button id="deploy-copy" class="btn small" type="button">複製 chrome://extensions</button>
+                <button id="copy-folder-2" class="btn small" type="button">複製資料夾路徑</button>
+              </div>
+              <p class="st-ok">✓ 已偵測到擴充功能<span id="ext-version"></span></p>
+              <p id="ext-version-note" class="st-note" data-kind="error" role="status" aria-live="polite" hidden></p>
+            </div>
+          </li>
+          <li class="st" data-step="3" data-s="todo">
+            <span class="st-n">3</span>
+            <div class="st-b">
+              <strong>部署本機小程式</strong>
+              <span>安裝檔也是修復工具：之後遇到任何問題，重新執行它就會自動檢查並修復，最後列出每一項的結果。</span>
+              <div id="mac-install" class="st-box" hidden>
+                <span>Mac：複製下面這一行，貼到「終端機」（按 Cmd+空白鍵，輸入「終端機」）再按 Enter。不用下載、不會跳出 macOS 的安全性提示。</span>
+                <div class="cmd-row"><code id="mac-command"></code><button id="copy-mac-command" class="btn small primary" type="button">複製安裝指令</button></div>
+              </div>
+              <div class="st-a">
+                <button id="deploy-installer" class="btn small" type="button">下載安裝檔</button>
+              </div>
+              <span id="installer-hint">Windows：下載後雙擊，若出現 SmartScreen 按「其他資訊」→「仍要執行」。</span>
+              <p class="st-ok">✓ 已安裝</p>
+            </div>
+          </li>
+          <li class="st" data-step="4" data-s="todo">
+            <span class="st-n">4</span>
+            <div class="st-b">
+              <strong>連線</strong>
+              <span>安裝完成後會自動連線，不用重新整理。沒有反應時再按「啟動」。</span>
+              <div class="st-a">
+                <button id="start" class="btn small" type="button">啟動</button>
+              </div>
+              <p class="st-ok">✓ 已連線</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+      <div id="view-check" hidden>
+        <p id="check-lead" class="sd-lead">網頁會逐項檢查哪裡還沒好，並告訴你下一步。</p>
+        <ul id="check-list" class="dr-list"></ul>
+        <p id="check-summary" class="dr-summary" role="status" aria-live="polite"></p>
+        <div class="sd-actions">
+          <button id="check-again" class="btn small primary" type="button">重新檢查</button>
+          <button id="check-to-steps" class="btn small" type="button">回到設定步驟</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
   <script type="module" src="web/app.js"></script>
 </body>
 </html>

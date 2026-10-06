@@ -124,6 +124,26 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 .card .qlist { padding: 6px 8px 8px; }
 .card .qrow { padding: 10px; gap: 14px; }
 
+
+/* setup window: the step by step flow in the middle of the page, and the self-check */
+.setup-chip .btn { width: 100%; display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
+.chip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: none; }
+.chip-dot[data-s="ok"] { background: var(--ok); }
+.setup-dialog { width: min(92vw, 600px); max-height: 88vh; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 80px rgb(10 20 40 / 35%); overflow: hidden; }
+.setup-dialog[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.setup-dialog::backdrop { background: rgb(15 23 42 / 55%); backdrop-filter: blur(3px); }
+.sd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.sd-head h2 { flex: 1 1 auto; font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--ink); margin: 0; }
+.sd-tabs { display: flex; gap: 4px; }
+.sd-tabs [aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.sd-body { padding: 18px 20px 22px; overflow-y: auto; min-width: 0; }
+.sd-lead { margin-bottom: 14px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.sd-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.folder-row, .cmd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.folder-row code, .cmd-row code { flex: 1 1 220px; min-width: 0; padding: 6px 9px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); font: 12px/1.45 var(--mono); overflow-wrap: anywhere; }
+.st-box { display: grid; gap: 2px; margin-top: 6px; padding: 9px 10px; border-radius: 10px; background: var(--accent-soft); }
+.st-box > span { font-size: 12px; color: var(--ink); line-height: 1.45; }
+
 .is-locked .addc, .is-locked #queue-card { opacity: .55; } /* (the cards are also `inert`: no clicks, no keyboard) */
 
 @media (max-width: 860px) {

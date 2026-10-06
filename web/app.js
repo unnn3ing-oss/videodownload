@@ -7,7 +7,10 @@ import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
 import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../extension/lib/connection.js";
 import { installerPendingText } from "../extension/lib/installer.js";
-import { runDoctor } from "../extension/lib/doctor-view.js";
+import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
+import {
+  decideView, defaultFolder, detectOs, folderHint, isDeployed, macInstallCommand, selfCheckItems, stepStates,
+} from "../extension/lib/setup-flow.js";
 
 const $ = (id) => document.getElementById(id);
 const client = createBridgeClient();
@@ -38,12 +41,9 @@ function renderSteps() {
   const stale = versionNotice({ extensionVersion: version, pageVersion });
   setText($("ext-version-note"), stale ?? "");
   setHidden($("ext-version-note"), !stale);
-  const running = status.state === "running";
-  const installed = running || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
-  const done = [detected || wroteFiles, detected, detected && installed, detected && running];
-  const current = done.indexOf(false);
+  const states = stepStates({ detected, wroteFiles, status });
   document.querySelectorAll("#steps .st").forEach((step, index) => {
-    step.dataset.s = done[index] ? "done" : index === current ? "now" : "todo";
+    step.dataset.s = states[index];
   });
 }
 
@@ -105,7 +105,108 @@ function renderQueueArea() {
 function render() {
   renderSteps();
   renderQueueArea();
+  renderSetupWindow();
 }
+
+// ---------- the setup window: the steps in the middle of the page, and the self-check ----------
+// The first visit opens it. Once the install works it closes by itself and the page remembers that. Later visits leave it
+// shut while it works; when it does not, the self-check opens (after a moment to connect), and closes again once it works.
+const os = detectOs();
+const FLAG = "ytdl-setup-done";
+const readFlag = () => { try { return localStorage.getItem(FLAG) === "1"; } catch { return false; } };
+const writeFlag = () => { try { localStorage.setItem(FLAG, "1"); } catch { /* private window: it just asks again next time */ } };
+const dialog = $("setup-dialog");
+const loadedAt = Date.now();
+let everWorked = readFlag();
+let wasDeployed = false;
+let unhealthySince = loadedAt;
+let dismissed = false;
+let expectClose = false;
+let doctorChecks = null; // the host's own report, fetched when the self-check opens
+
+const deployed = () => isDeployed({
+  detected: client.detected(), status, hostOutdated: Boolean(queue?.hostOutdated), extensionVersion: client.version(), pageVersion,
+});
+
+function showView(name) {
+  $("view-steps").hidden = name !== "steps";
+  $("view-check").hidden = name !== "check";
+  $("tab-steps").setAttribute("aria-selected", String(name === "steps"));
+  $("tab-check").setAttribute("aria-selected", String(name === "check"));
+  if (name === "check") renderCheck();
+}
+
+function openSetup(name) {
+  showView(name);
+  if (!dialog.open) dialog.showModal();
+  if (name === "check") refreshDoctor();
+}
+
+function closeSetup() {
+  if (!dialog.open) return;
+  expectClose = true; // (the close event comes later: told apart from the person pressing Esc or the cross)
+  dialog.close();
+}
+
+dialog.addEventListener("close", () => {
+  if (expectClose) expectClose = false;
+  else dismissed = true;
+});
+
+function refreshDoctor() {
+  if (status.state !== "running") return;
+  send({ type: "doctor" }).then((result) => {
+    doctorChecks = result?.ok ? result.checks : null;
+    renderCheck();
+  }, () => {});
+}
+
+function renderCheck() {
+  const items = selfCheckItems({
+    detected: client.detected(), everDetected, extensionVersion: client.version(), pageVersion, status,
+    hostOutdated: Boolean(queue?.hostOutdated), gaveUp, doctor: doctorChecks,
+  });
+  renderChecks($("check-list"), items);
+  setText($("check-summary"), summarizeChecks(items).text);
+}
+
+function renderSetupWindow() {
+  const ok = deployed();
+  const now = Date.now();
+  if (ok && !wasDeployed) { // it works now: hide the window and remember
+    wasDeployed = true;
+    everWorked = true;
+    dismissed = false;
+    writeFlag();
+    closeSetup();
+  } else if (!ok && wasDeployed) { // it stopped working: start counting
+    wasDeployed = false;
+    unhealthySince = now;
+    dismissed = false;
+  }
+  setText($("setup-chip-text"), ok ? "已連線 · 設定流程" : "尚未完成設定 · 開啟設定流程");
+  $("setup-dot").dataset.s = ok ? "ok" : "todo";
+  if (dialog.open && !$("view-check").hidden) renderCheck();
+  if (ok) return;
+  const view = decideView({ firstVisit: !everWorked, deployed: false, detected: client.detected(), unhealthyMs: now - unhealthySince, dismissed });
+  if (view !== "hidden" && !dialog.open) openSetup(view === "check" ? "check" : "steps");
+}
+
+$("open-setup").addEventListener("click", () => { dismissed = false; openSetup("steps"); });
+$("setup-close").addEventListener("click", () => dialog.close());
+$("tab-steps").addEventListener("click", () => showView("steps"));
+$("tab-check").addEventListener("click", () => { showView("check"); refreshDoctor(); });
+$("check-to-steps").addEventListener("click", () => showView("steps"));
+$("check-again").addEventListener("click", () => {
+  autoConnect.reset();
+  gaveUp = false;
+  doctorChecks = null;
+  send({ type: "start" }).catch(() => {});
+  refresh();
+  refreshDoctor();
+  render();
+});
+setInterval(renderSetupWindow, 500); // time passing alone can be what opens the window
 
 async function refresh() {
   try {
@@ -250,14 +351,33 @@ $("deploy-zip").addEventListener("click", async () => {
   }
 });
 
-$("deploy-copy").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText("chrome://extensions");
-    $("deploy-copy").textContent = "已複製";
-  } catch {
-    setNote("deploy-status", "無法自動複製，請自己在網址列輸入 chrome://extensions", "error");
-  }
-});
+// Every "copy" button: the text goes to the clipboard and the button says so for a moment.
+function copyButton(id, text, failure) {
+  const button = $(id);
+  const label = button.textContent;
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(typeof text === "function" ? text() : text);
+      button.textContent = "已複製";
+      clearTimeout(button._copied);
+      button._copied = setTimeout(() => { button.textContent = label; }, 2000);
+    } catch {
+      setNote("deploy-status", failure, "error");
+    }
+  });
+}
+copyButton("deploy-copy", "chrome://extensions", "無法自動複製，請自己在網址列輸入 chrome://extensions");
+copyButton("copy-folder", () => defaultFolder(os), `無法自動複製，請自己輸入資料夾名稱：${defaultFolder(os)}`);
+copyButton("copy-folder-2", () => defaultFolder(os), `無法自動複製，請自己輸入資料夾名稱：${defaultFolder(os)}`);
+copyButton("copy-mac-command", () => macInstallCommand(), `無法自動複製，請自己輸入：${macInstallCommand()}`);
+
+// what this computer is shown
+$("default-folder").textContent = defaultFolder(os);
+$("folder-hint").textContent = folderHint(os);
+$("mac-command").textContent = macInstallCommand();
+setHidden($("mac-install"), os === "win"); // (an unknown system sees both)
+setHidden($("installer-hint"), os === "mac");
+if (os === "mac") $("deploy-installer").textContent = "改下載安裝檔（備用）";
 
 $("deploy-installer").addEventListener("click", async () => {
   try {

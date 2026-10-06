@@ -34,6 +34,10 @@ function line(check) {
   return item;
 }
 
+export function renderChecks(list, checks) {
+  list.replaceChildren(...checks.map(line));
+}
+
 // ui: { check, fix, list, summary, fixed } (the buttons and the three places the answer is written to)
 export async function runDoctor(send, ui, fix = false) {
   ui.check.disabled = true;
@@ -44,7 +48,7 @@ export async function runDoctor(send, ui, fix = false) {
     const result = await send({ type: "doctor", fix });
     if (!result?.ok) throw new Error(result?.error ?? "檢查失敗");
     const checks = Array.isArray(result.checks) ? result.checks : [];
-    ui.list.replaceChildren(...checks.map(line));
+    renderChecks(ui.list, checks);
     ui.summary.textContent = summarizeChecks(checks).text;
     ui.fix.hidden = !needsAttention(checks);
     if (fix) ui.fixed.textContent = result.fixed?.length ? `已執行：${result.fixed.join("；")}` : "沒有可以自動修復的項目";

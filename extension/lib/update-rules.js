@@ -1,4 +1,4 @@
-export const MAX_FILES = 50;
+export const MAX_FILES = 100; // (the extension has about 45 files; the host side keeps its own, smaller limit)
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 const HOST_FILE = /^[A-Za-z0-9_]+\.py$/;

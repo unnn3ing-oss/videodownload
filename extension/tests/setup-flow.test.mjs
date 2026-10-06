@@ -153,22 +153,22 @@ test("the host's own environment report replaces the quick one when it has been 
 // ---------------- when the window opens ----------------
 
 test("the first visit opens the setup window (after a moment, so that a working install is not flashed at)", () => {
-  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, sinceLoadMs: 100 }), "hidden");
-  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, sinceLoadMs: FIRST_SHOW_DELAY_MS }), "setup");
-  assert.equal(decideView({ firstVisit: true, deployed: true, detected: true, sinceLoadMs: 5000 }), "hidden");
+  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, unhealthyMs: 100 }), "hidden");
+  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, unhealthyMs: FIRST_SHOW_DELAY_MS }), "setup");
+  assert.equal(decideView({ firstVisit: true, deployed: true, detected: true, unhealthyMs: 5000 }), "hidden");
 });
 
 test("later visits stay quiet while it works and open the self-check when it does not, after a moment to connect", () => {
-  assert.equal(decideView({ firstVisit: false, deployed: true, detected: true, sinceLoadMs: 20000 }), "hidden");
-  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, sinceLoadMs: SETTLE_MS.extension - 1 }), "hidden");
-  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, sinceLoadMs: SETTLE_MS.extension }), "check");
-  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, sinceLoadMs: SETTLE_MS.extension }), "hidden", "the host still has time");
-  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, sinceLoadMs: SETTLE_MS.host }), "check");
+  assert.equal(decideView({ firstVisit: false, deployed: true, detected: true, unhealthyMs: 20000 }), "hidden");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, unhealthyMs: SETTLE_MS.extension - 1 }), "hidden");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, unhealthyMs: SETTLE_MS.extension }), "check");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, unhealthyMs: SETTLE_MS.extension }), "hidden", "the host still has time");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, unhealthyMs: SETTLE_MS.host }), "check");
   assert.ok(SETTLE_MS.host > SETTLE_MS.extension);
 });
 
 test("a window the person closed stays closed, and success always wins", () => {
-  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, sinceLoadMs: 9000, dismissed: true }), "hidden");
-  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, sinceLoadMs: 99999, dismissed: true }), "hidden");
-  assert.equal(decideView({ firstVisit: true, deployed: true, detected: true, sinceLoadMs: 9000, dismissed: false }), "hidden");
+  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, unhealthyMs: 9000, dismissed: true }), "hidden");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: true, unhealthyMs: 99999, dismissed: true }), "hidden");
+  assert.equal(decideView({ firstVisit: true, deployed: true, detected: true, unhealthyMs: 9000, dismissed: false }), "hidden");
 });

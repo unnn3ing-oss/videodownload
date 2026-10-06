@@ -10,6 +10,7 @@ import { chromium } from "playwright-core";
 import { PAGES_URL, launchExtension, manifest, registerNativeHost, root, servePages, shotter } from "./helpers.mjs";
 import { buildFixture } from "./fake-github.mjs";
 import { startFakeYtimg } from "./fake-ytimg.mjs";
+import { macInstallCommand } from "../../lib/setup-flow.js";
 
 const executablePath = process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium";
 const opfsPicker = (extra = "") => `
@@ -28,8 +29,27 @@ async function withoutExtension() {
     await context.addInitScript(opfsPicker());
     const page = await context.newPage();
     await page.goto(PAGES_URL);
+    // The first visit opens the setup flow as a window in the middle of the page.
+    await page.waitForSelector("#setup-dialog[open]", { timeout: 10000 });
+    const dialogBox = await page.locator("#setup-dialog").boundingBox();
+    const { width, height } = page.viewportSize();
+    assert.ok(Math.abs(dialogBox.x + dialogBox.width / 2 - width / 2) < 30, "centered horizontally");
+    assert.ok(Math.abs(dialogBox.y + dialogBox.height / 2 - height / 2) < 30, "and vertically");
+    assert.equal(await page.textContent("#default-folder"), "YT批量下載器擴充功能", "an unknown system gets the plain folder name");
     await page.waitForSelector("#no-extension:not([hidden])");
     assert.equal(await page.isDisabled("#add-btn"), true);
+    // "copy the folder path" puts it on the clipboard
+    await page.click("#copy-folder");
+    await page.waitForFunction(() => document.getElementById("copy-folder").textContent === "已複製"); // (the write is done)
+    await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.getElementById("setup-dialog").append(t); t.focus(); });
+    await page.keyboard.press("Control+V");
+    assert.equal(await page.inputValue("#paste-probe"), "YT批量下載器擴充功能");
+    await page.evaluate(() => document.getElementById("paste-probe").remove());
+    // closing it by hand keeps it closed, and the button beside the sidebar title brings it back
+    await page.click("#setup-close");
+    assert.equal(await page.locator("#setup-dialog").evaluate((d) => d.open), false);
+    await page.click("#open-setup");
+    assert.equal(await page.locator("#setup-dialog").evaluate((d) => d.open), true);
     assert.equal(await page.locator('#steps li[data-step="1"]').getAttribute("data-s"), "now");
 
     await page.click("#deploy-pick");
@@ -53,8 +73,39 @@ async function withoutExtension() {
     assert.equal(names.bad, null);
     assert.ok(names.names.includes("YouTube-batch-downloader-extension/manifest.json"));
     await context.close();
+    await perSystem(browser);
   } finally {
     await browser.close();
+  }
+}
+
+// ---------------------------------------------------------------- A2. what each system is shown
+const AGENTS = {
+  mac: ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "~/YT批量下載器擴充功能"],
+  win: ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "%USERPROFILE%\\YT批量下載器擴充功能"],
+};
+async function perSystem(browser) {
+  for (const [os, [userAgent, folder]] of Object.entries(AGENTS)) {
+    const context = await browser.newContext({ userAgent, acceptDownloads: true });
+    try {
+      await servePages(context);
+      const page = await context.newPage();
+      await page.goto(PAGES_URL);
+      await page.waitForSelector("#setup-dialog[open]", { timeout: 10000 });
+      assert.equal(await page.textContent("#default-folder"), folder, `${os}: the suggested folder`);
+      assert.match(await page.textContent("#folder-hint"), os === "mac" ? /Cmd\+Shift\+G/ : /網址列/, `${os}: how to paste it`);
+      assert.equal(await page.isVisible("#mac-install"), os === "mac", `${os}: the one-line command is for Macs`);
+      if (os === "mac") {
+        assert.equal(await page.textContent("#mac-command"), macInstallCommand());
+        await page.click("#copy-mac-command");
+        await page.waitForFunction(() => document.getElementById("copy-mac-command").textContent === "已複製");
+        await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.getElementById("setup-dialog").append(t); t.focus(); });
+        await page.keyboard.press("Control+V");
+        assert.equal(await page.inputValue("#paste-probe"), macInstallCommand(), "the command is on the clipboard");
+      }
+    } finally {
+      await context.close();
+    }
   }
 }
 
@@ -68,17 +119,27 @@ async function withExtension() {
   const stub = path.join(home, "bin", "yt-dlp");
   fs.copyFileSync(path.join(root, "host/tests/stub_ytdlp.py"), stub);
   fs.chmodSync(stub, 0o755);
+  for (const name of ["ffmpeg", "deno"]) { // stand-ins: the page calls an install "working" only when these parts are there too
+    fs.writeFileSync(path.join(home, "bin", name), `#!/bin/sh\necho ${name} 1.0\n`);
+    fs.chmodSync(path.join(home, "bin", name), 0o755);
+  }
   try {
     await servePages(context);
     const web = await context.newPage();
     const shot = shotter(web);
     if (process.env.E2E_SCHEME) await web.emulateMedia({ colorScheme: process.env.E2E_SCHEME });
     await web.goto(PAGES_URL);
+    const dialogOpen = () => web.locator("#setup-dialog").evaluate((d) => d.open);
+    const untilDialog = (open, ms = 20000) => web.waitForFunction((want) => document.getElementById("setup-dialog").open === want, open, { timeout: ms });
+    const flag = () => web.evaluate(() => localStorage.getItem("ytdl-setup-done"));
     const stepState = (n) => web.locator(`#steps li[data-step="${n}"]`).getAttribute("data-s");
     const untilStep = (n, state, ms = 15000) => web.waitForFunction(([i, s]) => document.querySelector(`#steps li[data-step="${i}"]`).dataset.s === s, [n, state], { timeout: ms });
 
-    // B1. The extension is found by itself; the host is not installed yet.
+    // B1. The extension is found by itself; the host is not installed yet. The first visit shows the setup window.
+    await untilDialog(true);
+    assert.equal(await flag(), null, "nothing is remembered before the install works");
     await untilStep(2, "done");
+    await shot("web-0-setup-window");
     assert.equal(await stepState(1), "done");
     assert.equal(await stepState(3), "now");
     assert.equal(await web.isVisible("#no-extension"), false);
@@ -125,6 +186,9 @@ async function withExtension() {
     registerNativeHost({ userData, wrapperPath: wrapper, extId });
     await untilStep(4, "done", 20000);
     assert.equal(await stepState(3), "done");
+    // It works: the window closes by itself and the page remembers that the install has worked.
+    await untilDialog(false);
+    assert.equal(await flag(), "1");
     await web.waitForFunction(() => document.getElementById("outdir").value !== "");
 
     // B3. The same list in the web page and in the side panel.
@@ -284,6 +348,16 @@ async function withExtension() {
     await new Promise((resolve) => setTimeout(resolve, 7000));
     assert.equal(count(), 5, "and it stays that way");
     assert.equal(await web.evaluate(() => window.__noteRewrites), 2, "the note was written twice (lost, then given up), not once per failed launch");
+    // It has not worked for a while, so the self-check came up by itself (not the steps), and it names the host.
+    await untilDialog(true, 30000);
+    assert.equal(await web.locator("#view-check").isVisible(), true);
+    await shot("web-0-self-check");
+    const stuck = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
+    assert.ok(stuck.some((r) => r.status === "error" && /本機小程式/.test(r.text)), "the host is named as the problem");
+    assert.ok(stuck.some((r) => r.status === "ok" && /擴充功能/.test(r.text)), "and the extension is shown as fine");
+    await web.click("#setup-close"); // the person closes it; it stays closed
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal(await dialogOpen(), false);
 
     // B10b. With the host gone the cover still arrives, through Chrome's own download (under the same name).
     await worker.evaluate(() => { // (Playwright renames saved files, so note what the extension asked Chrome for)
@@ -305,8 +379,30 @@ async function withExtension() {
     assert.deepEqual([...viaBrowser.subarray(0, 3)], [0xff, 0xd8, 0xff]);
     assert.match(viaBrowser.toString("latin1"), /v1:hq720/, "the original-size cover");
     fs.writeFileSync(wrapper, goodWrapper);
+    await web.click("#open-setup"); // the button beside the sidebar title brings the steps back; step 4 starts the host
     await web.click("#start");
     await web.waitForSelector("#conn-note", { state: "hidden", timeout: 20000 });
+    await untilStep(4, "done");
+    await untilDialog(false); // it works again: the window closes by itself
+
+    // B11. A later visit while everything works: the window stays shut.
+    await web.reload();
+    await web.waitForFunction(() => document.getElementById("outdir").value !== "", null, { timeout: 20000 });
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    assert.equal(await dialogOpen(), false, "a working install is left alone");
+    assert.equal(await flag(), "1");
+
+    // B12. A later visit when it does not work: the self-check opens by itself; once it is fixed the window closes again.
+    fs.writeFileSync(wrapper, "#!/bin/sh\nexit 1\n");
+    process.kill(Number(fs.readFileSync(path.join(work, "host.pid"), "utf8")));
+    await web.reload();
+    await untilDialog(true, 40000);
+    assert.equal(await web.locator("#view-check").isVisible(), true);
+    const trouble = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
+    assert.ok(trouble.some((r) => r.status !== "ok" && /本機小程式/.test(r.text)), "the host is the line that is not green (still trying, or given up)");
+    fs.writeFileSync(wrapper, goodWrapper);
+    await web.click("#check-again");
+    await untilDialog(false, 30000);
     await untilStep(4, "done");
 
     // B8. Narrow and wide layouts.
@@ -316,6 +412,11 @@ async function withExtension() {
       const narrow = await box("#quality");
       assert.ok(narrow.x >= 0 && narrow.x + narrow.width <= width, `the resolution choice fits at ${width}px`);
       await shot(`web-3-width-${width}`);
+      await web.click("#open-setup");
+      const small = await web.locator("#setup-dialog").boundingBox();
+      assert.ok(small.x >= 0 && small.y >= 0 && small.x + small.width <= width && small.y + small.height <= 900, `the setup window fits at ${width}px`);
+      assert.equal(await web.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `no overflow with the window open at ${width}px`);
+      await web.click("#setup-close");
     }
   } finally {
     await context.close();
