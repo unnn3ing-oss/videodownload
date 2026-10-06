@@ -158,6 +158,31 @@ try {
   await page.waitForFunction(() => document.querySelectorAll(".qrow").length === 3);
   assert.equal((await queueState()).items.length, 3);
 
+  step("11. Screen readers");
+  // 11. Every row's buttons say which video they belong to, messages are announced, the bar is a progress bar.
+  const labels = await page.$$eval(".qrow", (rows) => rows.map((row) => ({
+    copy: row.querySelector(".qcopy").getAttribute("aria-label"),
+    remove: row.querySelector(".qx").getAttribute("aria-label"),
+    cover: row.querySelector(".qcover").getAttribute("aria-label"),
+    retry: row.querySelector(".qretry").getAttribute("aria-label"),
+  })));
+  assert.equal(labels.length, 3);
+  for (const kind of ["copy", "remove", "cover", "retry"]) assert.equal(new Set(labels.map((l) => l[kind])).size, 3, `${kind} buttons are told apart`);
+  assert.deepEqual(labels[0], { copy: "複製內文：範例影片", remove: "從清單移除：範例影片", cover: "下載封面圖片：範例影片", retry: "重試：範例影片" });
+  const first = page.locator(".qrow").first();
+  const bar = await first.locator(".qbar").evaluate((n) => ({
+    role: n.getAttribute("role"), min: n.getAttribute("aria-valuemin"), max: n.getAttribute("aria-valuemax"),
+    now: n.getAttribute("aria-valuenow"), text: n.getAttribute("aria-valuetext"), label: n.getAttribute("aria-label"),
+  }));
+  assert.deepEqual([bar.role, bar.min, bar.max, bar.now], ["progressbar", "0", "100", "100"]);
+  assert.match(bar.text, /完成/);
+  assert.match(bar.label, /範例影片/);
+  const message = first.locator(".qflash");
+  assert.deepEqual(await message.evaluate((n) => [n.getAttribute("role"), n.getAttribute("aria-live"), n.hidden]), ["status", "polite", false],
+    "the message line is a live region that is in the page before it has anything to say");
+  await first.locator(".qcopy").click();
+  await page.waitForFunction(() => document.querySelector(".qrow .qflash")?.textContent === "已複製");
+
   assert.equal(await page.evaluate(() => {
     const pill = document.getElementById("status").getBoundingClientRect();
     const title = document.querySelector("h1").getBoundingClientRect();

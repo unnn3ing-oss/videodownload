@@ -72,11 +72,15 @@ function makeRow(item, handlers) {
   const head = el("div", "qhead");
   head.append(el("span", "qno"), el("div", "qtitle"));
   const bar = el("div", "qbar");
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
   bar.append(document.createElement("i"));
   const line = el("div", "qline");
   line.append(el("span", "qpill"), el("span", "qsub"));
   const flashLine = el("div", "qflash");
-  flashLine.hidden = true;
+  flashLine.setAttribute("role", "status"); // announced when it gets text, so it is in the page from the start
+  flashLine.setAttribute("aria-live", "polite");
   main.append(head, bar, line, flashLine);
 
   const acts = el("div", "qacts");
@@ -102,6 +106,15 @@ function updateRow(row, state, item, index, now) {
   const title = q(".qtitle");
   title.textContent = item.status === "fetching" ? "" : item.title;
   q(".qbar i").style.width = `${info.percent}%`;
+  const bar = q(".qbar");
+  bar.setAttribute("aria-valuenow", String(Math.round(info.percent)));
+  bar.setAttribute("aria-valuetext", [info.label, info.sub].filter(Boolean).join("，"));
+  const named = item.status === "fetching" || !item.title;
+  bar.setAttribute("aria-label", named ? "下載進度" : `${item.title} 的下載進度`);
+  // the same buttons repeat in every row, so each one names its video
+  for (const [selector, base] of [[".qcover", "下載封面圖片"], [".qcopy", "複製內文"], [".qretry", "重試"], [".qx", "從清單移除"]]) {
+    q(selector).setAttribute("aria-label", named ? base : `${base}：${item.title}`);
+  }
   q(".qpill").textContent = info.label;
   q(".qsub").textContent = info.sub;
   q(".qdur").textContent = item.duration ? duration(item.duration) : "";
@@ -164,12 +177,14 @@ export function flash(target, state, hint) {
   if (line) {
     line.textContent = hint;
     line.dataset.state = state;
-    line.hidden = false;
   }
   if (state !== "busy") {
     target._flash = setTimeout(() => {
       delete target.dataset.state;
-      if (line) line.hidden = true;
+      if (line) {
+        line.textContent = "";
+        delete line.dataset.state;
+      }
     }, 2600);
   }
 }
