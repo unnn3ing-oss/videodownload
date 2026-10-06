@@ -3,7 +3,8 @@ chcp 65001 >nul
 title YouTube 批量下載器 安裝程式
 echo YouTube 批量下載器 安裝程式 @@VERSION@@
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = [IO.File]::ReadAllText('%~f0', [Text.Encoding]::UTF8); $i = $f.LastIndexOf('#PS-START'); Invoke-Expression $f.Substring($i + 9)"
+set "SELF=%~f0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = [IO.File]::ReadAllText($env:SELF, [Text.Encoding]::UTF8); $i = $f.LastIndexOf('#PS-START'); Invoke-Expression $f.Substring($i + 9)"
 echo.
 pause
 exit /b

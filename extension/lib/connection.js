@@ -30,7 +30,7 @@ export function hostNotice({ detected, status, wasRunning, gaveUp }) {
 export function versionNotice({ extensionVersion, pageVersion }) {
   const known = (version) => Boolean(version) && versionAtLeast(version, "0");
   if (!known(extensionVersion) || !known(pageVersion) || versionAtLeast(extensionVersion, pageVersion)) return null;
-  return `網頁版是 v${pageVersion}，但你的擴充功能是 v${extensionVersion}，還在跑舊版。請按側邊欄「版本與更新」的「更新到最新版」（或重新執行安裝檔），再到 chrome://extensions 按這個擴充功能的重新載入。`;
+  return `網頁版是 v${pageVersion}，但你的擴充功能是 v${extensionVersion}，還在跑舊版。請關閉這個視窗，按頁面左側「版本與更新」的「更新到最新版」（會自動重新載入），或重新執行安裝檔。`;
 }
 
 // Once the extension is there the page keeps asking it to launch the host until it answers: the person may still

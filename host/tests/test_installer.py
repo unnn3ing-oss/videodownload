@@ -77,8 +77,7 @@ def win_net(exe_body=b"MZ yt-dlp", good_sum=True):
 
 def test_windows_tools_are_downloaded_checked_and_put_in_bin(tmp_path):
     net = win_net()
-    done = setup.ensure_tools(tmp_path, "win32", run=runs_ok({"yt-dlp.exe": 127, "deno.exe": 127, "ffmpeg.exe": 127}),
-                              fetch_file=net.file, fetch_text=net.text)
+    done = setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
     assert sorted(done) == ["Deno", "ffmpeg", "yt-dlp"]
     assert (tmp_path / "bin/yt-dlp.exe").read_bytes() == b"MZ yt-dlp"
     assert (tmp_path / "bin/deno.exe").read_text() == "deno"
@@ -408,3 +407,85 @@ def test_problems_in_the_final_report_mean_not_done(tmp_path, capsys):
     assert setup.run_setup(tmp_path / "home", "darwin", EXT_ID, parts=parts) == 1
     out = capsys.readouterr().out
     assert "✘" in out and "安裝尚未完成" in out and "安裝完成！" not in out
+
+
+# ---------------------------------------------------------------- found in review: re-runs, failures, Windows
+
+def test_a_half_written_folder_from_an_interrupted_install_is_finished_not_refused(tmp_path):
+    z = tmp_path / "ext.zip"
+    z.write_bytes(zip_bytes(EXT_FILES))
+    target = tmp_path / EXTENSION_FOLDER
+    (target / "lib").mkdir(parents=True)
+    (target / "background.js").write_text("// half")           # our file, no manifest yet
+    (target / "lib/a.js.part").write_text("partial")            # what an interrupted write leaves
+    result = setup.deploy_extension(z, tmp_path, expected_name="YouTube 批量下載器")
+    assert result.path == target and (target / "manifest.json").is_file() and (target / "background.js").read_text() == "// bg"
+    assert not list(target.rglob("*.part")), "leftovers of the interrupted write are removed"
+
+
+def test_an_old_single_file_yt_dlp_on_a_mac_is_replaced_even_though_it_runs(tmp_path):
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/yt-dlp").write_bytes(b"\xcf\xfa\xed\xfe" + b"\0" * 8)  # a compiled Mac program: Chrome cannot start it
+    net = mac_net()
+    engines = []
+    setup.ensure_tools(tmp_path, "darwin", run=runs_ok(), fetch_file=net.file, fetch_text=net.text, machine="arm64", which=lambda n: None,
+                       install_engine=lambda bin_dir: engines.append(bin_dir) or "1")
+    assert engines == [tmp_path / "bin"]
+
+
+def test_a_failed_first_run_does_not_make_the_next_one_skip_the_load_steps(tmp_path, capsys):
+    home = tmp_path / "home"
+    calls, parts = fake_parts(tmp_path, deploy=lambda parent: setup.Deployed(tmp_path / "ext", False, 3),
+                              report=lambda *a: [setup.doctor.Check("ffmpeg", "error", "ffmpeg 無法執行")])
+    assert setup.run_setup(home, "darwin", EXT_ID, parts=parts) == 1
+    assert setup.read_record(home) == {}, "nothing is recorded until the whole run worked"
+    calls2, parts2 = fake_parts(tmp_path, deploy=lambda parent: setup.Deployed(tmp_path / "ext", False, 3))
+    assert setup.run_setup(home, "darwin", EXT_ID, parts=parts2) == 0
+    assert "open" in calls2, "the person is still shown the folder and Chrome's extensions page"
+    assert "載入未封裝項目" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error", [PermissionError("拒絕存取"), NotADirectoryError("not a directory"), subprocess.TimeoutExpired("curl", 5), ValueError("odd")])
+def test_failures_that_are_not_ours_still_end_in_the_failure_message_not_a_traceback(tmp_path, capsys, error):
+    def boom(home, platform):
+        raise error
+    calls, parts = fake_parts(tmp_path, tools=boom)
+    assert setup.run_setup(tmp_path / "home", "darwin", EXT_ID, parts=parts) == 1
+    out = capsys.readouterr().out
+    assert "安裝失敗" in out and "截圖" in out
+
+
+def test_a_download_falls_back_to_urllib_when_curl_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(setup, "_curl_download", lambda url, dest: False)
+
+    class Response:
+        def __init__(self): self.data = io.BytesIO(b"payload")
+        def read(self, n=-1): return self.data.read(n)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(setup.urllib.request, "urlopen", lambda url, timeout=0: Response())
+    dest = tmp_path / "f"
+    setup.fetch_file("https://example.com/f", dest)
+    assert dest.read_bytes() == b"payload"
+
+
+def test_a_byte_order_mark_in_the_dialog_answer_is_ignored():
+    assert setup.choose_parent("win32", lambda cmd: (0, "\ufeffC:\\Users\\me\\Videos\r\n", "")) == Path("C:\\Users\\me\\Videos")
+
+
+def test_the_windows_yt_dlp_is_started_once_right_after_the_download(tmp_path):
+    net = win_net()
+    seen = []
+    def run(cmd):
+        seen.append(Path(cmd[0]).name)
+        return 0, "ok", ""
+    setup.ensure_tools(tmp_path, "win32", run=lambda cmd: (127, "", "") if not (tmp_path / "bin/yt-dlp.exe").exists() and "yt-dlp.exe" in cmd[0] else run(cmd),
+                       fetch_file=net.file, fetch_text=net.text)
+    assert "yt-dlp.exe" in seen, "its first (slow, antivirus-scanned) start happens here, not inside the self test"
+
+
+def test_a_downloaded_yt_dlp_that_cannot_start_is_reported_with_the_likely_cause(tmp_path):
+    net = win_net()
+    with pytest.raises(SetupError, match="防毒"):
+        setup.ensure_tools(tmp_path, "win32", run=runs_ok({"yt-dlp.exe": 127, "deno.exe": 127, "ffmpeg.exe": 127}), fetch_file=net.file, fetch_text=net.text)

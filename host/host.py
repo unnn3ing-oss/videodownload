@@ -328,6 +328,9 @@ class Host:
                     payload["rolledBack"] = True
                 self._reply(msg, payload)
                 return
+            except Exception as exc:  # (a thread that dies silently leaves the extension waiting for its answer)
+                self._error(msg, "internal", f"更新擴充功能失敗：{exc}")
+                return
             folder = recorded_extension_folder(self.home)
             self._reply(msg, {"type": "update_ext_applied", "count": count, "folder": str(folder)})
 

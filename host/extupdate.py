@@ -95,18 +95,21 @@ def apply(home: Path, files: object, contents: dict[str, bytes], on_write: Calla
             raise ExtUpdateError("update_hash_mismatch", f"{entry['path']} 下載內容和 GitHub 上的不一致，已取消更新")
     ordered = [e["path"] for e in listed if e["path"] != "manifest.json"] + [e["path"] for e in listed if e["path"] == "manifest.json"]
     backup = _backup(home)
-    shutil.rmtree(backup, ignore_errors=True)
-    backup.mkdir(parents=True)
     replaced, added = [], []
-    for name in ordered:
-        target = folder / name
-        if target.exists():
-            (backup / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup / name)
-            replaced.append(name)
-        else:
-            added.append(name)
-    (backup / "_backup.json").write_text(json.dumps({"replaced": replaced, "added": added}), encoding="utf-8")
+    try:
+        shutil.rmtree(backup, ignore_errors=True)
+        backup.mkdir(parents=True)
+        for name in ordered:
+            target = folder / name
+            if target.exists():
+                (backup / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup / name)
+                replaced.append(name)
+            else:
+                added.append(name)
+        (backup / "_backup.json").write_text(json.dumps({"replaced": replaced, "added": added}), encoding="utf-8")
+    except OSError as exc:
+        raise ExtUpdateError("update_install_failed", f"無法備份擴充功能的舊檔案，已取消更新：{exc}") from exc
     try:
         for name in ordered:
             target = folder / name
@@ -116,10 +119,12 @@ def apply(home: Path, files: object, contents: dict[str, bytes], on_write: Calla
             os.replace(tmp, target)
             on_write(name)
     except Exception as exc:
+        for leftover in folder.rglob("*.part"):
+            leftover.unlink(missing_ok=True)
         try:
             _restore(home, folder)
-        except Exception:
-            pass
+        except Exception as restore_exc:
+            raise ExtUpdateError("update_install_failed", f"寫入擴充功能檔案失敗（{exc}），還原也失敗（{restore_exc}）。請重新執行安裝檔修復。") from exc
         raise ExtUpdateError("update_install_failed", f"寫入擴充功能檔案失敗，已還原：{exc}", rolled_back=True) from exc
     return len(ordered)
 

@@ -227,7 +227,11 @@ async function runUpdateNow(msg) {
   }
 }
 
+// While an update runs nothing else may touch the same files (the host's staging folder, the extension's own files).
+const UPDATE_WORK = new Set(["update_info", "update_check", "update_stage", "update_commit", "update_rollback"]);
+
 async function handle(msg) {
+  if (updating && UPDATE_WORK.has(msg.type)) return { ok: false, error: "正在更新中，請稍候" };
   const controller = await controllerReady;
   switch (msg.type) {
     case "ping": return { ok: true, pong: true };

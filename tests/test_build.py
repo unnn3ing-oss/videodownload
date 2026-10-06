@@ -306,3 +306,8 @@ def test_mac_installer_works_when_piped_into_bash_like_the_one_line_command(tmp_
     (tmp_path / "broken").mkdir()
     broken, _ = run_mac_installer(tmp_path / "broken", piped=True, ffmpeg_body="exit 1\n")
     assert broken.returncode != 0 and "安裝尚未完成" in broken.stdout
+
+
+def test_the_windows_bootstrap_does_not_break_on_an_apostrophe_in_its_own_path():
+    text = build.render_windows()
+    assert "$env:SELF" in text and "'%~f0'" not in text

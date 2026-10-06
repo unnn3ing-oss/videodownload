@@ -138,3 +138,24 @@ test("a host-only update (no extension files differ) is applied without touching
   assert.deepEqual(h.sent.map((m) => m.type), ["update_stage", "update_commit"]);
   assert.deepEqual(result, { extFiles: 0, hostFiles: 1 });
 });
+
+test("the host's slow steps are given time to finish (its own self-check alone can take 30 seconds)", async () => {
+  const h = host();
+  const timeouts = {};
+  const request = async (message, timeout) => { timeouts[message.type] = timeout; return h.request(message); };
+  const info = await collectUpdateInfo({ check: async () => latest(), hostRequest: h.request, fetchFn: fakeFetch(FILES), version: "1.0.0", key: KEY });
+  await applyUpdate({ info, hostRequest: request, fetchFn: fakeFetch(FILES), key: KEY });
+  assert.ok(timeouts.update_stage >= 90000 && timeouts.update_commit >= 60000 && timeouts.update_ext >= 60000, JSON.stringify(timeouts));
+});
+
+test("when the host files were replaced and putting them back fails too, the person is told exactly that", async () => {
+  const h = host({ fail: { update_ext: "磁碟已滿", update_rollback: "沒有可還原的備份" } });
+  const info = await collectUpdateInfo({ check: async () => latest(), hostRequest: h.request, fetchFn: fakeFetch(FILES), version: "1.0.0", key: KEY });
+  await assert.rejects(applyUpdate({ info, hostRequest: h.request, fetchFn: fakeFetch(FILES), key: KEY }), /磁碟已滿.*本機小程式已經更新.*再按一次/s);
+});
+
+test("a check that could not ask the host says so (hostChecked false) and never claims the host is up to date", async () => {
+  const info = await collectUpdateInfo({ check: async () => latest({ extChanged: [] }), hostRequest: null, fetchFn: fakeFetch(FILES), version: "1.0.0", key: KEY });
+  assert.equal(info.hasUpdate, false);
+  assert.equal(info.hostChecked, false);
+});

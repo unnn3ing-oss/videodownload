@@ -54,9 +54,9 @@ export async function applyUpdate({ info, hostRequest, fetchFn = fetch, key, onP
     if (info.hostChanged.length > 0) {
       onProgress({ step: "host", done: 0, total: info.hostChanged.length });
       const contents = Object.fromEntries(hostDownloads.map((file) => [file.path, toBase64(file.bytes)]));
-      const staged = await hostRequest({ type: "update_stage", commit: info.sha, files: entries(info.hostChanged), contents });
+      const staged = await hostRequest({ type: "update_stage", commit: info.sha, files: entries(info.hostChanged), contents }, 90000); // (its self-check alone can take 30 s)
       if (hostError(staged)) throw hostError(staged);
-      const committed = await hostRequest({ type: "update_commit" });
+      const committed = await hostRequest({ type: "update_commit" }, 60000);
       if (hostError(committed)) throw hostError(committed);
       hostCommitted = true;
     }
@@ -67,7 +67,12 @@ export async function applyUpdate({ info, hostRequest, fetchFn = fetch, key, onP
       if (hostError(written)) throw hostError(written);
     }
   } catch (error) {
-    if (hostCommitted) await hostRequest({ type: "update_rollback" }).catch(() => {});
+    if (hostCommitted) {
+      const back = await hostRequest({ type: "update_rollback" }).catch((e) => ({ type: "error", message: e.message }));
+      if (back.type === "error") {
+        throw new UpdateError(`${error.message}。本機小程式已經更新、擴充功能還沒有；請再按一次「更新到最新版」，或重新執行安裝檔。`, error.code);
+      }
+    }
     throw error;
   }
   return { extFiles: info.extChanged.length, hostFiles: info.hostChanged.length };

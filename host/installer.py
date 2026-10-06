@@ -64,19 +64,33 @@ def _curl() -> str | None:
     return shutil.which("curl")
 
 
+def _curl_download(url: str, dest: Path) -> bool:
+    """True when curl fetched it. (curl shows progress and trusts the system's certificates; on Windows its revocation check
+    is skipped, which company networks often break.)"""
+    curl = _curl()
+    if not curl:
+        return False
+    cmd = [curl, "-fL", "--retry", "3", "-o", str(dest), url]
+    if sys.platform.startswith("win"):
+        cmd.insert(1, "--ssl-no-revoke")
+    try:
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL, timeout=1800).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def fetch_file(url: str, dest: Path) -> None:
-    """curl when there is one (it trusts the system's certificates and shows progress), else urllib."""
+    """curl when it works, else urllib (which uses the system's certificates on Windows too)."""
     dest = Path(dest)
     say(f"    下載 {url}")
-    if _curl():
-        done = subprocess.run([_curl(), "-fL", "--retry", "3", "-o", str(dest), url], stdout=subprocess.DEVNULL, timeout=1800)
-        if done.returncode != 0:
-            raise SetupError(f"下載失敗（網路連線失敗？）：{url}")
+    if _curl_download(url, dest):
         return
     try:
         with urllib.request.urlopen(url, timeout=120) as response, open(dest, "wb") as out:  # noqa: S310 (fixed https addresses)
             shutil.copyfileobj(response, out)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        raise SetupError(f"下載失敗（網路連線失敗？）：{url}（{exc}）") from exc
+    except Exception as exc:  # http.client errors such as IncompleteRead
         raise SetupError(f"下載失敗：{url}（{exc}）") from exc
 
 
@@ -145,7 +159,7 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
     mac = platform == "darwin"
     try:
         engine = bin_dir / _exe("yt-dlp", platform)
-        if not _works(engine, "--version", run):
+        if doctor._check_engine(home, platform, run).status == "error":
             step("下載 yt-dlp 並驗證校驗碼")
             if mac:  # the unpacked build (see macos_engine): the single file one is blocked by macOS when Chrome starts it
                 try:
@@ -155,6 +169,8 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
             elif win:
                 engine.unlink(missing_ok=True)
                 _verified_ytdlp_exe(bin_dir, fetch_file, fetch_text)
+                if not _works(engine, "--version", run):  # its first start (virus scan, unpacking) is slow: it happens here, not in the self test
+                    raise SetupError("下載的 yt-dlp.exe 無法啟動：可能被防毒軟體攔截。請暫時允許 " + str(engine) + " 後重新執行安裝檔。")
             else:
                 raise SetupError("這個系統沒有對應的 yt-dlp 安裝方式（支援 Windows 與 Mac）")
             done.append("yt-dlp")
@@ -248,6 +264,18 @@ def _safe_member(name: str) -> bool:
     return all(part not in ("", ".", "..", ".git") for part in name.rstrip("/").split("/"))
 
 
+def _only_ours(folder: Path, names: list[str]) -> bool:
+    """Everything in the folder is a file of the package (or a half-written one): what an interrupted install leaves."""
+    wanted = set(names)
+    for path in Path(folder).rglob("*"):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(folder).as_posix()
+        if relative not in wanted and not (relative.endswith(".part") and relative[:-5] in wanted):
+            return False
+    return True
+
+
 def deploy_extension(package: Path, parent: Path, *, expected_name: str = EXTENSION_NAME,
                      on_write: Callable[[str], None] = lambda name: None) -> Deployed:
     """Write the extension's files where Chrome will load them from.
@@ -272,9 +300,11 @@ def deploy_extension(package: Path, parent: Path, *, expected_name: str = EXTENS
         else:
             target = parent / EXTENSION_FOLDER
             created = not target.exists()
-            if target.exists() and any(target.iterdir()) and not _is_extension(target, expected_name):
+            if target.exists() and any(target.iterdir()) and not _is_extension(target, expected_name) and not _only_ours(target, names):
                 raise SetupError(f"「{parent}」裡已經有一個叫「{EXTENSION_FOLDER}」的資料夾，而且裡面有其他檔案。請換一個位置，或把那個資料夾改名。")
         target.mkdir(parents=True, exist_ok=True)
+        for leftover in target.rglob("*.part"):
+            leftover.unlink(missing_ok=True)
         ordered = [n for n in names if n != "manifest.json"] + ["manifest.json"]  # last: a half-written folder is not loadable
         for name in ordered:
             dest = target / name
@@ -288,11 +318,13 @@ def deploy_extension(package: Path, parent: Path, *, expected_name: str = EXTENS
 
 # ---------------------------------------------------------------- the self test
 
-def selftest(launcher: Path, *, timeout: float = 30) -> dict:
+def selftest(launcher: Path, *, timeout: float = 90) -> dict:
     """Start the launcher the way Chrome does and read the host's first message ("ready", which includes running yt-dlp)."""
+    errors = tempfile.TemporaryFile()
     try:
-        proc = subprocess.Popen([str(launcher)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen([str(launcher)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors)
     except OSError as exc:
+        errors.close()
         raise SetupError(f"小程式的啟動檔無法執行：{exc}") from exc
     result: dict = {}
 
@@ -312,7 +344,8 @@ def selftest(launcher: Path, *, timeout: float = 30) -> dict:
         if "message" not in result:
             if proc.poll() is None:
                 raise SetupError(f"小程式啟動後 {int(timeout)} 秒沒有回應")
-            err = proc.stderr.read().decode("utf-8", errors="replace").strip()[-300:]
+            errors.seek(0)
+            err = errors.read().decode("utf-8", errors="replace").strip()[-300:]
             raise SetupError(f"小程式一啟動就結束了（結束碼 {proc.returncode}）{('：' + err) if err else ''}")
         message = result["message"]
         if message.get("type") != "ready":
@@ -327,11 +360,12 @@ def selftest(launcher: Path, *, timeout: float = 30) -> dict:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        errors.close()
 
 
 # ---------------------------------------------------------------- dialogs and what to do next
 
-_MAC_DIALOG = 'POSIX path of (choose folder with prompt "選擇要把「YT批量下載器」擴充功能放在哪個資料夾（會在裡面建立一個同名資料夾）")'
+_MAC_DIALOG = 'tell me to activate\nPOSIX path of (choose folder with prompt "選擇要把「YT批量下載器」擴充功能放在哪個資料夾（會在裡面建立一個同名資料夾）")'
 _WIN_DIALOG = ("Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [Text.Encoding]::UTF8; "
                "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
                "$d.Description = '選擇要把「YT批量下載器」擴充功能放在哪個資料夾（會在裡面建立一個同名資料夾）'; "
@@ -348,7 +382,7 @@ def choose_parent(platform: str, run: Run = run_capture) -> Path | None:
         code, out, _ = run(["powershell", "-NoProfile", "-STA", "-Command", _WIN_DIALOG])
     else:
         return None
-    text = out.strip()
+    text = out.lstrip("\ufeff").strip()
     if code != 0 or not text:
         return None
     return Path(text.rstrip("/") if text != "/" else text)
@@ -399,8 +433,10 @@ def run_setup(home: Path, platform: str, ext_id: str, *, parent: Path | None = N
         manifest = steps["register"](home, platform, ext_id)
 
         step("放好擴充功能的資料夾")
-        folder = recorded_extension_folder(home) if parent is None else None
-        if folder is None:
+        recorded = recorded_extension_folder(home) if parent is None else None
+        if recorded is not None:
+            deployed = steps["deploy"](recorded)
+        else:
             chosen = parent
             if chosen is None:
                 chosen = steps["choose"]()
@@ -408,10 +444,7 @@ def run_setup(home: Path, platform: str, ext_id: str, *, parent: Path | None = N
                     chosen = Path.home()
                     say("    沒有選擇資料夾，使用預設位置：使用者資料夾")
             deployed = steps["deploy"](chosen)
-        else:
-            deployed = steps["deploy"](folder)
         say(f"    {deployed.path}（{deployed.count} 個檔案）")
-        write_record(home, extension_folder=deployed.path, version=version)
 
         step("測試本機小程式能不能被 Chrome 啟動")
         ready = steps["selftest"](home, platform)
@@ -419,16 +452,17 @@ def run_setup(home: Path, platform: str, ext_id: str, *, parent: Path | None = N
 
         step("檢查安裝結果")
         problems = steps["report"](home, ext_id, manifest)
-    except SetupError as exc:
-        say(f"\n安裝失敗：{exc}")
+    except (SetupError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        say(f"\n安裝失敗：{exc if isinstance(exc, SetupError) else f'{type(exc).__name__}：{exc}'}")
         say("請截圖這個視窗，並聯絡提供工具的同事。")
         return 1
     if problems:
         say("\n安裝尚未完成：上面標著 ✘ 的項目需要處理。")
         say("照每一項下面的「→」建議做；解決不了就把這個視窗截圖給提供工具的同事。")
         return 1
+    write_record(home, extension_folder=deployed.path, version=version)  # (only now: a run that failed leaves the next one a fresh start)
     say("\n安裝完成！")
-    if deployed.created and open_things:
+    if recorded is None and open_things:  # the first run that worked: the extension still has to be loaded
         steps["open"](deployed.path)
         say("最後一步（只要做一次）：在 Chrome 的「擴充功能」頁面打開右上角「開發人員模式」，")
         say(f"按「載入未封裝項目」，選這個資料夾：\n    {deployed.path}")

@@ -154,3 +154,39 @@ def test_a_bad_extension_update_request_gets_an_error_reply_not_a_crash(tmp_path
     h.handle({"type": "update_ext", "reqId": 6, "files": [entry("a.js", b"x")], "contents": {"a.js": "***not base64***"}})
     h.wait(10)
     assert events[-1]["type"] == "error"
+
+
+# ---------------------------------------------------------------- found in review
+
+def test_a_failure_while_making_the_backup_is_an_update_error_not_a_dead_thread(tmp_path, monkeypatch):
+    home, ext = installed(tmp_path)
+    monkeypatch.setattr(extupdate.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+    with pytest.raises(ExtUpdateError, match="備份"):
+        extupdate.apply(home, [entry("background.js", b"// new")], {"background.js": b"// new"})
+    assert (ext / "background.js").read_text() == "// old"
+
+
+def test_a_restore_that_fails_is_not_reported_as_restored(tmp_path, monkeypatch):
+    home, ext = installed(tmp_path)
+    real = extupdate.os.replace
+    calls = []
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        return real(src, dst)
+
+    monkeypatch.setattr(extupdate.os, "replace", flaky)
+    monkeypatch.setattr(extupdate, "_restore", lambda *a: (_ for _ in ()).throw(OSError("locked")))
+    with pytest.raises(ExtUpdateError) as caught:
+        extupdate.apply(home, [entry("background.js", b"// new"), entry("lib/a.js", b"// new a")], {"background.js": b"// new", "lib/a.js": b"// new a"})
+    assert "還原也失敗" in caught.value.message and caught.value.rolled_back is False
+
+
+def test_an_unexpected_error_in_the_update_still_gets_an_error_reply(tmp_path, monkeypatch):
+    h, events, home, ext = new_host(tmp_path)
+    monkeypatch.setattr(extupdate, "apply", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    h.handle({"type": "update_ext", "reqId": 9, "files": [entry("a.js", b"x")], "contents": {"a.js": b64(b"x")}})
+    h.wait(10)
+    assert events[-1]["type"] == "error" and events[-1]["reqId"] == 9 and "boom" in events[-1]["message"]

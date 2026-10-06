@@ -261,8 +261,10 @@ async function refresh() {
 }
 
 // ---------- connection ----------
+let notRunningAt = 0; // the last time the host was seen not running (a reload and restart shows up as that)
 function setStatus(next) {
   status = next;
+  if (next.state !== "running") notRunningAt = Date.now();
   if (next.state === "running") hostWasRunning = true;
 }
 
@@ -369,6 +371,7 @@ const updateProgressText = ({ step, done, total }) => ({
 })[step] ?? "更新中…";
 
 function updateAdvice(info, connected) {
+  if (!info.canUpdateHere && !info.hostChecked) return "本機小程式還沒連線，所以不知道插件的資料夾在哪裡。請先讓它連線（設定流程最後一步的「啟動」），再更新。";
   if (!info.canUpdateHere) return "這份擴充功能不是用安裝檔放的，網頁不知道它的資料夾在哪裡。請到側邊面板「設定與工具」按「更新到最新版」（第一次要選一次資料夾），或重新執行安裝檔。";
   if (!connected) return "請先讓本機小程式連線（設定流程最後一步的「啟動」），再更新。";
   return "有新版本可以更新。";
@@ -381,7 +384,10 @@ function renderUpdate() {
   const hostVersion = connected ? status.ready?.hostVersion : null;
   setText($("up-current"), version ? `擴充功能 v${version}${hostVersion ? ` · 小程式 v${hostVersion}` : ""}` : "尚未連線");
   let latest = "尚未檢查";
-  if (updateInfo) latest = updateInfo.hasUpdate ? `${updateInfo.latestVersion ? `v${updateInfo.latestVersion}` : "有新版本"}（${updateInfo.message}）` : "已是最新版";
+  if (updateInfo) {
+    if (updateInfo.hasUpdate) latest = `${updateInfo.latestVersion ? `v${updateInfo.latestVersion}` : "有新版本"}（${updateInfo.message}）`;
+    else latest = updateInfo.hostChecked ? "已是最新版" : "擴充功能已是最新（小程式尚未連線，沒有比對）";
+  }
   setText($("up-latest"), latest);
   $("up-check").disabled = !detected || updateBusy;
   setHidden($("up-apply"), !updateInfo?.hasUpdate);
@@ -394,15 +400,18 @@ function renderUpdate() {
   }
 }
 
-async function checkUpdate({ quiet = false } = {}) {
-  if (updateBusy) return;
+async function checkUpdate({ quiet = false, inside = false } = {}) {
+  if (updateBusy && !inside) return;
   updateBusy = true;
   if (!quiet) setUpNote("檢查中…");
   try {
     const result = await send({ type: "update_info" });
     if (result?.ok) {
       updateInfo = result.info;
-      if (!quiet) upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : "已是最新版。", kind: result.info.hasUpdate ? "info" : "ok" };
+      if (!quiet) {
+        const none = result.info.hostChecked ? "已是最新版。" : "擴充功能已是最新；小程式還沒連線，沒有比對它。";
+        upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : none, kind: result.info.hasUpdate ? "info" : "ok" };
+      }
     } else if (!quiet) {
       upNote = { text: result?.error ?? "檢查失敗", kind: "error" };
     }
@@ -414,14 +423,18 @@ async function checkUpdate({ quiet = false } = {}) {
   }
 }
 
-// After the reload the extension is gone for a moment: wait until it answers again (and its host runs again).
-async function waitUntilBack(minMs = 2500, maxMs = 45000) {
+// After the reload the extension is gone for a moment. It is back when its host has been seen restarting (or its version is the
+// new one) and runs again. A page that sees nothing happen for a while concludes that no reload happened.
+async function waitUntilBack(expected, before, maxMs = 45000, noRestartAfterMs = 8000) {
   const started = Date.now();
   while (Date.now() - started < maxMs) {
     await new Promise((resolve) => setTimeout(resolve, 500));
-    if (Date.now() - started >= minMs && client.detected() && status.state === "running") return true;
+    if (!(client.detected() && status.state === "running")) continue;
+    const restarted = notRunningAt >= started;
+    if (restarted || (expected && expected !== before && client.version() === expected)) return { back: true, restarted: true };
+    if (Date.now() - started >= noRestartAfterMs) return { back: true, restarted: false };
   }
-  return false;
+  return { back: false, restarted: false };
 }
 
 async function applyUpdate() {
@@ -429,6 +442,8 @@ async function applyUpdate() {
   updateBusy = true;
   setUpNote("準備更新…");
   const expected = updateInfo.latestVersion;
+  const before = client.version();
+  const hadExtensionFiles = updateInfo.extCount > 0;
   try {
     const result = await send({ type: "update_apply", sha: updateInfo.sha });
     if (!result?.ok) throw new Error(result?.error ?? "更新失敗");
@@ -438,18 +453,23 @@ async function applyUpdate() {
       return;
     }
     setUpNote("更新完成，擴充功能正在重新載入…", "ok");
-    const back = await waitUntilBack();
+    const { back } = await waitUntilBack(expected, before);
     const now = client.version();
-    if (!back) upNote = { text: "已更新，但擴充功能還沒回應。請到 chrome://extensions 確認它已啟用，再重新整理本頁。", kind: "error" };
+    if (!back) upNote = { text: "已更新，但擴充功能或本機小程式還沒回應。請到 chrome://extensions 確認擴充功能已啟用，再重新整理本頁。", kind: "error" };
     else if (expected && now !== expected) upNote = { text: `已重新載入，但擴充功能的版本仍是 v${now}（預期 v${expected}）。載入的可能不是更新的那個資料夾，請到 chrome://extensions 確認它的載入路徑。`, kind: "error" };
     else upNote = { text: expected ? `已更新到 v${expected}。` : "已更新。", kind: "ok" };
     updateInfo = null;
+    if (upNote.kind === "ok") { // compare again: files that still differ mean the loaded extension is not the folder that was written
+      await checkUpdate({ quiet: true, inside: true });
+      if (hadExtensionFiles && updateInfo?.extCount > 0) {
+        upNote = { text: `更新後比對，擴充功能仍有 ${updateInfo.extCount} 個檔案和最新版不同。載入的可能不是更新的那個資料夾，請到 chrome://extensions 確認它的載入路徑。`, kind: "error" };
+      }
+    }
   } catch (error) {
     upNote = { text: error.message, kind: "error" };
   } finally {
     updateBusy = false;
     renderUpdate();
-    if (upNote.kind === "ok") checkUpdate({ quiet: true });
   }
 }
 

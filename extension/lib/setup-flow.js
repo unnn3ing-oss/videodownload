@@ -76,7 +76,7 @@ const item = (id, status, title, detail = "", fix = "") => ({ id, status, title,
 function hostItem({ status, hostOutdated, gaveUp }) {
   if (status.state === "running") {
     return hostOutdated
-      ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}，或在側邊面板「版本與更新」按「更新」`)
+      ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}，或按頁面左側「版本與更新」的「更新到最新版」`)
       : item("host", "ok", `本機小程式已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
   }
   if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 1、2）：Mac 貼一行指令，Windows 下載後雙擊");
@@ -106,7 +106,7 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   const list = [item("extension", "ok", `擴充功能${extensionVersion ? ` v${extensionVersion}` : "已偵測到"}`)];
   if (versionNotice({ extensionVersion, pageVersion })) {
     list.push(item("version", "error", `擴充功能 v${extensionVersion} 比網頁版 v${pageVersion} 舊，還在跑舊版`, "",
-      "按側邊欄「版本與更新」的「更新到最新版」（或重新執行安裝檔），再到 chrome://extensions 按這個擴充功能的重新載入"));
+      "關閉這個視窗，按頁面左側「版本與更新」的「更新到最新版」（會自動重新載入），或重新執行安裝檔"));
   }
   list.push(hostItem({ status, hostOutdated, gaveUp }));
   if (status.state === "running") {
