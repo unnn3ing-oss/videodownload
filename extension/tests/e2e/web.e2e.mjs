@@ -106,7 +106,8 @@ async function withExtension() {
 
     // B2. Installing the host is enough: the page connects without any click.
     const wrapper = path.join(work, "host.sh");
-    fs.writeFileSync(wrapper, `#!/bin/sh\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexec python3 "${path.join(root, "host/host.py")}"\n`);
+    const goodWrapper = `#!/bin/sh\necho $$ > "${path.join(work, "host.pid")}"\nexport YTDL_HOME="${home}"\nexport YTDL_STUB_DELAY=2\nexec python3 "${path.join(root, "host/host.py")}"\n`;
+    fs.writeFileSync(wrapper, goodWrapper);
     fs.chmodSync(wrapper, 0o755);
     registerNativeHost({ userData, wrapperPath: wrapper, extId });
     await untilStep(4, "done", 20000);
@@ -215,6 +216,41 @@ async function withExtension() {
       setTimeout(() => resolve(count), 800);
     }));
     assert.equal(answers, 1, "one bridge answers, not two");
+
+    // B9. The extension goes away: the page says so and locks the list, for the keyboard too; it comes back by itself.
+    const locked = () => web.evaluate(() => ({ add: document.getElementById("add-card").inert, list: document.getElementById("queue-card").inert }));
+    assert.deepEqual(await locked(), { add: false, list: false });
+    const bridge = (action) => worker.evaluate(async (what) => {
+      const [tab] = await chrome.tabs.query({ url: "https://unnn3ing-oss.github.io/videodownload/*" });
+      if (what === "drop") await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { window.__ytdlBridge.dispose(); delete window.__ytdlBridge; } });
+      else await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["bridge.js"] });
+    }, action);
+    await bridge("drop");
+    await web.waitForSelector("#no-extension:not([hidden])", { timeout: 20000 });
+    assert.match(await web.textContent("#no-extension"), /連線中斷.*重新整理/);
+    assert.deepEqual(await locked(), { add: true, list: true });
+    await web.evaluate(() => document.getElementById("add-url").focus());
+    assert.notEqual(await web.evaluate(() => document.activeElement?.id), "add-url", "the box cannot be focused while locked");
+    await bridge("restore");
+    await web.waitForSelector("#no-extension", { state: "hidden", timeout: 20000 });
+    assert.deepEqual(await locked(), { add: false, list: false });
+    await web.waitForFunction(() => document.querySelector(".qrow") !== null);
+
+    // B10. The local host closes right after it is launched: the page retries a few times, then stops and says what to do.
+    const launches = path.join(work, "launches.log");
+    const count = () => (fs.existsSync(launches) ? fs.readFileSync(launches, "utf8").trim().split("\n").length : 0);
+    fs.writeFileSync(wrapper, `#!/bin/sh\necho x >> "${launches}"\nexit 1\n`);
+    process.kill(Number(fs.readFileSync(path.join(work, "host.pid"), "utf8")));
+    await web.waitForSelector("#conn-note:not([hidden])", { timeout: 20000 });
+    assert.match(await web.textContent("#conn-note"), /連線中斷/);
+    await web.waitForFunction(() => /自動重試/.test(document.getElementById("conn-note").textContent), null, { timeout: 40000 });
+    assert.equal(count(), 5, "five launches, no more");
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+    assert.equal(count(), 5, "and it stays that way");
+    fs.writeFileSync(wrapper, goodWrapper);
+    await web.click("#start");
+    await web.waitForSelector("#conn-note", { state: "hidden", timeout: 20000 });
+    await untilStep(4, "done");
 
     // B8. Narrow and wide layouts.
     for (const width of [320, 480]) {

@@ -97,10 +97,11 @@
       <div id="no-extension" class="notice" role="status" hidden>
         還沒偵測到擴充功能。請先照左邊的步驟 1、2 部署並載入；完成後這裡會自動解鎖，不用重新整理。這個網頁需要 Chrome（電腦版）。
       </div>
+      <div id="conn-note" class="notice" role="status" aria-live="polite" hidden></div>
       <div id="note" class="notice" role="status" aria-live="polite" data-kind="error" hidden></div>
       <div id="host-note" class="notice" role="status" aria-live="polite" data-kind="error" hidden></div>
 
-      <section class="card addc" aria-label="增加影片">
+      <section id="add-card" class="card addc" aria-label="增加影片">
         <label class="in">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
           <input id="add-url" type="text" placeholder="貼上 YouTube 網址，按 Enter 或「增加」" autocomplete="off" spellcheck="false" aria-label="影片網址">
@@ -113,7 +114,7 @@
         <p id="add-note" class="add-note" role="status" aria-live="polite" hidden></p>
       </section>
 
-      <section class="card" aria-labelledby="queue-title">
+      <section id="queue-card" class="card" aria-labelledby="queue-title">
         <div class="qh">
           <h3 id="queue-title">下載清單</h3>
           <div id="queue-stats" class="stats"></div>

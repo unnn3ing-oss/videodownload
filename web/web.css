@@ -122,7 +122,7 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 .card .qlist { padding: 6px 8px 8px; }
 .card .qrow { padding: 10px; gap: 14px; }
 
-.is-locked .addc, .is-locked .card:last-child { opacity: .55; pointer-events: none; }
+.is-locked .addc, .is-locked #queue-card { opacity: .55; } /* (the cards are also `inert`: no clicks, no keyboard) */
 
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }

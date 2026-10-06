@@ -5,12 +5,17 @@ import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker
 import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
+import { createAutoConnect, extensionNotice, hostNotice } from "../extension/lib/connection.js";
 
 const $ = (id) => document.getElementById(id);
 const client = createBridgeClient();
 let status = { state: "stopped", ready: null, detail: null };
 let queue = null;
 let wroteFiles = false;
+let everDetected = false; // the extension answered at some point in this page session
+let hostWasRunning = false; // so is the host
+let gaveUp = false; // automatic launching of the host stopped (it keeps closing right away)
+const autoConnect = createAutoConnect();
 
 const LONG = new Set(["queue_copy_text", "queue_download_cover"]);
 const send = (message) => client.request(message, LONG.has(message.type) ? 120000 : 20000);
@@ -38,7 +43,15 @@ function renderQueueArea() {
   const detected = client.detected();
   const connected = detected && status.state === "running";
   document.body.classList.toggle("is-locked", !detected);
-  $("no-extension").hidden = detected;
+  $("add-card").inert = !detected;
+  $("queue-card").inert = !detected;
+  const missing = extensionNotice({ detected, everDetected });
+  $("no-extension").textContent = missing ?? "";
+  $("no-extension").hidden = !missing;
+  const hostText = hostNotice({ detected, status, wasRunning: hostWasRunning, gaveUp });
+  $("conn-note").textContent = hostText?.text ?? "";
+  $("conn-note").dataset.kind = hostText?.kind ?? "info";
+  $("conn-note").hidden = !hostText;
   for (const id of ["add-url", "add-btn", "cooldown", "limit"]) $(id).disabled = !detected;
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
   $("outdir").disabled = !connected;
@@ -87,27 +100,49 @@ function render() {
 async function refresh() {
   try {
     const [nextStatus, nextQueue] = await Promise.all([send({ type: "get_status" }), send({ type: "queue_get" })]);
-    if (nextStatus?.type === "status") status = nextStatus;
+    if (nextStatus?.type === "status") setStatus(nextStatus);
     if (nextQueue?.ok) queue = nextQueue.state;
   } catch { /* the extension went away again: the next change event handles it */ }
   render();
 }
 
 // ---------- connection ----------
+function setStatus(next) {
+  status = next;
+  if (next.state === "running") hostWasRunning = true;
+}
+
 client.onChange((detected) => {
-  if (detected) refresh();
-  else render();
+  if (detected) {
+    everDetected = true;
+    autoConnect.reset();
+    gaveUp = false;
+    refresh();
+  } else {
+    render();
+  }
 });
 client.onState((state) => { queue = state; renderQueueArea(); });
-client.onStatus((next) => { status = next; render(); });
+client.onStatus((next) => { setStatus(next); render(); });
 
 // Once the extension is there, keep trying to reach the local host until it answers (it may still be installing).
+// A host that closes right after it starts is only retried a few times (see createAutoConnect).
 function connectHost() {
-  if (client.detected() && status.state !== "running" && status.state !== "forbidden") send({ type: "start" }).catch(() => {});
+  const next = autoConnect.next(client.detected(), status);
+  if (next.gaveUp !== gaveUp) {
+    gaveUp = next.gaveUp;
+    render();
+  }
+  if (next.send) send({ type: "start" }).catch(() => {});
 }
 setInterval(connectHost, 3000);
 client.onChange((detected) => { if (detected) connectHost(); });
-$("start").addEventListener("click", () => send({ type: "start" }).catch(() => {}));
+$("start").addEventListener("click", () => {
+  autoConnect.reset();
+  gaveUp = false;
+  render();
+  send({ type: "start" }).catch(() => {});
+});
 
 // ---------- adding and running ----------
 async function addFromBox() {
