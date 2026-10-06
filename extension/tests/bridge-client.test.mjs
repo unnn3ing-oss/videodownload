@@ -14,7 +14,7 @@ async function pageWithClient() {
   const client = createBridgeClient({ pingEveryMs: 2000, lostAfterMs: 6000 });
   const changes = [];
   client.onChange((value) => changes.push(value));
-  const hello = () => handlers.forEach((fn) => fn({ source: win, origin: ORIGIN, data: { source: "ytdl-ext", hello: { version: "x" } } }));
+  const hello = (version = "x") => handlers.forEach((fn) => fn({ source: win, origin: ORIGIN, data: { source: "ytdl-ext", hello: { version } } }));
   return { client, changes, hello };
 }
 
@@ -48,6 +48,26 @@ test("a long pause of the page's timers (hidden tab, sleeping computer) is not t
     // ...but an extension that really is gone is still noticed
     for (let i = 0; i < 4; i += 1) mock.timers.tick(2000);
     assert.equal(client.detected(), false);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("the page learns which version of the extension it is talking to, and forgets it when the extension is gone", async () => {
+  const { client, hello } = await pageWithClient();
+  try {
+    const seen = [];
+    client.onVersion((version) => seen.push(version));
+    assert.equal(client.version(), null);
+    hello("0.2.0");
+    assert.equal(client.version(), "0.2.0");
+    hello("0.2.0"); // every ping is answered: nothing changed
+    hello("0.2.1"); // the extension was reloaded with new files
+    assert.equal(client.version(), "0.2.1");
+    assert.deepEqual(seen, ["0.2.0", "0.2.1"], "told only when it changes");
+    for (let i = 0; i < 4; i += 1) mock.timers.tick(2000);
+    assert.equal(client.detected(), false);
+    assert.equal(client.version(), null);
   } finally {
     mock.timers.reset();
   }

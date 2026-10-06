@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createAutoConnect, extensionNotice, hostNotice } from "../lib/connection.js";
+import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../lib/connection.js";
 
 const stopped = { state: "stopped", ready: null, detail: "Native host has exited." };
 const closed = () => ({ ...stopped }); // every launch that ends makes the extension send a new report
@@ -66,4 +66,17 @@ test("hostNotice explains a lost host, a refused connection and a host that will
   assert.equal(gaveUp.kind, "error");
   assert.match(gaveUp.text, /啟動/);
   assert.match(hostNotice({ detected: true, status: { state: "forbidden", ready: null, detail: "x" }, wasRunning: false, gaveUp: false }).text, /拒絕/);
+});
+
+test("versionNotice warns only when the extension is older than this page, and says what to do", () => {
+  assert.equal(versionNotice({ extensionVersion: "0.2.1", pageVersion: "0.2.1" }), null);
+  assert.equal(versionNotice({ extensionVersion: "0.3.0", pageVersion: "0.2.1" }), null, "a newer extension is fine");
+  assert.equal(versionNotice({ extensionVersion: "0.2.1", pageVersion: null }), null, "page version unknown");
+  assert.equal(versionNotice({ extensionVersion: null, pageVersion: "0.2.1" }), null, "extension not there");
+  assert.equal(versionNotice({ extensionVersion: "abc", pageVersion: "0.2.1" }), null, "not a version number");
+  const text = versionNotice({ extensionVersion: "0.2.0", pageVersion: "0.2.1" });
+  assert.match(text, /0\.2\.0/);
+  assert.match(text, /0\.2\.1/);
+  assert.match(text, /步驟 1/);
+  assert.match(text, /重新載入/);
 });

@@ -62,6 +62,7 @@ try {
   await state("running");
   assert.match(await page.textContent("#status"), /已啟動/);
   assert.match(await page.textContent("#engine-info"), /2099\.01\.01/);
+  assert.match(await page.textContent("#ver-current"), new RegExp(`擴充功能 ${manifest.version.replaceAll(".", "\\.")}`), "the panel shows the extension version");
   assert.equal(await page.isVisible("#setup"), false, "onboarding collapses once running");
   await page.waitForSelector('.qrow[data-kind="waiting"]');
   assert.match(await page.textContent("#queue-list"), /範例影片/);

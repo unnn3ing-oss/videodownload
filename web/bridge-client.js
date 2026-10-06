@@ -9,13 +9,15 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
   let lastSeen = 0;
   let nextId = 1;
   const pending = new Map();
-  const listeners = { change: [], state: [], status: [] };
+  let version = null; // the extension's version, from its hello
+  const listeners = { change: [], state: [], status: [], version: [] };
   const emit = (kind, value) => listeners[kind].forEach((callback) => callback(value));
 
   function setDetected(value) {
     if (detected === value) return;
     detected = value;
     if (!value) {
+      version = null;
       for (const { reject, timer } of pending.values()) { clearTimeout(timer); reject(new Error("與擴充功能的連線中斷")); }
       pending.clear();
     }
@@ -27,7 +29,14 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
     const data = event.data;
     if (!data || data.source !== FROM_EXTENSION) return;
     lastSeen = Date.now();
-    if (data.hello) setDetected(true);
+    if (data.hello) {
+      const next = data.hello.version ?? null;
+      if (next !== version) {
+        version = next;
+        emit("version", next);
+      }
+      setDetected(true);
+    }
     if (data.push?.type === "queue_state") emit("state", data.push.state);
     if (data.push?.type === "status") emit("status", data.push);
     if (data.id !== undefined && pending.has(data.id)) {
@@ -53,6 +62,8 @@ export function createBridgeClient({ pingEveryMs = 2000, lostAfterMs = 6000 } = 
 
   return {
     detected: () => detected,
+    version: () => version,
+    onVersion: (callback) => listeners.version.push(callback),
     onChange: (callback) => listeners.change.push(callback),
     onState: (callback) => listeners.state.push(callback),
     onStatus: (callback) => listeners.status.push(callback),

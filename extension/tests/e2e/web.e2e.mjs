@@ -86,6 +86,19 @@ async function withExtension() {
     assert.equal(await web.isDisabled("#start-all"), true);
     await shot("web-1-setup");
 
+    // B1v. The page shows which version of the extension it found, and warns when that is older than the page.
+    assert.equal(await web.textContent("#ext-version"), `（v${manifest.version}）`);
+    assert.equal(await web.isVisible("#ext-version-note"), false, "same version: no warning");
+    await context.route(`${PAGES_URL}extension/manifest.json`, (route) => route.fulfill({
+      contentType: "application/json", body: JSON.stringify({ ...manifest, version: "9.9.9" }) }));
+    const newer = await context.newPage();
+    await newer.goto(PAGES_URL);
+    await newer.waitForSelector("#ext-version-note:not([hidden])", { timeout: 20000 });
+    const warning = await newer.textContent("#ext-version-note");
+    assert.ok(warning.includes("9.9.9") && warning.includes(manifest.version), "the warning names both versions");
+    await newer.close();
+    await context.unroute(`${PAGES_URL}extension/manifest.json`);
+
     // B1a. The resolution choice sits on the add line, between the address box and the "add" button.
     const box = (selector) => web.locator(selector).boundingBox();
     const [field, group, addButton] = [await box("#add-url"), await box("#quality"), await box("#add-btn")];

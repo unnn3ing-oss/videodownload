@@ -1,3 +1,5 @@
+import { versionAtLeast } from "./version.js";
+
 // What the web page says about its connection to the extension and the local host, and when it should keep
 // asking the extension to launch the host. Plain functions: the page only draws what they return.
 
@@ -21,6 +23,14 @@ export function hostNotice({ detected, status, wasRunning, gaveUp }) {
   }
   if (wasRunning) return { kind: "info", text: "與本機小程式的連線中斷，下載已暫停。正在嘗試重新連線…" };
   return null;
+}
+
+// The page and the extension come from the same repository, so an extension older than the page was probably not
+// reloaded (or was written into another folder) after the files were updated.
+export function versionNotice({ extensionVersion, pageVersion }) {
+  const known = (version) => Boolean(version) && versionAtLeast(version, "0");
+  if (!known(extensionVersion) || !known(pageVersion) || versionAtLeast(extensionVersion, pageVersion)) return null;
+  return `網頁版是 v${pageVersion}，但你的擴充功能是 v${extensionVersion}，還在跑舊版。請到步驟 1 重新寫入檔案，再到 chrome://extensions 按這個擴充功能的重新載入。`;
 }
 
 // Once the extension is there the page keeps asking it to launch the host until it answers: the person may still

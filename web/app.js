@@ -5,7 +5,7 @@ import { copyRowText, downloadRowCover, renderHostNote, renderQueue, setHidden, 
 import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
-import { createAutoConnect, extensionNotice, hostNotice } from "../extension/lib/connection.js";
+import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../extension/lib/connection.js";
 import { installerPendingText } from "../extension/lib/installer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -16,6 +16,7 @@ let wroteFiles = false;
 let everDetected = false; // the extension answered at some point in this page session
 let hostWasRunning = false; // so is the host
 let gaveUp = false; // automatic launching of the host stopped (it keeps closing right away)
+let pageVersion = null; // the version of the extension files this page was published with
 const autoConnect = createAutoConnect();
 
 const LONG = new Set(["queue_copy_text", "queue_download_cover"]);
@@ -31,6 +32,11 @@ function setNote(id, text, kind = "info") {
 // ---------- rendering ----------
 function renderSteps() {
   const detected = client.detected();
+  const version = detected ? client.version() : null;
+  setText($("ext-version"), version ? `（v${version}）` : "");
+  const stale = versionNotice({ extensionVersion: version, pageVersion });
+  setText($("ext-version-note"), stale ?? "");
+  setHidden($("ext-version-note"), !stale);
   const running = status.state === "running";
   const installed = running || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
   const done = [detected || wroteFiles, detected, detected && installed, detected && running];
@@ -124,6 +130,11 @@ client.onChange((detected) => {
   }
 });
 client.onState((state) => { queue = state; renderQueueArea(); });
+client.onVersion(() => renderSteps());
+fetch("extension/manifest.json", { cache: "no-cache" })
+  .then((response) => (response.ok ? response.json() : null))
+  .then((manifest) => { pageVersion = manifest?.version ?? null; renderSteps(); })
+  .catch(() => {}); // without it the page just cannot compare versions
 client.onStatus((next) => { setStatus(next); render(); });
 
 // Once the extension is there, keep trying to reach the local host until it answers (it may still be installing).
