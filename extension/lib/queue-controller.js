@@ -81,6 +81,15 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     starting = true;
     stopRequested = false;
     stopAfterStart = false;
+    // The rows count as handed over from the moment the request goes out: a slow playlist that answers before the
+    // host's reply must not take their place as the original.
+    const ids = items.map((i) => i.id);
+    ids.forEach((id) => sentIds.add(id));
+    commit(markSent(state, ids, true));
+    const unsend = () => {
+      ids.forEach((id) => sentIds.delete(id));
+      commit(markSent(state, ids, false));
+    };
     try {
       // "busy" while we think nothing runs means the host is still wrapping up the previous job: wait a moment.
       for (let attempt = 0; ; attempt += 1) {
@@ -88,18 +97,26 @@ export function createController({ host, save, notify, fetchFn = fetch, download
           type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
         }, TIMEOUT.download);
         if (event.type === "started") {
-          sentIds.clear();
-          items.forEach((i) => sentIds.add(i.id));
-          commit(markSent(markRunning(state, true), items.map((i) => i.id), true));
+          commit(markRunning(state, true));
           break;
         }
-        if (event.code !== "busy") return fail(event.message ?? "無法開始下載");
-        if (state.running) break; // a job really is running: its events will update the list
-        if (attempt >= 2) return fail(event.message ?? "無法開始下載");
+        if (event.code !== "busy") {
+          unsend();
+          return fail(event.message ?? "無法開始下載");
+        }
+        if (state.running) { // a job really is running: its events update the list, and these rows join it below
+          unsend();
+          break;
+        }
+        if (attempt >= 2) {
+          unsend();
+          return fail(event.message ?? "無法開始下載");
+        }
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
       if (stopAfterStart) cancelJob(); // the job exists now, so there is something to cancel
     } catch (error) {
+      unsend();
       return fail(error.message);
     } finally {
       starting = false;

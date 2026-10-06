@@ -221,6 +221,50 @@ test("a slow playlist that lands a same-title video in front of a row already ha
   assert.equal(byId(ctl, "b").status, "downloading", "progress still reaches the row that is really downloading");
 });
 
+test("a slow playlist that lands while the download request is still in flight does not hide the row being sent", async () => {
+  const { host, ctl } = setup();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  host.replies.resolve = async (m) => {
+    const id = idOf(m.urls[0]);
+    if (id === "list") await gate;
+    return { type: "resolved", items: [{ id: id === "list" ? "p" : id, title: "同一個標題", url: m.urls[0], duration: 1 }] };
+  };
+  await ctl.add(url("list"));
+  await ctl.add(url("b"));
+  while (!byId(ctl, "b")) await new Promise((resolve) => setImmediate(resolve));
+  host.replies.download = async () => {
+    release(); // the playlist answers before the host's "started" does
+    while (!byId(ctl, "p")) await new Promise((resolve) => setImmediate(resolve));
+    return { type: "started", jobId: "j" };
+  };
+  assert.deepEqual(await ctl.start(), { ok: true });
+  await ctl.idle();
+  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["p", false], ["b", true]]);
+  assert.deepEqual(host.of("enqueue"), [], "the twin is not sent");
+  ctl.onHostEvent({ type: "progress", itemId: "b", percent: 10 });
+  assert.equal(byId(ctl, "b").status, "downloading");
+});
+
+test("rows are not left marked sent when the start request fails, or when the host turns out to be busy with a running job", async () => {
+  const failing = await withVideos(["a"]);
+  failing.host.replies.download = { type: "error", code: "bad", message: "x" };
+  assert.equal((await failing.ctl.start()).ok, false);
+  assert.deepEqual(rows(failing.ctl).map((i) => i.sent), [false]);
+  failing.host.replies.download = { type: "started", jobId: "j" };
+  assert.equal((await failing.ctl.start()).ok, true, "and the same row can be sent again");
+  assert.deepEqual(failing.host.of("download").at(-1).items.map((i) => i.id), ["a"]);
+
+  const busy = await withVideos(["a"]);
+  busy.host.replies.download = async () => {
+    busy.ctl.onHostEvent({ type: "started", jobId: "other" }); // another screen's job is already running
+    return { type: "error", code: "busy", message: "已有下載工作進行中" };
+  };
+  assert.equal((await busy.ctl.start()).ok, true);
+  await busy.ctl.idle();
+  assert.deepEqual(busy.host.of("enqueue").map((m) => m.items.map((i) => i.id)), [["a"]], "it joins the job that is running");
+});
+
 test("rows enqueued during a run are marked sent too, and the marks end with the job", async () => {
   const { host, ctl } = await withVideos(["a"]);
   await ctl.start();
