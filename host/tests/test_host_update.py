@@ -36,7 +36,7 @@ def test_update_check_reports_changed_names(tmp_path):
     h, events, home = new_host(tmp_path)
     same = (home / "host" / "quality.py").read_bytes()
     h.handle({"type": "update_check", "reqId": 5, "files": [entry("version.py", NEW), entry("quality.py", same)]})
-    assert events == [{"type": "update_status", "changed": ["version.py"], "total": 2, "reqId": 5}]
+    assert events == [{"type": "update_status", "changed": ["version.py"], "total": 2, "extensionFolder": None, "reqId": 5}]
 
 
 def test_update_check_rejects_bad_files(tmp_path):

@@ -51,31 +51,31 @@ test("the suggested folder is a plain name, not a path (the folder does not exis
 const running = { state: "running", ready: { hostVersion: "0.2.3", ytdlpVersion: "2026.08.19", ffmpegOk: true, jsRuntimeOk: true }, detail: null };
 const stopped = { state: "stopped", ready: null, detail: null };
 
-test("the six steps, in the order the person does them", () => {
-  assert.deepEqual(STEP_LABELS, ["建立資料夾", "取得檔案", "開啟擴充頁", "載入插件", "安裝小程式", "完成"]);
+test("the four steps, in the order the person does them", () => {
+  assert.deepEqual(STEP_LABELS, ["下載安裝檔", "執行安裝檔", "載入插件", "完成"]);
 });
 
-test("wizardSteps follows the person through the six steps and says which one to show", () => {
-  const at = (overrides) => wizardSteps({ detected: false, wroteFiles: false, status: stopped, deployed: false, ...overrides });
-  assert.deepEqual(at({}), { states: ["now", "todo", "todo", "todo", "todo", "todo"], suggested: 1 });
-  assert.deepEqual(at({ wroteFiles: true }), { states: ["done", "done", "now", "todo", "todo", "todo"], suggested: 3 });
-  assert.deepEqual(at({ detected: true }), { states: ["done", "done", "done", "done", "now", "todo"], suggested: 5 });
-  assert.deepEqual(at({ detected: true, status: { state: "not_installed", ready: null, detail: "not found" } }).suggested, 5);
+test("wizardSteps follows the person through the steps and says which one to show", () => {
+  const at = (overrides) => wizardSteps({ detected: false, passedInstaller: false, status: stopped, deployed: false, ...overrides });
+  assert.deepEqual(at({}), { states: ["now", "todo", "todo", "todo"], suggested: 1 });
+  assert.deepEqual(at({ passedInstaller: true }), { states: ["done", "done", "now", "todo"], suggested: 3 }, "the person moved past the installer steps");
+  assert.deepEqual(at({ detected: true }), { states: ["now", "todo", "done", "todo"], suggested: 1 }, "an extension loaded by hand, no host: the installer is what is missing");
+  assert.deepEqual(at({ detected: true, status: { state: "not_installed", ready: null, detail: "not found" } }).suggested, 1);
   assert.deepEqual(at({ detected: true, status: { state: "stopped", ready: null, detail: "Native host has exited." } }),
-    { states: ["done", "done", "done", "done", "done", "now"], suggested: 6 });
-  assert.equal(at({ detected: true, status: { state: "forbidden", ready: null, detail: "x" } }).suggested, 6);
-  assert.deepEqual(at({ detected: true, status: running }).states, ["done", "done", "done", "done", "done", "now"], "it runs, but is not known to work yet");
-  assert.deepEqual(at({ detected: true, status: running, deployed: true }), { states: Array(6).fill("done"), suggested: 6 });
+    { states: ["done", "done", "done", "now"], suggested: 4 }, "the host is installed, it just is not running");
+  assert.equal(at({ detected: true, status: { state: "forbidden", ready: null, detail: "x" } }).suggested, 4);
+  assert.deepEqual(at({ detected: true, status: running }).states, ["done", "done", "done", "now"], "it runs, but is not known to work yet");
+  assert.deepEqual(at({ detected: true, status: running, deployed: true }), { states: Array(4).fill("done"), suggested: 4 });
   assert.deepEqual(at({ detected: false, status: running }).suggested, 1, "no extension, no progress");
 });
 
 test("the last step says in a line where the connection stands", () => {
   const say = (overrides) => connectSummary({ detected: true, deployed: false, status: running, ...overrides });
   assert.deepEqual(say({ deployed: true }), { ok: true, text: "一切正常，已經連線" });
-  assert.deepEqual(say({ detected: false }), { ok: false, text: "還沒偵測到擴充功能（步驟 1～4）" });
+  assert.deepEqual(say({ detected: false }), { ok: false, text: "還沒偵測到擴充功能（步驟 1～3）" });
   assert.deepEqual(say({}), { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" });
-  assert.deepEqual(say({ status: { state: "not_installed", ready: null, detail: "x" } }), { ok: false, text: "還沒連上本機小程式（步驟 5）" });
-  assert.deepEqual(say({ status: stopped }), { ok: false, text: "還沒連上本機小程式（步驟 5）" });
+  assert.deepEqual(say({ status: { state: "not_installed", ready: null, detail: "x" } }), { ok: false, text: "還沒連上本機小程式（步驟 2）" });
+  assert.deepEqual(say({ status: stopped }), { ok: false, text: "還沒連上本機小程式（步驟 2）" });
 });
 
 // ---------------- does it work? ----------------
@@ -112,7 +112,7 @@ test("without the extension that is the only thing said, with the way forward", 
   assert.deepEqual(never.map((i) => i.id), ["extension"]);
   assert.equal(never[0].status, "error");
   assert.match(never[0].title, /還沒偵測到擴充功能/);
-  assert.match(never[0].fix, /步驟 1/);
+  assert.match(never[0].fix, /步驟 1～3/);
   const lost = items({ detected: false, everDetected: true, extensionVersion: null });
   assert.match(lost[0].title, /連線中斷/);
   assert.match(lost[0].fix, /chrome:\/\/extensions/);
@@ -122,6 +122,7 @@ test("an old extension, an old host and a host that is not there each say what t
   const stale = byId(items({ extensionVersion: "0.2.1" }));
   assert.equal(stale.version.status, "error");
   assert.ok(stale.version.title.includes("0.2.1") && stale.version.title.includes("0.2.3"));
+  assert.match(stale.version.fix, /更新到最新版/);
   assert.match(stale.version.fix, /重新載入/);
 
   const old = byId(items({ hostOutdated: true }));

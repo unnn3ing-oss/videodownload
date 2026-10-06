@@ -10,7 +10,7 @@ export function isSafeRelativePath(path) {
 }
 
 // Turn GitHub's recursive file tree into the two sets of files this tool updates:
-//   extension/**        -> the extension folder (minus tests/)
+//   extension/**        -> the extension folder (minus tests/ and installers/: the installers hold the extension itself)
 //   host/<name>.py      -> the local host (top level only)
 // Anything unsafe, oversized or too numerous aborts the whole update.
 export function mapTree(tree) {
@@ -22,7 +22,7 @@ export function mapTree(tree) {
     if (!isExtension && !item.path.startsWith("host/")) continue;
     const rest = item.path.slice(isExtension ? "extension/".length : "host/".length);
     if (!isSafeRelativePath(rest)) throw new Error(`更新清單含不安全的路徑：${item.path}`);
-    if (isExtension ? rest.startsWith("tests/") : !HOST_FILE.test(rest)) continue;
+    if (isExtension ? rest.startsWith("tests/") || rest.startsWith("installers/") : !HOST_FILE.test(rest)) continue;
     const size = Number.isFinite(item.size) ? item.size : 0;
     if (size > MAX_FILE_BYTES) throw new Error(`更新檔案過大：${item.path}`);
     if (isExtension) extension.push({ path: rest, repoPath: item.path, sha: item.sha, size });

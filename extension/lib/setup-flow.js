@@ -35,15 +35,16 @@ export const FOLDER_HINTS = [
 
 // ---------------- the steps, and whether it works ----------------
 
-export const STEP_LABELS = ["建立資料夾", "取得檔案", "開啟擴充頁", "載入插件", "安裝小程式", "完成"];
+export const STEP_LABELS = ["下載安裝檔", "執行安裝檔", "載入插件", "完成"];
 
-// "done" | "now" | "todo" for each step, and the number (1-6) of the step to show: the first one that is not done.
-// What cannot be seen from a web page (the folder, the extension page) counts as done once what follows it is.
-export function wizardSteps({ detected, wroteFiles, status, deployed }) {
-  const running = status.state === "running";
-  const installed = running || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
-  const filesDone = wroteFiles || detected;
-  const done = [filesDone, filesDone, detected, detected, detected && installed, Boolean(detected && deployed)];
+const hostInstalled = (status) => status.state === "running" || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
+
+// "done" | "now" | "todo" for each step, and the number (1-4) of the step to show: the first one that is not done.
+// A web page cannot see whether the installer ran; it can see the host once the extension is there, and it knows when the
+// person moved past those steps (`passedInstaller`).
+export function wizardSteps({ detected, passedInstaller = false, status, deployed }) {
+  const ranInstaller = (detected && hostInstalled(status)) || passedInstaller;
+  const done = [ranInstaller, ranInstaller, detected, Boolean(detected && deployed)];
   const first = done.indexOf(false);
   return {
     states: done.map((isDone, index) => (isDone ? "done" : index === first ? "now" : "todo")),
@@ -54,9 +55,9 @@ export function wizardSteps({ detected, wroteFiles, status, deployed }) {
 // The line on the last step: where the connection stands, and whether that is good.
 export function connectSummary({ detected, deployed, status }) {
   if (deployed) return { ok: true, text: "一切正常，已經連線" };
-  if (!detected) return { ok: false, text: "還沒偵測到擴充功能（步驟 1～4）" };
+  if (!detected) return { ok: false, text: "還沒偵測到擴充功能（步驟 1～3）" };
   if (status.state === "running") return { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" };
-  return { ok: false, text: "還沒連上本機小程式（步驟 5）" };
+  return { ok: false, text: "還沒連上本機小程式（步驟 2）" };
 }
 
 // Everything a download needs is there: the extension (not older than this page), a current host that runs, and its parts.
@@ -78,9 +79,9 @@ function hostItem({ status, hostOutdated, gaveUp }) {
       ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}，或在側邊面板「版本與更新」按「更新」`)
       : item("host", "ok", `本機小程式已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
   }
-  if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 5）：Mac 貼一行指令，Windows 下載後雙擊");
+  if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 1、2）：Mac 貼一行指令，Windows 下載後雙擊");
   if (status.state === "forbidden") {
-    return item("host", "error", "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 5）");
+    return item("host", "error", "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 1、2）");
   }
   if (gaveUp) return item("host", "error", "本機小程式啟動後馬上又關閉了", status.detail ?? "", REINSTALL);
   return item("host", "warn", "正在連線本機小程式…", status.detail ?? "", "等幾秒；一直連不上就" + REINSTALL);
@@ -100,12 +101,12 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   if (!detected) {
     return [everDetected
       ? item("extension", "error", "與擴充功能的連線中斷", "", "到 chrome://extensions 確認它已啟用；恢復後這裡會自動連上，也可以重新整理本頁")
-      : item("extension", "error", "還沒偵測到擴充功能", "", "照步驟 1～4：建立資料夾、取得檔案、開啟擴充頁、載入插件（這個網頁需要電腦版 Chrome）")];
+      : item("extension", "error", "還沒偵測到擴充功能", "", "照步驟 1～3：下載並執行安裝檔、載入插件（這個網頁需要電腦版 Chrome）")];
   }
   const list = [item("extension", "ok", `擴充功能${extensionVersion ? ` v${extensionVersion}` : "已偵測到"}`)];
   if (versionNotice({ extensionVersion, pageVersion })) {
     list.push(item("version", "error", `擴充功能 v${extensionVersion} 比網頁版 v${pageVersion} 舊，還在跑舊版`, "",
-      "到步驟 2 重新取得檔案，再到 chrome://extensions 按這個擴充功能的重新載入"));
+      "按側邊欄「版本與更新」的「更新到最新版」（或重新執行安裝檔），再到 chrome://extensions 按這個擴充功能的重新載入"));
   }
   list.push(hostItem({ status, hostOutdated, gaveUp }));
   if (status.state === "running") {

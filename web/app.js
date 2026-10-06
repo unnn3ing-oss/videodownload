@@ -6,7 +6,6 @@ import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
 import { createAutoConnect, extensionNotice, hostNotice, versionNotice } from "../extension/lib/connection.js";
-import { installerPendingText } from "../extension/lib/installer.js";
 import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
 import {
   FOLDER_HINTS, FOLDER_NAME, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand, selfCheckItems,
@@ -17,7 +16,6 @@ const $ = (id) => document.getElementById(id);
 const client = createBridgeClient();
 let status = { state: "stopped", ready: null, detail: null };
 let queue = null;
-let wroteFiles = false;
 let loadFolder = null; // where the files went, for the "load unpacked" step: { name, inside }
 let everDetected = false; // the extension answered at some point in this page session
 let hostWasRunning = false; // so is the host
@@ -25,8 +23,8 @@ let gaveUp = false; // automatic launching of the host stopped (it keeps closing
 let pageVersion = null; // the version of the extension files this page was published with
 const autoConnect = createAutoConnect();
 
-const LONG = new Set(["queue_copy_text", "queue_download_cover", "doctor"]);
-const send = (message) => client.request(message, LONG.has(message.type) ? 120000 : 20000);
+const LONG = new Set(["queue_copy_text", "queue_download_cover", "doctor", "update_info", "update_apply"]);
+const send = (message) => client.request(message, LONG.has(message.type) ? 180000 : 20000);
 
 function setNote(id, text, kind = "info") {
   const node = $(id);
@@ -36,7 +34,11 @@ function setNote(id, text, kind = "info") {
 }
 
 // ---------- rendering ----------
-const wizard = () => wizardSteps({ detected: client.detected(), wroteFiles, status, deployed: deployed() });
+const INSTALLER_SEEN = "ytdl-installer-seen"; // the person has been past the "download / run the installer" steps
+const readSeen = () => { try { return localStorage.getItem(INSTALLER_SEEN) === "1"; } catch { return false; } };
+const writeSeen = () => { try { localStorage.setItem(INSTALLER_SEEN, "1"); } catch { /* private window */ } };
+let passedInstaller = readSeen();
+const wizard = () => wizardSteps({ detected: client.detected(), passedInstaller, status, deployed: deployed() });
 
 // The window shows one step at a time. `cursor` is the one shown; it starts at the first step that is not done, and follows
 // the install along while the person stays on the front step (the extension showing up moves them on to the next).
@@ -46,7 +48,7 @@ let lastSuggested = 1;
 function renderWizard() {
   const detected = client.detected();
   const version = detected ? client.version() : null;
-  const { states, suggested } = wizard();
+  const { states, suggested } = wizard();  // (the extension's version row is drawn below)
   if (suggested > lastSuggested && cursor === lastSuggested) cursor = suggested;
   lastSuggested = suggested;
 
@@ -136,6 +138,7 @@ function renderQueueArea() {
 
 function render() {
   renderWizard();
+  renderUpdate();
   renderQueueArea();
   renderSetupWindow();
 }
@@ -232,6 +235,7 @@ $("tab-check").addEventListener("click", () => { showView("check"); refreshDocto
 $("check-to-steps").addEventListener("click", () => { cursor = wizard().suggested; showView("steps"); });
 $("step-prev").addEventListener("click", () => goToStep(cursor - 1));
 $("step-next").addEventListener("click", () => {
+  if (cursor === 2 && !passedInstaller) { passedInstaller = true; writeSeen(); } // ("next" after the installer steps: remembered)
   if (cursor < STEP_LABELS.length) goToStep(cursor + 1);
   else dialog.close(); // "完成": the person is done with the window (it also closes by itself once everything works)
 });
@@ -347,6 +351,112 @@ $("save-outdir").addEventListener("click", async () => {
   }
 });
 
+// ---------- versions and updates ----------
+// "Check for updates" compares with the repository's latest version; "update" has the extension download and verify the
+// new files, replace the local program's files, and write its own files into the folder the installer made. Then it reloads.
+let updateInfo = null;
+let updateBusy = false;
+let upNote = { text: "", kind: "info" };
+let autoChecked = false;
+
+function setUpNote(text, kind = "info") {
+  upNote = { text, kind };
+  renderUpdate();
+}
+
+const updateProgressText = ({ step, done, total }) => ({
+  download: `下載更新檔案 ${done} / ${total}`, host: "更新本機小程式…", write: "寫入擴充功能的檔案…",
+})[step] ?? "更新中…";
+
+function updateAdvice(info, connected) {
+  if (!info.canUpdateHere) return "這份擴充功能不是用安裝檔放的，網頁不知道它的資料夾在哪裡。請到側邊面板「設定與工具」按「更新到最新版」（第一次要選一次資料夾），或重新執行安裝檔。";
+  if (!connected) return "請先讓本機小程式連線（設定流程最後一步的「啟動」），再更新。";
+  return "有新版本可以更新。";
+}
+
+function renderUpdate() {
+  const detected = client.detected();
+  const connected = detected && status.state === "running";
+  const version = detected ? client.version() : null;
+  const hostVersion = connected ? status.ready?.hostVersion : null;
+  setText($("up-current"), version ? `擴充功能 v${version}${hostVersion ? ` · 小程式 v${hostVersion}` : ""}` : "尚未連線");
+  let latest = "尚未檢查";
+  if (updateInfo) latest = updateInfo.hasUpdate ? `${updateInfo.latestVersion ? `v${updateInfo.latestVersion}` : "有新版本"}（${updateInfo.message}）` : "已是最新版";
+  setText($("up-latest"), latest);
+  $("up-check").disabled = !detected || updateBusy;
+  setHidden($("up-apply"), !updateInfo?.hasUpdate);
+  $("up-apply").disabled = !(updateInfo?.hasUpdate && updateInfo.canUpdateHere && connected) || updateBusy;
+  const note = !upNote.text && updateInfo?.hasUpdate ? { kind: "info", text: updateAdvice(updateInfo, connected) } : upNote;
+  setNote("up-note", note.text, note.kind);
+  if (connected && !autoChecked && !updateBusy) { // once per visit, quietly
+    autoChecked = true;
+    checkUpdate({ quiet: true });
+  }
+}
+
+async function checkUpdate({ quiet = false } = {}) {
+  if (updateBusy) return;
+  updateBusy = true;
+  if (!quiet) setUpNote("檢查中…");
+  try {
+    const result = await send({ type: "update_info" });
+    if (result?.ok) {
+      updateInfo = result.info;
+      if (!quiet) upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : "已是最新版。", kind: result.info.hasUpdate ? "info" : "ok" };
+    } else if (!quiet) {
+      upNote = { text: result?.error ?? "檢查失敗", kind: "error" };
+    }
+  } catch (error) {
+    if (!quiet) upNote = { text: error.message, kind: "error" };
+  } finally {
+    updateBusy = false;
+    renderUpdate();
+  }
+}
+
+// After the reload the extension is gone for a moment: wait until it answers again (and its host runs again).
+async function waitUntilBack(minMs = 2500, maxMs = 45000) {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (Date.now() - started >= minMs && client.detected() && status.state === "running") return true;
+  }
+  return false;
+}
+
+async function applyUpdate() {
+  if (updateBusy || !updateInfo?.hasUpdate) return;
+  updateBusy = true;
+  setUpNote("準備更新…");
+  const expected = updateInfo.latestVersion;
+  try {
+    const result = await send({ type: "update_apply", sha: updateInfo.sha });
+    if (!result?.ok) throw new Error(result?.error ?? "更新失敗");
+    if (result.nothing) {
+      updateInfo = null;
+      upNote = { text: "已是最新版。", kind: "ok" };
+      return;
+    }
+    setUpNote("更新完成，擴充功能正在重新載入…", "ok");
+    const back = await waitUntilBack();
+    const now = client.version();
+    if (!back) upNote = { text: "已更新，但擴充功能還沒回應。請到 chrome://extensions 確認它已啟用，再重新整理本頁。", kind: "error" };
+    else if (expected && now !== expected) upNote = { text: `已重新載入，但擴充功能的版本仍是 v${now}（預期 v${expected}）。載入的可能不是更新的那個資料夾，請到 chrome://extensions 確認它的載入路徑。`, kind: "error" };
+    else upNote = { text: expected ? `已更新到 v${expected}。` : "已更新。", kind: "ok" };
+    updateInfo = null;
+  } catch (error) {
+    upNote = { text: error.message, kind: "error" };
+  } finally {
+    updateBusy = false;
+    renderUpdate();
+    if (upNote.kind === "ok") checkUpdate({ quiet: true });
+  }
+}
+
+client.onProgress((progress) => { if (updateBusy) setUpNote(updateProgressText(progress)); });
+$("up-check").addEventListener("click", () => checkUpdate());
+$("up-apply").addEventListener("click", applyUpdate);
+
 // ---------- first-time setup ----------
 const progressText = ({ step, done, total }) => ({ download: `下載更新檔案 ${done} / ${total}`, write: `寫入檔案 ${done} / ${total}` })[step] ?? "處理中…";
 
@@ -365,9 +475,8 @@ $("deploy-pick").addEventListener("click", async () => {
   setNote("deploy-status", "準備中…");
   try {
     const { count, inside } = await deployToFolder(dir, { onProgress: (p) => setNote("deploy-status", progressText(p)) });
-    wroteFiles = true;
     loadFolder = { name: dir.name, inside };
-    setNote("deploy-status", `已寫入 ${count} 個檔案${inside ? `（「${dir.name}」裡已經有其他東西，所以我在裡面新建了「${inside}」資料夾）` : ""}。按「下一步」。`, "ok");
+    setNote("deploy-status", `已寫入 ${count} 個檔案${inside ? `（「${dir.name}」裡已經有其他東西，所以我在裡面新建了「${inside}」資料夾）` : ""}。接著到 chrome://extensions 載入未封裝項目。`, "ok");
     render();
   } catch (error) {
     setNote("deploy-status", error.message, "error");
@@ -383,9 +492,8 @@ $("deploy-zip").addEventListener("click", async () => {
     link.download = "YouTube-batch-downloader-extension.zip";
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 10000);
-    wroteFiles = true;
     loadFolder = null;
-    setNote("deploy-status", `已下載 ZIP（${count} 個檔案）。請先解壓縮，載入時選解壓縮後的資料夾。按「下一步」。`, "ok");
+    setNote("deploy-status", `已下載 ZIP（${count} 個檔案）。請先解壓縮，載入時選解壓縮後的資料夾。`, "ok");
     render();
   } catch (error) {
     setNote("deploy-status", error.message, "error");
@@ -411,28 +519,14 @@ function copyButton(id, text, noteId, failure) {
 const typeFolder = `無法自動複製，請自己輸入資料夾名稱：${FOLDER_NAME}`;
 copyButton("deploy-copy", "chrome://extensions", "copy-note-3", "無法自動複製，請自己在網址列輸入 chrome://extensions");
 copyButton("copy-folder", FOLDER_NAME, "copy-note-1", typeFolder);
-copyButton("copy-folder-2", FOLDER_NAME, "copy-note-4", typeFolder);
 copyButton("copy-mac-command", () => macInstallCommand(), "installer-status", `無法自動複製，請自己輸入：${macInstallCommand()}`);
 
-// what this computer is shown
+// what this computer is shown (an unknown system sees every system's instructions)
 $("default-folder").textContent = FOLDER_NAME;
-$("default-folder-2").textContent = FOLDER_NAME;
 $("folder-hint").textContent = FOLDER_HINTS[0];
 $("folder-hint-2").textContent = FOLDER_HINTS[1];
 $("mac-command").textContent = macInstallCommand();
-setHidden($("mac-install"), os === "win"); // (an unknown system sees both)
-setHidden($("installer-hint"), os === "mac");
-if (os === "mac") $("deploy-installer").textContent = "改下載安裝檔（備用）";
-
-$("deploy-installer").addEventListener("click", async () => {
-  try {
-    const result = await send({ type: "deploy_installer" });
-    if (result?.ok && result.pending) setNote("installer-status", installerPendingText(result.name), "info");
-    else setNote("installer-status", result?.ok ? `已下載「${result.name}」。請執行一次，完成後這裡會自動連線。` : result?.error ?? "無法下載安裝檔", result?.ok ? "ok" : "error");
-  } catch (error) {
-    setNote("installer-status", `需要先完成步驟 1～4：${error.message}`, "error");
-  }
-});
+document.querySelectorAll("[data-os]").forEach((node) => setHidden(node, os !== "other" && node.dataset.os !== os));
 
 startTicker(() => { if (queue?.cooldown) renderQueueArea(); });
 render();

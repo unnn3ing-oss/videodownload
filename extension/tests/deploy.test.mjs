@@ -109,10 +109,10 @@ test("inspectFolder tells an empty folder, this extension's own folder and any o
   assert.equal(await inspectFolder(fakeDir({ files: { "manifest.json": "{not json" } })), "other");
 });
 
-test("fetchExtensionFiles returns only extension files, verified, tests excluded", async () => {
+test("fetchExtensionFiles returns only extension files, verified, tests and installers excluded", async () => {
   const calls = [];
   const files = await fetchExtensionFiles({ fetchFn: await githubFor(SITE, { calls }), repo: REPO });
-  assert.deepEqual(files.map((f) => f.path).sort(), ["installers/x.cmd", "lib/a.js", "manifest.json"]);
+  assert.deepEqual(files.map((f) => f.path).sort(), ["lib/a.js", "manifest.json"]);
   assert.equal(dec(files.find((f) => f.path === "lib/a.js").bytes), "export const a = 1;");
   assert.ok(!calls.some((u) => u.includes("/host/") || u.includes("/tests/")));
 });
@@ -127,19 +127,19 @@ const deploy = (dir, extra = {}) => deployToFolder(dir, { fetchFn: extra.fetchFn
 test("an empty folder gets the files itself, and this extension's own folder is updated in place", async () => {
   const written = [];
   const empty = fakeDir({ onWrite: (p) => written.push(p) });
-  assert.deepEqual(await deploy(empty, { fetchFn: await githubFor(SITE) }), { count: 3, inside: null });
+  assert.deepEqual(await deploy(empty, { fetchFn: await githubFor(SITE) }), { count: 2, inside: null });
   assert.equal(written.at(-1), "manifest.json", "manifest.json last");
-  assert.deepEqual([...written].sort(), ["installers/x.cmd", "lib/a.js", "manifest.json"]);
+  assert.deepEqual([...written].sort(), ["lib/a.js", "manifest.json"]);
   const ours = fakeDir({ files: { "manifest.json": JSON.stringify({ name: EXTENSION_NAME }), "lib/old.js": "x" } });
-  assert.deepEqual(await deploy(ours, { fetchFn: await githubFor(SITE) }), { count: 3, inside: null });
+  assert.deepEqual(await deploy(ours, { fetchFn: await githubFor(SITE) }), { count: 2, inside: null });
 });
 
 test("a folder that already has other things in it gets a folder with the suggested name inside, and nothing else is touched", async () => {
   const written = [];
   const dir = fakeDir({ files: { "photo.jpg": "keep me", "notes/a.txt": "keep me too" }, name: "文件", onWrite: (p) => written.push(p) });
   const result = await deploy(dir, { fetchFn: await githubFor(SITE) });
-  assert.deepEqual(result, { count: 3, inside: FOLDER_NAME });
-  assert.deepEqual([...written].sort(), [`${FOLDER_NAME}/installers/x.cmd`, `${FOLDER_NAME}/lib/a.js`, `${FOLDER_NAME}/manifest.json`].sort());
+  assert.deepEqual(result, { count: 2, inside: FOLDER_NAME });
+  assert.deepEqual([...written].sort(), [`${FOLDER_NAME}/lib/a.js`, `${FOLDER_NAME}/manifest.json`].sort());
   assert.equal(written.at(-1), `${FOLDER_NAME}/manifest.json`);
   assert.equal(dir.store.get("photo.jpg"), "keep me");
   assert.equal(dir.store.get("notes/a.txt"), "keep me too");
@@ -158,7 +158,7 @@ test("a folder of that name that already holds other things is refused before an
 
 test("a folder of that name from an earlier install is updated in place", async () => {
   const dir = fakeDir({ files: { "photo.jpg": "x", [`${FOLDER_NAME}/manifest.json`]: JSON.stringify({ name: EXTENSION_NAME }) } });
-  assert.deepEqual(await deploy(dir, { fetchFn: await githubFor(SITE) }), { count: 3, inside: FOLDER_NAME });
+  assert.deepEqual(await deploy(dir, { fetchFn: await githubFor(SITE) }), { count: 2, inside: FOLDER_NAME });
 });
 
 test("deployToFolder writes nothing, and makes no folder, when a download is tampered with", async () => {
@@ -170,12 +170,11 @@ test("deployToFolder writes nothing, and makes no folder, when a download is tam
 
 test("buildExtensionZip packs the verified files under one folder", async () => {
   const { blob, count } = await buildExtensionZip({ fetchFn: await githubFor(SITE), repo: REPO });
-  assert.equal(count, 3);
+  assert.equal(count, 2);
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "zip-")), "e.zip");
   fs.writeFileSync(file, Buffer.from(await blob.arrayBuffer()));
   const names = JSON.parse(execFileSync("python3", ["-c", "import json,sys,zipfile; print(json.dumps(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))", file], { encoding: "utf8" }));
   assert.deepEqual(names, [
-    "YouTube-batch-downloader-extension/installers/x.cmd",
     "YouTube-batch-downloader-extension/lib/a.js",
     "YouTube-batch-downloader-extension/manifest.json",
   ]);
