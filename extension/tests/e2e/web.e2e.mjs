@@ -242,6 +242,12 @@ async function withExtension() {
     const launches = path.join(work, "launches.log");
     const count = () => (fs.existsSync(launches) ? fs.readFileSync(launches, "utf8").trim().split("\n").length : 0);
     fs.writeFileSync(wrapper, `#!/bin/sh\necho x >> "${launches}"\nexit 1\n`);
+    // (a live region is announced again whenever its text is rewritten, even to the same words: count the rewrites)
+    await web.evaluate(() => {
+      window.__noteRewrites = 0;
+      new MutationObserver((records) => { window.__noteRewrites += records.length; })
+        .observe(document.getElementById("conn-note"), { childList: true, characterData: true, subtree: true });
+    });
     process.kill(Number(fs.readFileSync(path.join(work, "host.pid"), "utf8")));
     await web.waitForSelector("#conn-note:not([hidden])", { timeout: 20000 });
     assert.match(await web.textContent("#conn-note"), /連線中斷/);
@@ -249,6 +255,7 @@ async function withExtension() {
     assert.equal(count(), 5, "five launches, no more");
     await new Promise((resolve) => setTimeout(resolve, 7000));
     assert.equal(count(), 5, "and it stays that way");
+    assert.equal(await web.evaluate(() => window.__noteRewrites), 2, "the note was written twice (lost, then given up), not once per failed launch");
 
     // B10b. With the host gone the cover still arrives, through Chrome's own download (under the same name).
     await worker.evaluate(() => { // (Playwright renames saved files, so note what the extension asked Chrome for)

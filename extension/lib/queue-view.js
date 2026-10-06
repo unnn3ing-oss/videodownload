@@ -157,10 +157,20 @@ export function renderQueue(list, state, now, handlers) {
 // Shown while the connected local host is too old for this extension: downloading is off until it is updated.
 export const HOST_OUTDATED_TEXT = "本機小程式的版本太舊，現在無法下載。請在擴充功能側邊面板的「版本與更新」按「更新」，完成後會自動重新連線。";
 
+// A live region is announced again whenever its text is rewritten, even with the same words (the list is drawn
+// on every progress push), so notes in live regions are only written when something changed.
+export function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+export function setHidden(node, hidden) {
+  if (node.hidden !== hidden) node.hidden = hidden;
+}
+
 export function renderHostNote(node, state) {
   const outdated = Boolean(state?.hostOutdated);
-  node.textContent = outdated ? HOST_OUTDATED_TEXT : "";
-  node.hidden = !outdated;
+  setText(node, outdated ? HOST_OUTDATED_TEXT : "");
+  setHidden(node, !outdated);
 }
 
 // Cooldown countdowns need a redraw every second even when the state itself does not change.

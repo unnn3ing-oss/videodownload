@@ -25,12 +25,27 @@ try {
   await panel.click("#add-btn");
   for (const view of [panel, web]) await view.waitForSelector('.qrow[data-kind="waiting"]');
 
+  for (const view of [panel, web]) {
+    await view.evaluate(() => {
+      window.__noteRewrites = 0;
+      new MutationObserver((records) => { window.__noteRewrites += records.length; })
+        .observe(document.getElementById("host-note"), { childList: true, characterData: true, subtree: true });
+    });
+  }
   for (const [name, view] of [["panel", panel], ["web", web]]) {
     await view.waitForSelector("#host-note:not([hidden])");
     assert.match(await view.textContent("#host-note"), /本機小程式.*太舊.*更新/, `${name}: says the host must be updated`);
     assert.equal(await view.isDisabled("#start-all"), true, `${name}: start is off`);
     await view.locator(".qcopy").first().click();
     await view.waitForFunction(() => /請先更新本機小程式/.test(document.querySelector(".qflash")?.textContent ?? ""));
+  }
+  // Screen readers announce a live region again whenever its text is rewritten: more rows (more pushes) must not do that.
+  await panel.fill("#add-url", "https://www.youtube.com/watch?v=v2");
+  await panel.click("#add-btn");
+  for (const view of [panel, web]) await view.waitForFunction(() => document.querySelectorAll(".qrow").length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  for (const [name, view] of [["panel", panel], ["web", web]]) {
+    assert.equal(await view.evaluate(() => window.__noteRewrites), 0, `${name}: the note (already shown) was not rewritten`);
   }
   console.log("OK");
 } catch (error) {

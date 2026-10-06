@@ -1,7 +1,7 @@
 // The web version of the batch downloader. It is a remote control: the extension holds the list and talks to
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
-import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "../extension/lib/queue-view.js";
+import { copyRowText, downloadRowCover, renderHostNote, renderQueue, setHidden, setText, startTicker } from "../extension/lib/queue-view.js";
 import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
@@ -46,12 +46,12 @@ function renderQueueArea() {
   $("add-card").inert = !detected;
   $("queue-card").inert = !detected;
   const missing = extensionNotice({ detected, everDetected });
-  $("no-extension").textContent = missing ?? "";
-  $("no-extension").hidden = !missing;
+  setText($("no-extension"), missing ?? "");
+  setHidden($("no-extension"), !missing);
   const hostText = hostNotice({ detected, status, wasRunning: hostWasRunning, gaveUp });
-  $("conn-note").textContent = hostText?.text ?? "";
+  setText($("conn-note"), hostText?.text ?? "");
   $("conn-note").dataset.kind = hostText?.kind ?? "info";
-  $("conn-note").hidden = !hostText;
+  setHidden($("conn-note"), !hostText);
   for (const id of ["add-url", "add-btn", "cooldown", "limit"]) $(id).disabled = !detected;
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
   $("outdir").disabled = !connected;
