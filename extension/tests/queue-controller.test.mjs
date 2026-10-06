@@ -366,6 +366,35 @@ test("copyText with no hashtags copies just the title, and needs the host otherw
   assert.equal((await failing.ctl.copyText(999)).ok, false);
 });
 
+test("an old host is flagged in the state when it connects, and the flag follows the host", async () => {
+  const { host, ctl } = setup({ isConnected: false, ver: "0.1.0" });
+  assert.equal(ctl.getState().hostOutdated, false);
+  host.isConnected = true;
+  await ctl.onHostConnected({ hostVersion: "0.1.0" });
+  assert.deepEqual([ctl.getState().hostConnected, ctl.getState().hostOutdated], [true, true]);
+  ctl.onHostDisconnected();
+  assert.deepEqual([ctl.getState().hostConnected, ctl.getState().hostOutdated], [false, false]);
+  host.ver = "0.2.0";
+  host.isConnected = true;
+  await ctl.onHostConnected({ hostVersion: "0.2.0" });
+  assert.deepEqual([ctl.getState().hostConnected, ctl.getState().hostOutdated], [true, false]);
+});
+
+test("a host that was updated while the page was open is no longer flagged", async () => {
+  const env = setup({ ver: "0.1.0" });
+  await env.ctl.add(url("a")); // adding refreshes the flags from the host
+  assert.equal(env.ctl.getState().hostOutdated, true);
+  env.host.ver = "0.2.0";
+  await env.ctl.add(url("b"));
+  assert.equal(env.ctl.getState().hostOutdated, false);
+});
+
+test("copyText says the host must be updated instead of showing the host's unknown-message error", async () => {
+  const old = await withVideos(["a"], { ver: "0.1.0" });
+  assert.deepEqual(await old.ctl.copyText(rows(old.ctl)[0].uid), { ok: false, error: "請先更新本機小程式" });
+  assert.deepEqual(old.host.of("meta"), [], "the old host is never sent a message it does not know");
+});
+
 const coverUrl = (id, name) => `https://i.ytimg.com/vi/${id}/${name}.jpg`;
 
 test("downloadCover saves through the host when it is connected", async () => {

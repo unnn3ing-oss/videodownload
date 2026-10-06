@@ -1,7 +1,7 @@
 // The web version of the batch downloader. It is a remote control: the extension holds the list and talks to
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
-import { copyRowText, downloadRowCover, renderQueue, startTicker } from "../extension/lib/queue-view.js";
+import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "../extension/lib/queue-view.js";
 import { summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
@@ -70,7 +70,8 @@ function renderQueueArea() {
   const button = $("start-all");
   button.className = `btn ${queue.running ? "danger" : "primary"}`;
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
-  button.disabled = !queue.running && (!connected || info.waiting === 0);
+  button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
+  renderHostNote($("host-note"), queue);
 
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);

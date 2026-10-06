@@ -141,6 +141,15 @@ export function renderQueue(list, state, now, handlers) {
   }
 }
 
+// Shown while the connected local host is too old for this extension: downloading is off until it is updated.
+export const HOST_OUTDATED_TEXT = "本機小程式的版本太舊，現在無法下載。請在擴充功能側邊面板的「版本與更新」按「更新」，完成後會自動重新連線。";
+
+export function renderHostNote(node, state) {
+  const outdated = Boolean(state?.hostOutdated);
+  node.textContent = outdated ? HOST_OUTDATED_TEXT : "";
+  node.hidden = !outdated;
+}
+
 // Cooldown countdowns need a redraw every second even when the state itself does not change.
 export function startTicker(fn) {
   const timer = setInterval(fn, 1000);

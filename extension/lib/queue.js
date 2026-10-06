@@ -64,7 +64,7 @@ function markDuplicates(items) {
 const withItems = (state, items) => ({ ...state, items: markDuplicates(items) });
 
 export function createState(saved = null) {
-  const empty = { items: [], running: false, settings: { ...DEFAULT_SETTINGS }, cooldown: null, hostConnected: false, nextUid: 1 };
+  const empty = { items: [], running: false, settings: { ...DEFAULT_SETTINGS }, cooldown: null, hostConnected: false, hostOutdated: false, nextUid: 1 };
   if (!saved || typeof saved !== "object" || !Array.isArray(saved.items)) return empty;
   const items = [];
   for (const raw of saved.items) {
@@ -125,7 +125,10 @@ export function retryItem(state, uid) {
 
 export const setSettings = (state, patch) => ({ ...state, settings: cleanSettings(patch, state.settings) });
 export const setTags = (state, uid, tags) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, tags } : i)) });
-export const setHostConnected = (state, connected) => ({ ...state, hostConnected: Boolean(connected) });
+// `outdated`: the host is there but too old for this version of the extension (it needs updating first).
+export const setHostConnected = (state, connected, outdated = false) => ({
+  ...state, hostConnected: Boolean(connected), hostOutdated: Boolean(connected) && Boolean(outdated),
+});
 // Rows the host has been given: they keep their place when duplicates are worked out again.
 export const markSent = (state, ids, sent) => {
   const wanted = new Set(ids);
@@ -147,7 +150,7 @@ const resetInterrupted = (items) => items.map((i) => {
 });
 
 export function hostLost(state) {
-  return { ...state, running: false, cooldown: null, hostConnected: false, items: resetInterrupted(state.items) };
+  return { ...state, running: false, cooldown: null, hostConnected: false, hostOutdated: false, items: resetInterrupted(state.items) };
 }
 
 export function applyHostEvent(state, event, now) {

@@ -40,11 +40,14 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   const idle = async () => {
     while (tasks.size) await Promise.all([...tasks]);
   };
+  const hostUsable = () => host.connected() && versionAtLeast(host.version(), MIN_HOST_VERSION);
+  const hostOutdated = () => host.connected() && !versionAtLeast(host.version(), MIN_HOST_VERSION);
   const syncHostFlag = () => {
-    if (state.hostConnected !== host.connected()) commit(setHostConnected(state, host.connected()));
+    if (state.hostConnected !== host.connected() || state.hostOutdated !== hostOutdated()) {
+      commit(setHostConnected(state, host.connected(), hostOutdated()));
+    }
   };
   const find = (uid) => state.items.find((i) => i.uid === uid);
-  const hostUsable = () => host.connected() && versionAtLeast(host.version(), MIN_HOST_VERSION);
 
   function resolveOne(uid, url) {
     resolving.add(uid);
@@ -207,7 +210,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     },
 
     onHostConnected() {
-      commit(setHostConnected(state, true));
+      commit(setHostConnected(state, true, hostOutdated()));
       pumpResolves();
       return idle();
     },
@@ -240,6 +243,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       if (!item || !item.id) return fail("找不到這支影片");
       if (item.tags) return { ok: true, text: buildCopyText(item.title, item.tags), tagCount: item.tags.length };
       if (!host.connected()) return fail("請先連線本機小程式");
+      if (!hostUsable()) return fail("請先更新本機小程式");
       let event;
       try {
         event = await host.request({ type: "meta", url: item.url }, TIMEOUT.meta);

@@ -184,6 +184,16 @@ test("retrying or failing a row takes its sent mark away", () => {
   assert.equal(retryItem(applyHostEvent(state, { type: "item_failed", itemId: "a", reason: "y" }, 0), state.items[0].uid).items[0].sent, false);
 });
 
+test("the state knows when the connected host is too old, and forgets it when the host goes", () => {
+  assert.equal(createState().hostOutdated, false);
+  let state = setHostConnected(createState(), true, true);
+  assert.deepEqual([state.hostConnected, state.hostOutdated], [true, true]);
+  assert.equal(setHostConnected(state, true).hostOutdated, false, "outdated defaults to false");
+  assert.deepEqual([hostLost(state).hostConnected, hostLost(state).hostOutdated], [false, false]);
+  assert.equal(setHostConnected(state, false, true).hostOutdated, false, "a host that is not there cannot be outdated");
+  assert.equal(createState(JSON.parse(JSON.stringify(state))).hostOutdated, false, "never restored from storage");
+});
+
 test("rows that failed without an id take no part in duplicate detection", () => {
   let { state, uid } = addPlaceholder(createState(), url("q"));
   state = applyResolveFailed(state, uid, "x");

@@ -1,7 +1,7 @@
 import { classifyTabUrl } from "./lib/page.js";
 import { createRequestIds } from "./lib/ids.js";
 import { summarize } from "./lib/queue.js";
-import { copyRowText, downloadRowCover, renderQueue, startTicker } from "./lib/queue-view.js";
+import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -124,7 +124,8 @@ function renderQueueView() {
   const connected = status.state === "running";
   button.className = `btn block ${queue.running ? "danger" : "primary"}`;
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
-  button.disabled = !queue.running && (!connected || info.waiting === 0);
+  button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
+  renderHostNote($("host-note"), queue);
 
   $("quality").querySelectorAll("input").forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
