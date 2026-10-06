@@ -103,16 +103,24 @@ def test_mac_script_is_valid_bash(tmp_path):
     assert subprocess.run(["bash", "-n", str(script)], capture_output=True).returncode == 0
 
 
-def test_main_writes_both_installers(tmp_path):
+def test_the_one_line_script_is_the_same_script_as_in_the_zip():
+    script = build.render_mac_script()
+    assert script == mac_script(build.render_mac())
+    assert script.startswith("#!/bin/bash") and "\r" not in script and "@@" not in script
+
+
+def test_main_writes_all_three_installers(tmp_path):
     build.main(tmp_path)
     assert (tmp_path / "install-windows.cmd").read_bytes() == build.render_windows().encode("utf-8")
     assert (tmp_path / "install-mac.zip").read_bytes() == build.render_mac()
+    assert (tmp_path / "install-mac.sh").read_bytes() == build.render_mac_script().encode("utf-8")
 
 
 def test_committed_installers_are_current():
     out = ROOT / "extension" / "installers"
     assert (out / "install-windows.cmd").read_bytes() == build.render_windows().encode("utf-8")
     assert (out / "install-mac.zip").read_bytes() == build.render_mac()
+    assert (out / "install-mac.sh").read_bytes() == build.render_mac_script().encode("utf-8")
 
 
 CURL_STUB = """#!/bin/bash
@@ -135,7 +143,7 @@ esac
 
 
 def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False,
-                      ffmpeg_body="echo ffmpeg\n", before=None):
+                      ffmpeg_body="echo ffmpeg\n", before=None, piped=False):
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
@@ -164,7 +172,10 @@ def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wr
     script = tmp_path / "install-mac.command"
     script.write_text(mac_script(build.render_mac()), encoding="utf-8")
     env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub)}
-    proc = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=120)
+    if piped:  # the way the one-line command runs it: curl ... | bash
+        proc = subprocess.run(["bash"], input=script.read_text(encoding="utf-8"), env=env, capture_output=True, text=True, timeout=120)
+    else:
+        proc = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=120)
     return proc, home
 
 
@@ -261,3 +272,14 @@ def test_windows_installer_script_parses(tmp_path):
            "if ($e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }")
     done = subprocess.run(["pwsh", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_mac_installer_works_when_piped_into_bash_like_the_one_line_command(tmp_path):
+    proc, home = run_mac_installer(tmp_path, piped=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "安裝完成" in proc.stdout
+    bin_dir = home / "Library/Application Support/YTDownloader/bin"
+    assert subprocess.run([str(bin_dir / "yt-dlp"), "--version"], capture_output=True, text=True).stdout.strip() == "2099.01.01"
+    (tmp_path / "broken").mkdir()
+    broken, _ = run_mac_installer(tmp_path / "broken", piped=True, ffmpeg_body="exit 1\n")
+    assert broken.returncode != 0 and "安裝尚未完成" in broken.stdout

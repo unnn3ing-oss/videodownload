@@ -77,8 +77,13 @@ def render_windows() -> str:
     return _render("install-windows.cmd.tpl").replace("\r\n", "\n").replace("\n", "\r\n")
 
 
+def render_mac_script() -> str:
+    """The Mac installer as plain text: what `curl -fsSL <address> | bash` runs, and what the zip's .command file holds."""
+    return _render("install-mac.command.tpl").replace("\r\n", "\n")
+
+
 def render_mac() -> bytes:
-    script = _render("install-mac.command.tpl").replace("\r\n", "\n")
+    script = render_mac_script()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         info = zipfile.ZipInfo("install-mac.command", _ZIP_DATE)
@@ -94,6 +99,7 @@ def main(out_dir: Path = OUT) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "install-windows.cmd").write_bytes(render_windows().encode("utf-8"))
     (out_dir / "install-mac.zip").write_bytes(render_mac())
+    (out_dir / "install-mac.sh").write_bytes(render_mac_script().encode("utf-8"))
     print(f"wrote installers to {out_dir}")
 
 
