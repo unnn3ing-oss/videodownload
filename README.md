@@ -127,6 +127,7 @@ node extension/tests/e2e/queue.e2e.mjs      # 背景程式的清單（增加、�
 node extension/tests/e2e/web.e2e.mjs        # 網頁版（以 route 模擬 GitHub Pages）：沒有擴充功能時的部署、自動偵測與連線、與側邊面板同一份清單
 node extension/tests/e2e/oldhost.e2e.mjs    # 連到舊版（0.1.0）本機小程式時：兩個畫面的提示、停用開始、複製內文的說明
 node extension/tests/e2e/sidepanel.e2e.mjs  # 無頭 Chromium 端對端測試（假引擎）；結束碼 2 代表無法啟動瀏覽器；設 E2E_SHOTS=資料夾 會順便截圖，E2E_SCHEME=dark 測深色模式
+node tools/make-icons.mjs                 # 改了 extension/icons/icon.svg（網頁版與擴充功能共用的圖示）後，重新產生 PNG 圖示
 python build.py                           # 修改 host 程式碼後重新產生安裝檔，並提交 extension/installers/
 ```
 

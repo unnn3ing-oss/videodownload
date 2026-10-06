@@ -29,3 +29,44 @@ test("the content script runs only on the web version and its file exists", () =
   assert.equal(script.run_at, "document_start");
   assert.ok(existsSync(new URL("../bridge.js", import.meta.url)));
 });
+
+// ---- the extension wears the same icon as the web page ----
+import { inflateSync } from "node:zlib";
+
+const SIZES = ["16", "32", "48", "128"];
+const png = (file) => readFileSync(new URL(`../icons/${file}`, import.meta.url));
+
+// First pixel of a PNG, straight from its header and first scanline (the filters leave the first pixel as it is).
+function pngInfo(buffer) {
+  assert.equal(buffer.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "a PNG file");
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  const colorType = buffer[25];
+  const chunks = [];
+  for (let at = 8; at < buffer.length;) {
+    const length = buffer.readUInt32BE(at);
+    if (buffer.toString("latin1", at + 4, at + 8) === "IDAT") chunks.push(buffer.subarray(at + 8, at + 8 + length));
+    at += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(chunks));
+  return { width, height, colorType, firstPixel: [...raw.subarray(1, 5)] };
+}
+
+test("the manifest gives the extension and its toolbar button an icon in every size, and the files are those sizes", () => {
+  assert.deepEqual(Object.keys(manifest.icons).sort(), [...SIZES].sort());
+  assert.deepEqual(manifest.action.default_icon, manifest.icons, "the toolbar button uses the same icons");
+  for (const size of SIZES) {
+    const info = pngInfo(png(manifest.icons[size].replace("icons/", "")));
+    assert.deepEqual([info.width, info.height], [Number(size), Number(size)], `icon ${size}`);
+    assert.equal(info.colorType, 6, "RGBA: the rounded corners are transparent");
+    assert.equal(info.firstPixel[3], 0, `the corner of icon ${size} is transparent`);
+  }
+});
+
+test("the web page's tab icon is the very same drawing as the extension's", () => {
+  const svg = readFileSync(new URL("../icons/icon.svg", import.meta.url), "utf8");
+  assert.match(svg, /#1f5eff/);
+  const page = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+  assert.match(page, /<link rel="icon" href="extension\/icons\/icon\.svg"/, "one source for both");
+  assert.ok(existsSync(new URL("../icons/icon.svg", import.meta.url)));
+});
