@@ -190,3 +190,13 @@ def test_an_unexpected_error_in_the_update_still_gets_an_error_reply(tmp_path, m
     h.handle({"type": "update_ext", "reqId": 9, "files": [entry("a.js", b"x")], "contents": {"a.js": b64(b"x")}})
     h.wait(10)
     assert events[-1]["type"] == "error" and events[-1]["reqId"] == 9 and "boom" in events[-1]["message"]
+
+
+def test_the_extension_as_it_is_shipped_passes_the_update_checks_and_has_no_tests_or_installers():
+    root = REAL_HOST.parent / "extension"
+    shipped = sorted(p for p in root.rglob("*") if p.is_file() and not {"tests", "installers", "__pycache__"} & set(p.relative_to(root).parts))
+    listed = [entry(p.relative_to(root).as_posix(), p.read_bytes()) for p in shipped]
+    assert 0 < len(listed) <= extupdate.MAX_FILES, "the extension still fits what one update may carry"
+    assert extupdate.validate_files(listed) == listed, "every path and size of the shipped layout is accepted"
+    assert not any(e["path"].startswith(("tests/", "installers/")) for e in listed)
+    assert "manifest.json" in {e["path"] for e in listed}

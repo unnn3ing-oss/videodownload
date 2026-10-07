@@ -104,14 +104,14 @@ jobs:
       # The suites load the extension in Chromium started with --headless=new, which needs no display (no xvfb).
       - name: Run the six suites, one after the other
         run: |
-          mkdir -p e2e-logs/shots
-          export E2E_SHOTS="$PWD/e2e-logs/shots"
+          mkdir -p e2e-artifacts/shots
+          export E2E_SHOTS="$PWD/e2e-artifacts/shots"
           failed=""
           for suite in queue oldhost sidepanel web update webupdate; do
             echo "::group::$suite"
             code=0  # (the runner's bash stops at the first failing command: keep going and count)
-            node "extension/tests/e2e/$suite.e2e.mjs" > "e2e-logs/$suite.log" 2>&1 || code=$?
-            cat "e2e-logs/$suite.log"
+            node "extension/tests/e2e/$suite.e2e.mjs" > "e2e-artifacts/$suite.log" 2>&1 || code=$?
+            cat "e2e-artifacts/$suite.log"
             echo "::endgroup::"
             if [ "$code" -ne 0 ]; then
               failed="$failed $suite(exit $code)"
@@ -125,8 +125,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
-          path: e2e-logs
+          name: e2e-artifacts
+          path: e2e-artifacts
           if-no-files-found: ignore
           retention-days: 7
 

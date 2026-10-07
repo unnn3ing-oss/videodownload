@@ -28,16 +28,39 @@ function Works($exe, $arg) {
     try { & $exe $arg *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false }
 }
 
+# Never an older installer over a newer install: the automatic update may have put a newer host and extension here, and this
+# file carries older ones. The version of the host files that are here (an x.y.z in version.py, next to its installer.py), or $null:
+function InstalledVersion($dir) {
+    $f = Join-Path $dir 'version.py'
+    if (-not ((Test-Path $f) -and (Test-Path (Join-Path $dir 'installer.py')))) { return $null }
+    try { $t = [IO.File]::ReadAllText($f, [Text.Encoding]::UTF8) } catch { return $null }
+    if ($t -match '(?m)^VERSION\s*=\s*"(\d+\.\d+\.\d+)"') { return $Matches[1] }
+    return $null
+}
+# $true when version $a is higher than $b, by number (0.10.0 is newer than 0.9.0). Only x.y.z counts; anything else is not newer.
+function IsNewer($a, $b) {
+    if (($a -notmatch '^\d+\.\d+\.\d+$') -or ($b -notmatch '^\d+\.\d+\.\d+$')) { return $false }
+    try { return (([version]$a) -gt ([version]$b)) } catch { return $false }
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $Root, $HostDir, $PyDir, $Tmp | Out-Null
 
-    Step '寫入本機小程式'
-    $payload = Join-Path $Tmp 'host.zip'
-    [IO.File]::WriteAllBytes($payload, [Convert]::FromBase64String('@@PAYLOAD_B64@@'))
-    # The files in the zip all carry the same fixed date, so an old __pycache__ would pass for current: drop it.
-    Remove-Item -Recurse -Force -Path (Join-Path $HostDir '__pycache__') -ErrorAction SilentlyContinue
-    Expand-Archive -Force -Path $payload -DestinationPath $HostDir
-    [IO.File]::WriteAllBytes((Join-Path $Root 'extension.zip'), [Convert]::FromBase64String('@@EXTENSION_B64@@'))
+    $Embedded = '@@VERSION@@'
+    $Installed = InstalledVersion $HostDir
+    $Keep = IsNewer $Installed $Embedded
+    if ($Keep) {
+        Write-Host ''
+        Write-Host "已安裝的版本（${Installed}）比這個安裝檔（${Embedded}）新，不會降版。要更新請在網頁按「更新到最新版」。" -ForegroundColor Yellow
+    } else {
+        Step '寫入本機小程式'
+        $payload = Join-Path $Tmp 'host.zip'
+        [IO.File]::WriteAllBytes($payload, [Convert]::FromBase64String('@@PAYLOAD_B64@@'))
+        # The files in the zip all carry the same fixed date, so an old __pycache__ would pass for current: drop it.
+        Remove-Item -Recurse -Force -Path (Join-Path $HostDir '__pycache__') -ErrorAction SilentlyContinue
+        Expand-Archive -Force -Path $payload -DestinationPath $HostDir
+        [IO.File]::WriteAllBytes((Join-Path $Root 'extension.zip'), [Convert]::FromBase64String('@@EXTENSION_B64@@'))
+    }
 
     $py = Join-Path $PyDir 'python.exe'
     if (-not (Works $py '--version')) {
@@ -54,7 +77,12 @@ try {
     }
 
     $env:PYTHONIOENCODING = 'utf-8'
-    & $py (Join-Path $HostDir 'installer.py') --home $Root --ext-id '@@EXT_ID@@' --extension-zip (Join-Path $Root 'extension.zip') --version '@@VERSION@@'
+    # With a newer install the INSTALLED installer.py does the repair work, and leaves the host and the extension files alone.
+    if ($Keep) {
+        & $py (Join-Path $HostDir 'installer.py') --home $Root --ext-id '@@EXT_ID@@' --no-deploy --version $Embedded
+    } else {
+        & $py (Join-Path $HostDir 'installer.py') --home $Root --ext-id '@@EXT_ID@@' --extension-zip (Join-Path $Root 'extension.zip') --version $Embedded
+    }
 } catch {
     Write-Host ''
     Write-Host "安裝失敗：$($_.Exception.Message)" -ForegroundColor Red

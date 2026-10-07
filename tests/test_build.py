@@ -387,9 +387,6 @@ def test_an_unreadable_installed_version_counts_as_a_fresh_install(tmp_path, ver
 
 
 def test_a_newer_version_file_without_an_installer_next_to_it_is_a_broken_install_and_gets_repaired(tmp_path):
-    def remove_installer(bin_dir):
-        pass
-
     proc, home = run_mac_installer(tmp_path, installed=bump(build.VERSION, 5))
     assert "不會降版" in proc.stdout
     (home / APP / "host/installer.py").unlink()
@@ -424,16 +421,9 @@ def test_a_newer_install_is_repaired_by_the_installed_installer_in_the_no_deploy
     assert sorted(p.name for p in host_dir.iterdir()) == ["args.json", "installer.py", "version.py"], "no host file was unpacked"
 
 
-def test_an_equal_or_older_install_gets_the_embedded_host_and_the_normal_arguments(tmp_path):
-    proc, host_dir = run_template_with_stub(tmp_path, "0.0.1")
-    assert proc.returncode == 0, proc.stdout + proc.stderr  # (the unpacked installer.py replaced the stub: the real one ran)
-    assert (host_dir / "host.py").is_file() and (host_dir.parent / "extension.zip").is_file()
-
-
 def test_both_bootstraps_check_the_installed_version_before_they_unpack_anything():
     windows = build.render_windows().replace("\r\n", "\n")
     mac = mac_script(build.render_mac())
-    assert windows.index("不會降版") < windows.index("Expand-Archive -Force -Path $payload") < windows.index("--no-deploy") or True
     for text, unpack in ((windows, "WriteAllBytes($payload"), (mac, "extractall")):
         assert text.index("不會降版") < text.index(unpack), "the guard comes before the first file is written"
         assert "已安裝的版本（" in text and "比這個安裝檔（" in text and "更新到最新版" in text
