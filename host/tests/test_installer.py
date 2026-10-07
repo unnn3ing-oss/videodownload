@@ -354,7 +354,7 @@ def test_the_self_test_starts_the_launcher_and_reads_the_hosts_ready_message(tmp
 
 
 def test_a_launcher_that_dies_is_reported_with_what_it_said(tmp_path):
-    launcher = make_launcher(tmp_path, "echo 'no python here' >&2\nexit 3\n", "echo no python here 1>&2\nexit /b 3\n")
+    launcher = make_launcher(tmp_path, "echo 'no python here' >&2\nexit 3\n", "echo no python here 1>&2\nexit 3\n")
     with pytest.raises(SetupError, match="no python here"):
         setup.selftest(launcher)
 
