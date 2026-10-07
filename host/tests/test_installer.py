@@ -29,8 +29,14 @@ def zip_bytes(files: dict[str, str]) -> bytes:
 class Net:
     """Stands in for the downloads: URL -> bytes. Records what was asked for."""
 
+    current = None
+
     def __init__(self, files: dict[str, bytes]):
         self.files, self.asked = files, []
+        Net.current = self
+
+    def served(self, url: str) -> bytes:
+        return next(data for part, data in self.files.items() if part in url)
 
     def file(self, url: str, dest: Path) -> None:
         self.asked.append(url)
@@ -46,6 +52,22 @@ class Net:
             if part in url:
                 return data.decode()
         raise SetupError(f"no such text in the test: {url}")
+
+
+REAL_PINS = dict(setup.PINS)  # (before the fixture below swaps them for the tests that use a fake network)
+
+
+class _PublishedPins(dict):
+    """The pinned values, as if they had been taken from what the fake network serves (the real ones are checked below)."""
+
+    def __getitem__(self, key):
+        return hashlib.sha256(Net.current.served(setup.URL[key])).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def pins_match_the_fake_network(monkeypatch):
+    Net.current = None
+    monkeypatch.setattr(setup, "PINS", _PublishedPins())
 
 
 def runs_ok(code_for=None):
@@ -81,11 +103,13 @@ def engine_zip(exe_body=b"MZ yt-dlp") -> bytes:
 def win_net(exe_body=b"MZ yt-dlp", good_sum=True):
     archive = engine_zip(exe_body)
     digest = hashlib.sha256(archive).hexdigest() if good_sum else "0" * 64
+    ffmpeg = zip_bytes({"ffmpeg-x/bin/ffmpeg.exe": "ffmpeg", "ffmpeg-x/bin/ffplay.exe": "no"})
     return Net({
+        "ffmpeg-master-latest-win64-gpl.zip": ffmpeg,
+        "checksums.sha256": f"{hashlib.sha256(ffmpeg).hexdigest()}  ffmpeg-master-latest-win64-gpl.zip\n".encode(),
         "yt-dlp_win.zip": archive,
         "SHA2-256SUMS": f"{digest}  yt-dlp_win.zip\n".encode(),
         "deno-x86_64-pc-windows-msvc.zip": zip_bytes({"deno.exe": "deno"}),
-        "ffmpeg-master-latest-win64-gpl.zip": zip_bytes({"ffmpeg-x/bin/ffmpeg.exe": "ffmpeg", "ffmpeg-x/bin/ffplay.exe": "no"}),
     })
 
 
@@ -814,3 +838,47 @@ def test_a_whole_run_leaves_its_log_in_the_logs_folder(tmp_path):
     assert any("安裝完成" in line for line in log_lines(home))
     setup.say("not in the log: the run is over")
     assert not any("not in the log" in line for line in log_lines(home))
+
+
+# ---------------------------------------------------------------- downloads are checked before they are unpacked
+
+def test_the_real_pins_are_complete_and_their_addresses_do_not_float():
+    assert set(REAL_PINS) == {"deno_win", "deno_mac_arm", "deno_mac_x64", "ffmpeg_mac_arm", "ffmpeg_mac_x64"}
+    for key, value in REAL_PINS.items():
+        assert len(value) == 64 and int(value, 16) >= 0, key
+        assert "/latest/" not in setup.URL[key], f"{key} must point at a fixed release"
+    assert "/latest/" in setup.URL["ffmpeg_win"] and setup.URL["ffmpeg_win_sums"].endswith("checksums.sha256")
+
+
+def test_a_deno_that_does_not_match_its_pin_is_thrown_away_and_not_unpacked(tmp_path, monkeypatch):
+    net = win_net()
+    monkeypatch.setattr(setup, "PINS", {"deno_win": "0" * 64})
+    with pytest.raises(SetupError, match="校驗碼和預期不同"):
+        setup.ensure_tools(tmp_path, "win32", run=runs_ok({"deno.exe": 127}), fetch_file=net.file, fetch_text=net.text)
+    assert not (tmp_path / "bin" / "deno.exe").exists()
+
+
+def test_a_mac_ffmpeg_that_does_not_match_its_pin_is_not_installed(tmp_path, monkeypatch):
+    gz = __import__("gzip").compress(b"ffmpeg")
+    net = Net({"engine": b"", "deno-aarch64-apple-darwin.zip": zip_bytes({"deno": "deno"}), "ffmpeg-darwin-arm64.gz": gz})
+    monkeypatch.setattr(setup, "PINS", {"deno_mac_arm": hashlib.sha256(net.files["deno-aarch64-apple-darwin.zip"]).hexdigest(),
+                                         "ffmpeg_mac_arm": "f" * 64})
+    with pytest.raises(SetupError, match="ffmpeg 的校驗碼"):
+        setup.ensure_tools(tmp_path, "darwin", run=runs_ok({"ffmpeg": 127}), fetch_file=net.file, fetch_text=net.text,
+                           machine="arm64", install_engine=lambda b: "1")
+    assert not (tmp_path / "bin" / "ffmpeg").exists()
+
+
+def test_a_windows_ffmpeg_that_differs_from_the_published_list_is_not_installed(tmp_path):
+    net = win_net()
+    net.files["checksums.sha256"] = f"{'0' * 64}  ffmpeg-master-latest-win64-gpl.zip\n".encode()
+    with pytest.raises(SetupError, match="ffmpeg 的校驗碼"):
+        setup.ensure_tools(tmp_path, "win32", run=runs_ok({"ffmpeg.exe": 127}), fetch_file=net.file, fetch_text=net.text)
+    assert not (tmp_path / "bin" / "ffmpeg.exe").exists()
+
+
+def test_a_windows_ffmpeg_missing_from_the_published_list_is_not_installed(tmp_path):
+    net = win_net()
+    net.files["checksums.sha256"] = b"nothing here\n"
+    with pytest.raises(SetupError, match="找不到"):
+        setup.ensure_tools(tmp_path, "win32", run=runs_ok({"ffmpeg.exe": 127}), fetch_file=net.file, fetch_text=net.text)
