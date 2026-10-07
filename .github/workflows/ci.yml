@@ -21,7 +21,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]  # every push to any branch, so a branch is checked without opening a pull request
   pull_request:
   workflow_dispatch:  # run it by hand on any branch: Actions -> ci -> Run workflow
 

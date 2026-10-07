@@ -4,3 +4,5 @@ __pycache__/
 .superpowers/
 node_modules/
 *.pem
+e2e-logs/
+e2e-artifacts/
