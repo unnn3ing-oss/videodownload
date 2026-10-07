@@ -27,11 +27,13 @@ def test_redact_handles_json_escaped_backslashes():
 
 def test_redact_is_case_insensitive_on_windows_only():
     assert redact(r"c:\users\ALICE\x", home=r"C:\Users\alice", user="", ignore_case=True) == r"~\x"
-    assert redact("/home/ALICE/x", home="/home/alice", user="", ignore_case=False) == "/home/ALICE/x"
+    # (case-sensitive: the home path itself is not matched, but a folder under /home is hidden as somebody's name anyway)
+    assert redact("/home/ALICE/x", home="/home/alice", user="", ignore_case=False) == "/home/<user>/x"
 
 
-def test_redact_does_not_touch_a_longer_sibling_name():
-    assert redact("/home/alice2/x /mnt/home/alice/x", home="/home/alice", user="") == "/home/alice2/x /mnt/home/alice/x"
+def test_redact_hides_a_longer_sibling_name_too_but_never_cuts_a_name_in_half():
+    out = redact("/home/alice2/x /mnt/home/alice/x", home="/home/alice", user="")
+    assert out == "/home/<user>/x /mnt/home/<user>/x" and "alice" not in out and "<user>2" not in out
 
 
 def test_redact_replaces_the_user_name_as_a_whole_word():
@@ -149,3 +151,13 @@ def test_exception_logs_the_context_and_the_traceback(tmp_path):
 def test_default_home_is_the_one_the_host_uses(tmp_path):
     assert HostLog(tmp_path).path == tmp_path / "logs" / "host.log"
     assert os.fspath(HostLog(tmp_path).path).endswith(os.path.join("logs", "host.log"))
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("C:\\Users\\JOHNSM~1\\AppData\\Local\\Temp\\x.log", "C:\\Users\\<user>\\AppData\\Local\\Temp\\x.log"),  # 8.3 short name
+    ("/Users/someone-else/Library/x", "/Users/<user>/Library/x"),
+    ("/home/other/.cache/y", "/home/<user>/.cache/y"),
+    ("C:/Users/莊鈞評/Desktop", "C:/Users/<user>/Desktop"),
+])
+def test_any_folder_under_users_or_home_is_hidden_even_when_it_is_not_this_user(text, expected):
+    assert hostlog.redact(text, home="", user="") == expected

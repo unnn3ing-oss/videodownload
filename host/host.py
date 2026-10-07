@@ -89,6 +89,11 @@ class Host:
         self._threads.append(thread)
         thread.start()
 
+    def _refresh_engine(self) -> None:
+        """Find the engine again: an install or repair may have put it somewhere else (the old single-file build is gone)."""
+        self.engine = locate_engine(self.home)
+        self.runner.engine = self.engine
+
     def _engine_present(self) -> bool:
         return self.engine.ytdlp.exists()
 
@@ -279,7 +284,7 @@ class Host:
         if exc.rolled_back:
             payload["rolledBack"] = True
         if exc.detail:
-            payload["detail"] = exc.detail
+            payload["detail"] = hostlog.redact(exc.detail)  # a traceback names the person's folders
         self._reply(msg, payload)
 
     def _busy(self, msg: dict) -> bool:
@@ -396,6 +401,8 @@ class Host:
         def work() -> None:
             output = self.config.output_dir
             fixed = doctor.repair(self.home, output_dir=output) if fix else []
+            if fixed:
+                self._refresh_engine()
             checks = doctor.diagnose(self.home, ext_id=ext_id, output_dir=output)
             self.log(f"doctor fix={fix}: {len(checks)} checks, errors={','.join(c.id for c in checks if c.status == 'error')}"
                      f" warnings={','.join(c.id for c in checks if c.status == 'warn')} fixed={len(fixed)}")
@@ -419,6 +426,9 @@ class Host:
         # On a Mac and on Windows the engine is the unpacked build, which cannot update itself (`-U` is refused): it is
         # installed again instead, which also replaces a broken or single-file install.
         install = _engine_installer()
+        if self.runner.running:  # the program cannot be replaced under a running download
+            self._error(msg, "busy", "下載進行中，等這一批下載完再更新下載引擎")
+            return
         if not install and not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
             return
@@ -427,6 +437,7 @@ class Host:
             try:
                 if install:
                     install(self.home / "bin")
+                    self._refresh_engine()
                 else:
                     code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
                     if code != 0:

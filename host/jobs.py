@@ -21,9 +21,11 @@ from ytdlp import (Engine, ResolveError, build_download_args, classify_error, pa
 
 # A run of these means YouTube (or the network) is pushing back: wait longer, then give up before it gets worse.
 THROTTLE_CODES = {"network", "rate_limited", "bot_check", "forbidden", "tls"}
-FATAL_CODES = {"disk_full", "deno_missing"}  # every following video would fail the same way
+FATAL_CODES = {"disk_full"}  # every following video would fail the same way
 MAX_THROTTLE_STREAK = 3
-MAX_MERGE_FAILURES = 2  # each one is a full download, so a broken ffmpeg is stopped sooner
+# failures that say something about this computer, not about one video: the same one twice in a row stops the job
+# (a merge failure costs a full download each; a video that fails oddly on a machine without Deno is not proof)
+REPEAT_LIMITS = {"merge_failed": 2, "deno_missing": 2}
 MIN_BACKOFF, MAX_BACKOFF = 5.0, 120.0
 JITTER = 0.25  # the wait between two attempts gets up to a quarter extra, so the rhythm is not machine-regular
 ABORT_MESSAGES = {
@@ -186,7 +188,8 @@ class JobRunner:
             archive = Archive(output_dir)
             seen: set[str] = set()
             attempted = touched = False  # any earlier network attempt / this item's first one has begun
-            streak = merge_failures = 0  # throttle-class failures in a row, and merge failures in a row
+            streak = same_run = 0  # throttle-class failures in a row, and failures of one REPEAT_LIMITS kind in a row
+            previous = None
 
             def wait_turn(next_id: str, item_cancel: threading.Event) -> str | None:
                 """Called right before an item first touches the network: waits out the cooldown after an earlier try."""
@@ -234,9 +237,10 @@ class JobRunner:
                     break
                 if touched and outcome in ("ok", "failed"):  # an item that never reached the network proves nothing
                     streak = streak + 1 if outcome == "failed" and last_code in THROTTLE_CODES else 0
-                    merge_failures = merge_failures + 1 if outcome == "failed" and last_code == "merge_failed" else 0
+                    same_run = same_run + 1 if outcome == "failed" and last_code == previous else (1 if outcome == "failed" else 0)
+                    previous = last_code if outcome == "failed" else None
                 if outcome == "failed" and (last_code in FATAL_CODES or streak >= MAX_THROTTLE_STREAK
-                                            or merge_failures >= MAX_MERGE_FAILURES):
+                                            or same_run >= REPEAT_LIMITS.get(last_code, 0) > 0):
                     summary["aborted"] = {"code": last_code, "message": ABORT_MESSAGES[last_code]}
                     break  # the items still waiting were never tried: they get no event
         except Exception:

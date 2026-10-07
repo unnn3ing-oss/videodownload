@@ -63,6 +63,9 @@ def redact(text: str, home: object = None, user: str | None = None, ignore_case:
         # a very short name ("al") is only safe to replace where it is a folder name
         pattern = rf"(?<!\w){name}(?!\w)" if len(user) >= 3 else rf"(?<=[\\/]){name}(?=[\\/]|$)"
         text = re.sub(pattern, lambda m: "<user>", text, flags=flags)
+    # any other folder right under "Users" or "home" is somebody's name too (Windows 8.3 short names such as JOHNSM~1,
+    # a user name in letters the system call did not return, a path written by another account)
+    text = re.sub(r"(?i)(?<![\w])((?:Users|home)(?:\\\\|\\|/))(?!<user>|~)[^\\/\s\"'<>:*?|]+", r"\1<user>", text)
     return text
 
 

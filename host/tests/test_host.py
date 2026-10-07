@@ -12,7 +12,7 @@ import host as host_mod
 from fake_programs import make_program
 from host import Host, locate_engine, main
 from protocol import read_message, write_message
-from ytdlp import VideoRef
+from ytdlp import Engine, VideoRef
 
 HERE = Path(__file__).parent
 HOST_PY = HERE.parent / "host.py"
@@ -426,3 +426,44 @@ def test_update_engine_reinstalls_the_unpacked_build_instead_of_asking_yt_dlp_to
     h.wait(10)
     assert len(installed) == 1 and installed[0].name == "bin"
     assert events[-1]["type"] == "engine_updated" and events[-1]["reqId"] == 4
+
+
+def _engine_moves_to(monkeypatch, tmp_path):
+    moved = Engine(tmp_path / "elsewhere" / "yt-dlp.exe", None, None)
+    monkeypatch.setattr(host_mod, "locate_engine", lambda home: moved)
+    return moved
+
+
+def test_update_engine_points_the_host_and_its_jobs_at_the_engine_that_was_installed(tmp_path, monkeypatch):
+    # a Windows install that still had the single-file yt-dlp.exe: the update deletes it, the new build lives elsewhere
+    monkeypatch.setattr(host_mod.sys, "platform", "win32")
+    monkeypatch.setattr(host_mod.winengine, "install", lambda bin_dir, **kw: "2099.01.01")
+    monkeypatch.setattr(Host, "_version", lambda self: "2099.01.01")
+    h, events = new_host(tmp_path)
+    moved = _engine_moves_to(monkeypatch, tmp_path)
+    h.handle({"type": "update_engine", "reqId": 4})
+    h.wait(10)
+    assert events[-1]["type"] == "engine_updated"
+    assert h.engine is moved and h.runner.engine is moved
+
+
+def test_repairing_the_environment_also_points_the_host_at_the_repaired_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(host_mod.doctor, "repair", lambda home, **kw: ["engine"])
+    monkeypatch.setattr(host_mod.doctor, "diagnose", lambda home, **kw: [])
+    h, events = new_host(tmp_path)
+    moved = _engine_moves_to(monkeypatch, tmp_path)
+    h.handle({"type": "doctor", "reqId": 5, "fix": True})
+    h.wait(10)
+    assert events[-1]["type"] == "doctor" and h.engine is moved and h.runner.engine is moved
+
+
+def test_update_engine_is_refused_while_a_download_runs(tmp_path, monkeypatch):
+    # replacing the program under a running download fails halfway on Windows
+    called = []
+    monkeypatch.setattr(host_mod.sys, "platform", "win32")
+    monkeypatch.setattr(host_mod.winengine, "install", lambda bin_dir, **kw: called.append(bin_dir))
+    h, events = new_host(tmp_path)
+    h.runner.running = True
+    h.handle({"type": "update_engine", "reqId": 6})
+    h.wait(10)
+    assert called == [] and events[-1]["type"] == "error" and events[-1]["code"] == "busy" and events[-1]["reqId"] == 6

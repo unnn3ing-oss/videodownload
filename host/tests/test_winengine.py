@@ -173,6 +173,24 @@ def test_a_program_blocked_after_it_was_moved_into_place_puts_the_old_install_ba
     assert not (bin_dir / "yt-dlp_dir.old").exists() and not (bin_dir / ".yt-dlp-update").exists()
 
 
+def test_a_blocked_program_whose_files_cannot_be_removed_still_reports_the_antivirus_facts(tmp_path, monkeypatch):
+    # Defender holds the new files: the half-removed folder must not turn the report into a rename error
+    import shutil
+    bin_dir = tmp_path / "bin"
+    put_old_install(bin_dir)
+    real = shutil.rmtree
+
+    def locked(path, *a, **kw):
+        if Path(path).name == "yt-dlp_dir":
+            return  # the files stay
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(winengine.shutil, "rmtree", locked)
+    fakes = Fakes(starts=[(0, "2099.01.01\n", ""), (127, "", VIRUS)])
+    with pytest.raises(EngineBlocked):
+        install(bin_dir, **fakes.kwargs(sleep=lambda s: None))
+
+
 def test_a_failure_while_swapping_puts_the_old_install_back(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     put_old_install(bin_dir)

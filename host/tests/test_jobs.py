@@ -682,13 +682,25 @@ def test_a_success_or_another_kind_of_failure_breaks_the_run(tmp_path):
     assert h.summary["failed"] == 7 and h.summary["ok"] == 1
 
 
-def test_missing_deno_stops_the_job_at_once(tmp_path):
-    # without a JavaScript runtime every video fails the same way: stop after the first
-    h = Harness(tmp_path, fail={f"v{i}": "WARNING: [youtube] No supported JavaScript runtime could be found\nERROR: [youtube] x: Requested format is not available" for i in range(1, 4)})
+DENO_WARNING = ("WARNING: [youtube] No supported JavaScript runtime could be found\n"
+                "ERROR: [youtube] x: Requested format is not available")
+
+
+def test_missing_deno_twice_in_a_row_stops_the_job(tmp_path):
+    # without a JavaScript runtime every video fails the same way: stop after the second
+    h = Harness(tmp_path, fail={f"v{i}": DENO_WARNING for i in range(1, 4)})
     recording(h)
     h.run([item(f"v{i}", f"標題{i}") for i in range(1, 4)])
-    assert [e["code"] for e in h.of("item_failed")] == ["deno_missing"] and len(h.calls) == 1
+    assert [e["code"] for e in h.of("item_failed")] == ["deno_missing", "deno_missing"] and len(h.calls) == 2
     assert h.summary["aborted"]["code"] == "deno_missing" and "Deno" in h.summary["aborted"]["message"]
+
+
+def test_one_odd_failure_that_mentions_deno_does_not_end_the_batch(tmp_path):
+    # a video that fails for another reason on a machine without Deno must not take the others with it
+    h = Harness(tmp_path, fail={"v1": DENO_WARNING})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 4)])
+    assert h.summary["aborted"] is None and h.summary["ok"] == 2 and h.summary["failed"] == 1
 
 
 def test_disk_full_stops_the_job_at_once(tmp_path):

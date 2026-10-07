@@ -187,6 +187,21 @@ def _retry(action: Callable[[], None], sleep: Callable[[float], None], tries: in
             sleep(1)  # a folder whose files the antivirus is looking at cannot be renamed for a moment
 
 
+def _put_back(target: Path, previous: Path, sleep: Callable[[float], None]) -> None:
+    """Best effort: the old install back in place. Never replaces the error the caller is about to raise (an antivirus may
+    still hold some of the new files, which then cannot be removed or renamed over)."""
+    try:
+        if target.exists():
+            try:
+                _retry(lambda: shutil.rmtree(target), sleep)
+            except OSError:
+                pass
+        if previous.exists() and not target.exists():
+            _retry(lambda: previous.rename(target), sleep)
+    except OSError:
+        pass
+
+
 def install(bin_dir: Path, *,
             fetch_text: Callable[[str], str] = _download_text,
             fetch_file: Callable[[str, Path], None] = _download,
@@ -233,8 +248,8 @@ def install(bin_dir: Path, *,
         except OSError as exc:
             if swapped:
                 shutil.rmtree(target, ignore_errors=True)
-            if moved and not target.exists():
-                previous.rename(target)  # back to the install that was there
+            if moved:
+                _put_back(target, previous, sleep)
             raise EngineInstallError(f"無法換上新的 yt-dlp：{exc}（下載進行中或有其他視窗正在使用它嗎？）") from exc
         exe = target / EXE_NAME
         try:
@@ -242,7 +257,7 @@ def install(bin_dir: Path, *,
         except EngineInstallError:
             shutil.rmtree(target, ignore_errors=True)
             if moved:
-                previous.rename(target)
+                _put_back(target, previous, sleep)
             raise
         shutil.rmtree(previous, ignore_errors=True)
         (bin_dir / EXE_NAME).unlink(missing_ok=True)  # the old single-file build: only now that the new one has started

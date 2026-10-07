@@ -680,6 +680,27 @@ def test_an_installer_older_than_what_is_installed_does_not_deploy_even_without_
     assert not any(c.startswith("deploy") for c in calls) and "不會降版" in capsys.readouterr().out
 
 
+def test_a_new_install_forgets_the_pending_marker_of_an_older_update(tmp_path):
+    # the marker belongs to the files of the update that left it: after those were replaced it must not undo anything
+    home = tmp_path / "home"
+    put_installed_host(home, "0.3.0")
+    marker = home / "update-pending.json"
+    marker.write_text('{"version": "0.4.1", "backupDir": "x", "started": 1}', encoding="utf-8")
+    calls, parts = fake_parts(tmp_path)
+    assert setup.run_setup(home, "darwin", EXT_ID, version="0.4.2", parts=parts) == 0
+    assert not marker.exists()
+
+
+def test_a_run_that_keeps_the_installed_files_keeps_the_pending_marker(tmp_path):
+    home = tmp_path / "home"
+    put_installed_host(home, "0.9.0")
+    marker = home / "update-pending.json"
+    marker.write_text('{"version": "0.9.0", "backupDir": "x", "started": 1}', encoding="utf-8")
+    calls, parts = fake_parts(tmp_path)
+    setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", no_deploy=True, parts=parts)
+    assert marker.exists()
+
+
 def test_an_equal_or_newer_installer_deploys_as_before(tmp_path):
     home = tmp_path / "home"
     put_installed_host(home, "0.3.0")

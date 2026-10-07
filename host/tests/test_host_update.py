@@ -149,3 +149,11 @@ def test_update_applied_reply_is_unchanged(tmp_path, monkeypatch):
     h.handle({"type": "update_commit", "reqId": 2})
     assert events[-1] == {"type": "update_applied", "count": 1, "reqId": 2}
     assert (home / "update-pending.json").exists()
+
+
+def test_the_detail_of_an_update_error_is_redacted_before_it_leaves_the_host(tmp_path):
+    import selfupdate
+    h, events, home = new_host(tmp_path)
+    detail = 'Traceback (most recent call last):\n  File "C:\\Users\\JOHNSM~1\\x\\host.py", line 3\nSyntaxError'
+    h._update_error({"reqId": 1}, selfupdate.UpdateError("selfcheck_failed", "x", rolled_back=True, detail=detail))
+    assert "JOHNSM" not in events[-1]["detail"] and "<user>" in events[-1]["detail"] and "SyntaxError" in events[-1]["detail"]

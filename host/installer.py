@@ -29,6 +29,7 @@ from typing import Callable
 
 import doctor
 import macos_engine
+import selfupdate
 import winengine
 from install_record import (EXTENSION_NAME, fingerprint, is_extension as _is_extension, read_engine, read_record,
                             recorded_extension_folder, write_engine, write_record)
@@ -598,6 +599,9 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
                         say("    沒有選擇資料夾，使用預設位置：使用者資料夾")
                 deployed = steps["deploy"](chosen)
             say(f"    {deployed.path}（{deployed.count} 個檔案）")
+
+        if not no_deploy:
+            selfupdate.clear_pending(home)  # a marker left by an older update must not undo files this run just laid down
 
         step("測試本機小程式能不能被 Chrome 啟動")
         ready = steps["selftest"](home, platform)
