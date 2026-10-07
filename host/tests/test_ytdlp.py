@@ -21,8 +21,8 @@ def test_build_args():
     assert a[a.index("--merge-output-format") + 1] == "mp4"
     assert [a[i + 1] for i, x in enumerate(a) if x == "-P"] == [f"home:{Path('/o')}", f"temp:{Path('/o/.ytdl-partial/x')}"]
     assert a[a.index("-o") + 1] == "t.mp4"
-    assert a[a.index("--js-runtimes") + 1] == "deno:/dn/deno"
-    assert a[a.index("--ffmpeg-location") + 1] == "/ff"
+    assert a[a.index("--js-runtimes") + 1] == f"deno:{Path('/dn/deno')}"
+    assert a[a.index("--ffmpeg-location") + 1] == str(Path("/ff"))
     assert a[-2:] == ["--", "https://youtu.be/x"]
 
 

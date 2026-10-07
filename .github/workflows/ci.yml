@@ -145,7 +145,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r requirements-dev.txt
       - name: Python tests
-        run: python -m pytest -q -rs host/tests tests
+        run: python -m pytest -q -rfs --tb=short host/tests tests  # -rf: every failed test is named in the last lines (job logs are read from the tail)
       - name: The Windows installer's PowerShell must parse (not skipped)
         run: |
           code=0

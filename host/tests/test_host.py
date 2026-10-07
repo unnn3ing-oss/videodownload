@@ -1,6 +1,5 @@
 import io
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -10,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import host as host_mod
+from fake_programs import make_program
 from host import Host, locate_engine, main
 from protocol import read_message, write_message
 from ytdlp import VideoRef
@@ -23,9 +23,7 @@ def make_home(tmp_path: Path, with_engine: bool = True) -> Path:
     home = tmp_path / "home"
     (home / "bin").mkdir(parents=True)
     if with_engine:
-        stub = home / "bin" / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp")
-        shutil.copy(HERE / "stub_ytdlp.py", stub)
-        stub.chmod(0o755)
+        make_program(home / "bin" / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"), (HERE / "stub_ytdlp.py").read_text(encoding="utf-8"))
     return home
 
 
@@ -216,7 +214,11 @@ def test_resolve_worker_exception_replies_error(tmp_path, monkeypatch):
 
 def test_unrunnable_engine_does_not_break_ready(tmp_path):
     home = make_home(tmp_path)
-    (home / "bin" / "yt-dlp").chmod(0o644)  # exists but cannot be executed
+    engine = home / "bin" / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp")
+    if os.name == "nt":
+        engine.write_bytes(b"not a program")  # exists but Windows cannot start it (WinError 193): there is no exec bit to clear
+    else:
+        engine.chmod(0o644)  # exists but cannot be executed
     h = Host(home, [].append)
     assert h.ready_message()["ytdlpVersion"] is None
 

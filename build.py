@@ -52,6 +52,7 @@ def payload_b64() -> str:
         for path in sorted((ROOT / "host").glob("*.py")):
             info = zipfile.ZipInfo(path.name, _ZIP_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3  # Unix: zipfile writes 0 (Windows) here on Windows, which would change the bytes
             info.external_attr = (stat.S_IFREG | 0o644) << 16
             z.writestr(info, path.read_bytes())
     return base64.b64encode(buf.getvalue()).decode("ascii")
@@ -70,6 +71,7 @@ def extension_b64() -> str:
         for path in _extension_files():
             info = zipfile.ZipInfo(path.relative_to(ROOT / "extension").as_posix(), _ZIP_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3  # Unix: zipfile writes 0 (Windows) here on Windows, which would change the bytes
             info.external_attr = (stat.S_IFREG | 0o644) << 16
             z.writestr(info, path.read_bytes())
     return base64.b64encode(buf.getvalue()).decode("ascii")

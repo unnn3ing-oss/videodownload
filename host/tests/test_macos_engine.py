@@ -15,7 +15,11 @@ import host as host_mod
 import macos_engine
 from macos_engine import ZIP_NAME, EngineInstallError, install
 
-pytestmark = pytest.mark.skipif(shutil.which("unzip") is None, reason="unzip not installed")
+pytestmark = [
+    pytest.mark.skipif(shutil.which("unzip") is None, reason="unzip not installed"),
+    pytest.mark.skipif(os.name == "nt", reason="macos_engine only ever runs on a Mac: it unpacks yt-dlp_macos.zip (symlinks, a #!/bin/sh "
+                                               "stand-in program that Windows cannot start). Windows has its own engine: test_winengine.py"),
+]
 
 OLD_VERSION = "old"
 

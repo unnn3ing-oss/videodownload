@@ -141,7 +141,7 @@ def test_bump_does_not_touch_other_version_like_fields(tmp_path):
 def test_bump_keeps_crlf_line_endings_of_the_files_it_edits(tmp_path):
     repo = make_repo(tmp_path, init_git=False)
     path = repo / "host/version.py"
-    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))  # (write_text already made CRLF on Windows)
     release.bump(repo, "1.2.4")
     assert path.read_bytes().endswith(b'VERSION = "1.2.4"\r\n')
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import installer as setup
+from fake_programs import make_program
 from installer import EXTENSION_FOLDER, SetupError
 
 EXT_ID = "a" * 32
@@ -208,6 +209,8 @@ def test_mac_registration_writes_a_launcher_and_the_chrome_manifest(tmp_path):
     assert data["allowed_origins"] == [f"chrome-extension://{EXT_ID}/"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="host.sh is the Mac launcher (a bash script; `bash` on Windows is the WSL launcher). "
+                    "The Windows launcher is host.cmd with relative paths, covered by the Windows registration test below and by the self test")
 def test_the_launcher_falls_back_to_another_python_when_the_recorded_one_is_gone(tmp_path):
     setup.register(tmp_path / "app", "darwin", EXT_ID, python=str(tmp_path / "gone/python3"), manifest_path=tmp_path / "m.json")
     (tmp_path / "app/host").mkdir()
@@ -280,7 +283,12 @@ def test_the_manifest_is_written_last_so_a_half_written_folder_is_not_loadable(t
     assert order[-1] == "manifest.json" and set(order) == set(EXT_FILES)
 
 
-@pytest.mark.parametrize("bad", ["../evil.js", "/abs.js", "a/../../b.js", "C:/x.js", "a\\b.js"])
+@pytest.mark.parametrize("bad", [
+    "../evil.js", "/abs.js", "a/../../b.js", "C:/x.js",
+    pytest.param("a\\b.js", marks=pytest.mark.skipif(
+        os.name == "nt", reason="zipfile turns a backslash into '/' on Windows (when writing and again when reading), so this entry "
+                                "cannot exist there; '..\\evil.js' arrives as '../evil.js', the first case")),
+])
 def test_a_package_with_an_unsafe_path_is_refused_before_anything_is_written(tmp_path, bad):
     z = tmp_path / "ext.zip"
     z.write_bytes(zip_bytes({**EXT_FILES, bad: "x"}))
@@ -321,31 +329,38 @@ def test_the_recorded_folder_is_reused_only_while_it_is_still_the_extension(tmp_
 
 # ---------------------------------------------------------------- the self test (what Chrome would do, minus Chrome)
 
+def make_launcher(tmp_path: Path, posix: str, windows: str) -> Path:
+    """A launcher the way the platform starts one: a #!/bin/sh script, or a .cmd (what host.cmd is on Windows)."""
+    if os.name == "nt":
+        launcher = tmp_path / "launch.cmd"
+        launcher.write_bytes(("@echo off\r\n" + windows.replace("\n", "\r\n")).encode("utf-8"))
+    else:
+        launcher = tmp_path / "launch.sh"
+        launcher.write_text("#!/bin/sh\n" + posix, encoding="utf-8")
+        launcher.chmod(0o755)
+    return launcher
+
+
 def test_the_self_test_starts_the_launcher_and_reads_the_hosts_ready_message(tmp_path):
     home = tmp_path / "home"
     (home / "bin").mkdir(parents=True)
-    stub = home / "bin/yt-dlp"
-    stub.write_text((ROOT / "host/tests/stub_ytdlp.py").read_text())
-    stub.chmod(0o755)
-    launcher = tmp_path / "launch.sh"
-    launcher.write_text(f'#!/bin/sh\nexport YTDL_HOME="{home}"\nexec "{sys.executable}" "{ROOT / "host/host.py"}"\n')
-    launcher.chmod(0o755)
+    make_program(home / "bin" / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"), (ROOT / "host/tests/stub_ytdlp.py").read_text(encoding="utf-8"))
+    launcher = make_launcher(
+        tmp_path,
+        f'export YTDL_HOME="{home}"\nexec "{sys.executable}" "{ROOT / "host/host.py"}"\n',
+        f'set "YTDL_HOME={home}"\n"{sys.executable}" "{ROOT / "host/host.py"}"\n')
     ready = setup.selftest(launcher)
     assert ready["type"] == "ready" and ready["ytdlpVersion"]
 
 
 def test_a_launcher_that_dies_is_reported_with_what_it_said(tmp_path):
-    launcher = tmp_path / "launch.sh"
-    launcher.write_text("#!/bin/sh\necho 'no python here' >&2\nexit 3\n")
-    launcher.chmod(0o755)
+    launcher = make_launcher(tmp_path, "echo 'no python here' >&2\nexit 3\n", "echo no python here 1>&2\nexit /b 3\n")
     with pytest.raises(SetupError, match="no python here"):
         setup.selftest(launcher)
 
 
 def test_a_launcher_that_says_nothing_times_out_with_a_clear_message(tmp_path):
-    launcher = tmp_path / "launch.sh"
-    launcher.write_text("#!/bin/sh\nsleep 30\n")
-    launcher.chmod(0o755)
+    launcher = make_launcher(tmp_path, "sleep 30\n", "ping -n 31 127.0.0.1 >nul\n")
     with pytest.raises(SetupError, match="沒有回應"):
         setup.selftest(launcher, timeout=1)
 
@@ -379,8 +394,9 @@ def test_the_windows_folder_dialog_is_a_powershell_folder_browser():
 
 def test_what_to_do_next_opens_the_folder_and_chrome_s_extension_page():
     seen = []
-    setup.open_next_steps("darwin", Path("/Users/me/YT批量下載器"), lambda cmd: seen.append(cmd) or (0, "", ""))
-    assert ["open", "/Users/me/YT批量下載器"] in seen
+    folder = Path("/Users/me/YT批量下載器")
+    setup.open_next_steps("darwin", folder, lambda cmd: seen.append(cmd) or (0, "", ""))
+    assert ["open", str(folder)] in seen  # (str(): a Windows machine writes the pretend Mac path with backslashes)
     assert any("chrome://extensions" in " ".join(cmd) for cmd in seen)
     seen.clear()
     setup.open_next_steps("win32", Path("C:/x/YT批量下載器"), lambda cmd: seen.append(cmd) or (0, "", ""))

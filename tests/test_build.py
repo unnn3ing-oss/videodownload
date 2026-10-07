@@ -19,6 +19,16 @@ _spec.loader.exec_module(build)
 
 KEY = build.read_manifest_key()
 
+MAC_SCRIPT_NEEDS_POSIX = ("the macOS installer is a bash script that runs executable #!/bin/sh stand-ins for curl, unzip, yt-dlp and "
+                          "shasum; on Windows `bash` is the WSL launcher (no distribution on the runner) and a script cannot be "
+                          "started as a program. The Windows installer's own checks are the PowerShell parse test and "
+                          "test_both_bootstraps_check_the_installed_version_before_they_unpack_anything")
+
+
+def skip_on_windows():
+    if os.name == "nt":
+        pytest.skip(MAC_SCRIPT_NEEDS_POSIX)
+
 
 def host_sources() -> dict[str, bytes]:
     return {f"{p.name}": p.read_bytes() for p in sorted((ROOT / "host").glob("*.py"))}
@@ -101,6 +111,14 @@ def test_both_installers_carry_the_same_extension_package():
     assert win == mac == build.extension_b64()
 
 
+def test_the_embedded_zips_are_byte_for_byte_the_same_on_windows(monkeypatch):
+    # zipfile stamps "made on Windows" (create_system 0) instead of "Unix" (3) into every entry when Python runs on Windows,
+    # so a build.py run there produced different bytes than the committed installers (the freshness check failed on Windows)
+    on_linux = build.payload_b64(), build.extension_b64()
+    monkeypatch.setattr("sys.platform", "win32")
+    assert (build.payload_b64(), build.extension_b64()) == on_linux
+
+
 def test_mac_zip_has_executable_lf_script_with_same_payload():
     data = build.render_mac()
     with zipfile.ZipFile(io.BytesIO(data)) as z:
@@ -121,6 +139,7 @@ def test_the_installers_are_only_a_bootstrap_the_installing_lives_in_the_host_fo
 
 
 def test_mac_script_is_valid_bash(tmp_path):
+    skip_on_windows()
     script = tmp_path / "install-mac.command"
     script.write_text(mac_script(build.render_mac()), encoding="utf-8")
     assert subprocess.run(["bash", "-n", str(script)], capture_output=True).returncode == 0
@@ -168,6 +187,7 @@ esac
 
 def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False,
                       ffmpeg_body="echo ffmpeg\n", before=None, piped=False, home=None, installed=None, version_file=None):
+    skip_on_windows()
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
@@ -401,6 +421,7 @@ STUB_INSTALLER = "import json, sys, pathlib\npathlib.Path(sys.argv[0]).with_name
 
 def run_template_with_stub(tmp_path, installed):
     """The rendered Mac installer with a fake home whose installed installer.py only records how it was started."""
+    skip_on_windows()
     home = tmp_path / "home"
     host_dir = home / APP / "host"
     host_dir.mkdir(parents=True)

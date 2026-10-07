@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,14 @@ from macos_engine import EngineInstallError
 from ytdlp import run_capture
 
 NAME = doctor.HOST_NAME
+
+# The fake yt-dlp / ffmpeg / deno here are `#!/bin/sh` scripts that are run for real: Windows cannot start those (WinError 193).
+# What a Windows machine adds (the .exe names, the unpacked build, the antivirus, the registry) is tested through the `platform=`
+# argument on every other system, and Windows really starting a program is tested with host/tests/stub_ytdlp.py in test_host.py.
+posix_programs = pytest.mark.skipif(os.name == "nt", reason="the fake programs are #!/bin/sh scripts, which Windows cannot run")
+# the platform the tests that are not about a particular system run as (on Windows the default would make them look for .exe files
+# and read the registry)
+HERE_PLATFORM = "linux" if sys.platform.startswith("win") else sys.platform
 
 
 def script(path: Path, body: str) -> Path:
@@ -66,9 +75,11 @@ def run_all(tmp_path, home=None, **kwargs):
         kwargs["native_manifest"] = manifest(tmp_path)
     kwargs.setdefault("output_dir", tmp_path / "out")
     kwargs.setdefault("run", Fake())
+    kwargs.setdefault("platform", HERE_PLATFORM)
     return by_id(diagnose(home, **kwargs))
 
 
+@posix_programs
 def test_a_healthy_install_has_nothing_to_report(tmp_path):
     checks = run_all(tmp_path, ext_id="abc")
     assert all(c.status == "ok" for c in checks.values()), {k: (c.status, c.detail) for k, c in checks.items()}
@@ -77,6 +88,7 @@ def test_a_healthy_install_has_nothing_to_report(tmp_path):
     assert not has_errors(list(checks.values()))
 
 
+@posix_programs
 def test_missing_parts_are_errors_that_say_what_to_do(tmp_path):
     home = make_home(tmp_path, ffmpeg=None, deno=None)
     checks = run_all(tmp_path, home=home)
@@ -88,12 +100,14 @@ def test_missing_parts_are_errors_that_say_what_to_do(tmp_path):
     assert missing_engine["engine"].status == "error" and "找不到下載引擎" in missing_engine["engine"].title
 
 
+@posix_programs
 def test_a_program_that_does_not_run_is_an_error_with_the_reason(tmp_path):
     checks = run_all(tmp_path, home=make_home(tmp_path, engine="echo 'boom: bad cpu type' >&2\nexit 3\n"))
     assert checks["engine"].status == "error"
     assert "boom: bad cpu type" in checks["engine"].detail
 
 
+@posix_programs
 def test_a_single_file_yt_dlp_on_a_mac_is_found_before_it_is_run(tmp_path):
     home = make_home(tmp_path, engine=None)
     (home / "bin" / "yt-dlp").write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 64)  # a Mach-O program: the old single-file build
@@ -182,6 +196,7 @@ def test_the_report_marks_each_line_and_gives_the_advice_under_a_problem():
 
 # ---- repair ----
 
+@posix_programs
 def test_repair_on_a_mac_removes_the_marks_and_installs_yt_dlp_again_when_it_is_broken(tmp_path):
     home = make_home(tmp_path, engine="exit 3\n")
     fake = Fake()
@@ -194,6 +209,7 @@ def test_repair_on_a_mac_removes_the_marks_and_installs_yt_dlp_again_when_it_is_
     assert any("yt-dlp" in line and "2101.01.01" in line for line in done)
 
 
+@posix_programs
 def test_repair_leaves_a_working_engine_alone_and_reports_a_failed_reinstall(tmp_path):
     home = make_home(tmp_path)
     called = []
@@ -215,6 +231,7 @@ def test_repair_elsewhere_only_makes_sure_the_output_folder_exists(tmp_path):
 
 # ---- command line and the host's message ----
 
+@posix_programs
 def test_the_command_line_prints_the_report_and_exits_with_the_verdict(tmp_path, capsys):
     home = make_home(tmp_path)
     args = ["doctor.py", "--home", str(home), "--native-manifest", str(manifest(tmp_path)), "--output-dir", str(tmp_path / "o"),
@@ -235,6 +252,7 @@ def new_host(tmp_path):
     return h, events
 
 
+@posix_programs
 def test_the_host_answers_a_doctor_request_with_the_checks(tmp_path, monkeypatch):
     h, events = new_host(tmp_path)
     monkeypatch.setattr(doctor, "default_manifest", lambda platform: manifest(tmp_path))
@@ -307,6 +325,7 @@ def win_engine(home, run=None):
     return doctor._check_engine(home, "win32", run or Fake())
 
 
+@posix_programs
 def test_on_windows_the_engine_is_the_unpacked_build_and_the_check_says_where_it_is_and_what_file_it_is(tmp_path):
     import hashlib
     home = win_home(tmp_path)
@@ -317,12 +336,14 @@ def test_on_windows_the_engine_is_the_unpacked_build_and_the_check_says_where_it
     assert doctor.engine_path(home, "win32") == exe
 
 
+@posix_programs
 def test_a_single_file_engine_still_works_but_is_called_old(tmp_path):
     check = win_engine(win_home(tmp_path, onedir=None, legacy="echo 2099.01.01\n"))
     assert check.status == "warn" and "舊版單檔" in check.title and "重新執行安裝檔" in check.fix
     assert doctor._engine_state(win_home(tmp_path / "x", onedir=None, legacy="echo 1\n"), "win32", Fake())[1] == "legacy"
 
 
+@posix_programs
 def test_an_engine_that_an_antivirus_blocks_is_reported_with_the_facts_for_IT(tmp_path):
     from install_record import fingerprint, write_engine
     home = win_home(tmp_path, onedir=f"echo '{VIRUS}' >&2\nexit 127\n")
@@ -344,6 +365,7 @@ def test_a_missing_engine_that_was_installed_before_is_probably_quarantined(tmp_
     assert "f" * 64 in check.detail and str(home / "bin/yt-dlp_dir/yt-dlp.exe") in check.detail
 
 
+@posix_programs
 def test_repair_on_windows_installs_the_unpacked_engine_again_when_it_is_missing_or_broken(tmp_path):
     seen = []
     done = repair(win_home(tmp_path, onedir="exit 3\n"), platform="win32", run=Fake(), output_dir=tmp_path / "o",
@@ -354,6 +376,7 @@ def test_repair_on_windows_installs_the_unpacked_engine_again_when_it_is_missing
     assert seen == [], "an engine that runs is left alone"
 
 
+@posix_programs
 def test_repair_does_not_download_again_what_the_antivirus_blocks(tmp_path):
     seen = []
     done = repair(win_home(tmp_path, onedir=f"echo '{VIRUS}' >&2\nexit 127\n"), platform="win32", run=Fake(), output_dir=tmp_path / "o",

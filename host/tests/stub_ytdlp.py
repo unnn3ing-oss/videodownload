@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 args = sys.argv[1:]
+for stream in (sys.stdout, sys.stderr):  # the host reads UTF-8; a pipe on Windows would otherwise be cp1252 (and fail on 範例影片)
+    stream.reconfigure(encoding="utf-8")
 
 
 def video_id():

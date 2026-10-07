@@ -8,6 +8,7 @@ import pytest
 
 import host as host_mod
 from doctor import Check
+from fake_programs import make_program
 from host import HANDLED, Host, main
 from test_host import URL, frames, make_home, new_host, parse_all
 
@@ -67,7 +68,7 @@ def test_a_background_exception_is_logged_with_its_traceback(tmp_path, monkeypat
 
 def test_resolve_failures_are_logged_with_the_stderr_tail(tmp_path):
     h, events = new_host(tmp_path)
-    h.engine.ytdlp.write_text("#!/bin/sh\necho 'ERROR: [youtube] x: Private video' >&2\nexit 1\n")
+    make_program(h.engine.ytdlp, "import sys\nsys.stderr.write('ERROR: [youtube] x: Private video\\n')\nsys.exit(1)\n")
     h.handle({"type": "resolve", "reqId": 5, "urls": [URL]})
     h.wait(10)
     assert events[0]["code"] == "private"
