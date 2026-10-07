@@ -219,7 +219,7 @@ def make_host(tmp_path):
 def test_update_engine_on_a_mac_installs_the_unpacked_build(tmp_path, monkeypatch):
     h, events = make_host(tmp_path)
     seen = []
-    monkeypatch.setattr(host_mod, "_uses_macos_engine", lambda: True)
+    monkeypatch.setattr(host_mod, "_engine_installer", lambda: host_mod.macos_engine.install)
     monkeypatch.setattr(host_mod.macos_engine, "install", lambda bin_dir: seen.append(bin_dir) or "2101.02.03")
     monkeypatch.setattr(host_mod.Host, "_version", lambda self: "2101.02.03")
     h.handle({"type": "update_engine", "reqId": 5})
@@ -234,7 +234,7 @@ def test_update_engine_on_a_mac_reports_why_it_failed(tmp_path, monkeypatch):
     def broken(bin_dir):
         raise EngineInstallError("yt-dlp 校驗碼不符，檔案可能損毀，請重新執行")
 
-    monkeypatch.setattr(host_mod, "_uses_macos_engine", lambda: True)
+    monkeypatch.setattr(host_mod, "_engine_installer", lambda: host_mod.macos_engine.install)
     monkeypatch.setattr(host_mod.macos_engine, "install", broken)
     h.handle({"type": "update_engine", "reqId": 6})
     h.wait(10)

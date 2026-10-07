@@ -28,6 +28,7 @@ from security import VIDEO_ID, is_allowed_url
 from version import VERSION
 import doctor
 import macos_engine
+import winengine
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
@@ -36,8 +37,13 @@ MAX_LIMIT = 1000
 MAX_COOLDOWN = 300
 
 
-def _uses_macos_engine() -> bool:
-    return sys.platform == "darwin"
+def _engine_installer():
+    """The platform's own installer for the unpacked yt-dlp build, or None where `yt-dlp -U` is how it updates."""
+    if sys.platform == "darwin":
+        return macos_engine.install
+    if sys.platform == "win32":
+        return winengine.install
+    return None
 
 
 def locate_engine(home: Path, windows: bool | None = None) -> Engine:
@@ -410,17 +416,17 @@ class Host:
         self._background(msg, work)
 
     def _on_update_engine(self, msg: dict) -> None:
-        # On a Mac the engine is the unpacked build, which cannot update itself (`-U`): it is installed again instead,
-        # which also replaces a broken or single-file install.
-        mac = _uses_macos_engine()
-        if not mac and not self._engine_present():
+        # On a Mac and on Windows the engine is the unpacked build, which cannot update itself (`-U` is refused): it is
+        # installed again instead, which also replaces a broken or single-file install.
+        install = _engine_installer()
+        if not install and not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
             return
 
         def work() -> None:
             try:
-                if mac:
-                    macos_engine.install(self.engine.ytdlp.parent)
+                if install:
+                    install(self.home / "bin")
                 else:
                     code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
                     if code != 0:

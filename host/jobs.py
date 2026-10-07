@@ -21,7 +21,7 @@ from ytdlp import (Engine, ResolveError, build_download_args, classify_error, pa
 
 # A run of these means YouTube (or the network) is pushing back: wait longer, then give up before it gets worse.
 THROTTLE_CODES = {"network", "rate_limited", "bot_check", "forbidden", "tls"}
-FATAL_CODES = {"disk_full"}  # every following video would fail the same way
+FATAL_CODES = {"disk_full", "deno_missing"}  # every following video would fail the same way
 MAX_THROTTLE_STREAK = 3
 MAX_MERGE_FAILURES = 2  # each one is a full download, so a broken ffmpeg is stopped sooner
 MIN_BACKOFF, MAX_BACKOFF = 5.0, 120.0
@@ -33,6 +33,7 @@ ABORT_MESSAGES = {
     "forbidden": "YouTube 連續拒絕了請求（403），已先停止下載；請稍後再試，並把「每支間隔」調高",
     "tls": "公司網路可能攔截了加密連線（憑證驗證失敗），已先停止下載；請洽資訊人員",
     "disk_full": "磁碟空間不足，已先停止下載；請清出空間，或到設定換一個資料夾後再繼續",
+    "deno_missing": "找不到 Deno（解開 YouTube 驗證需要），已先停止下載；請重新執行安裝檔，它會自動補齊後再繼續",
     "merge_failed": "影片連續合併失敗（ffmpeg 可能無法使用），已先停止下載；請按「檢查環境」修復後再繼續",
 }
 

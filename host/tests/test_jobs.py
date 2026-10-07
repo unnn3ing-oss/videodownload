@@ -682,6 +682,15 @@ def test_a_success_or_another_kind_of_failure_breaks_the_run(tmp_path):
     assert h.summary["failed"] == 7 and h.summary["ok"] == 1
 
 
+def test_missing_deno_stops_the_job_at_once(tmp_path):
+    # without a JavaScript runtime every video fails the same way: stop after the first
+    h = Harness(tmp_path, fail={f"v{i}": "WARNING: [youtube] No supported JavaScript runtime could be found\nERROR: [youtube] x: Requested format is not available" for i in range(1, 4)})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 4)])
+    assert [e["code"] for e in h.of("item_failed")] == ["deno_missing"] and len(h.calls) == 1
+    assert h.summary["aborted"]["code"] == "deno_missing" and "Deno" in h.summary["aborted"]["message"]
+
+
 def test_disk_full_stops_the_job_at_once(tmp_path):
     h = Harness(tmp_path, fail={"v2": DISK_FULL})
     recording(h)

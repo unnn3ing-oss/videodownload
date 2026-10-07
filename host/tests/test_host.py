@@ -393,7 +393,7 @@ def _boom(*args, **kwargs):
 
 @pytest.mark.parametrize("setup,message", [
     (lambda mp: mp.setattr(host_mod.doctor, "diagnose", _boom), {"type": "doctor"}),
-    (lambda mp: (mp.setattr(host_mod, "_uses_macos_engine", lambda: False), mp.setattr(Host, "_version", _boom)),
+    (lambda mp: (mp.setattr(host_mod, "_engine_installer", lambda: None), mp.setattr(Host, "_version", _boom)),
      {"type": "update_engine"}),
     (lambda mp: mp.setattr(host_mod, "resolve", lambda engine, urls, limit, log=None: [object()]),
      {"type": "resolve", "urls": [URL]}),
@@ -409,3 +409,18 @@ def test_background_handler_that_raises_still_answers_with_an_internal_error(tmp
     assert died == []
     assert len(events) == 1 and events[0]["type"] == "error" and events[0]["code"] == "internal"
     assert events[0]["reqId"] == 21 and events[0]["message"].startswith("內部錯誤")
+
+
+@pytest.mark.parametrize("platform,module", [("win32", "winengine"), ("darwin", "macos_engine")])
+def test_update_engine_reinstalls_the_unpacked_build_instead_of_asking_yt_dlp_to_update(tmp_path, monkeypatch, platform, module):
+    # the unpacked Windows/Mac builds cannot update themselves (`-U` is refused), so the engine is installed again
+    installed = []
+    monkeypatch.setattr(host_mod.sys, "platform", platform)
+    monkeypatch.setattr(getattr(host_mod, module), "install", lambda bin_dir, **kw: installed.append(bin_dir) or "2099.01.01")
+    monkeypatch.setattr(host_mod, "run_capture", lambda cmd: (_ for _ in ()).throw(AssertionError("-U must not run")))
+    monkeypatch.setattr(Host, "_version", lambda self: "2099.01.01")
+    h, events = new_host(tmp_path)
+    h.handle({"type": "update_engine", "reqId": 4})
+    h.wait(10)
+    assert len(installed) == 1 and installed[0].name == "bin"
+    assert events[-1]["type"] == "engine_updated" and events[-1]["reqId"] == 4
