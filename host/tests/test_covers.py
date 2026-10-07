@@ -104,3 +104,20 @@ def test_save_cover_reuses_a_registered_jpg_name_in_any_letter_case(tmp_path):
 def test_save_cover_ignores_registry_entries_with_characters_windows_reads_specially(tmp_path, entry):
     (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": entry}), encoding="utf-8")
     assert save_cover(tmp_path, "v1", "標題", JPEG).name == "標題.jpg"
+
+
+def test_save_cover_uses_the_name_the_extension_chose(tmp_path):
+    assert save_cover(tmp_path, "v1", "同一個標題", JPEG).name == "同一個標題.jpg"
+    assert save_cover(tmp_path, "v2", "同一個標題", JPEG, name="同一個標題 [v2]").name == "同一個標題 [v2].jpg"
+
+
+def test_save_cover_chosen_name_is_cleaned_and_cannot_leave_the_folder(tmp_path):
+    path = save_cover(tmp_path, "v1", "標題", JPEG, name="../..\\x:y.jpg")
+    assert path.parent == tmp_path and path.name.endswith(".jpg") and "/" not in path.name and "\\" not in path.name
+    assert save_cover(tmp_path, "v2", "標題", JPEG, name="   ").name == "標題.jpg"  # nothing usable: the title's own name
+
+
+def test_save_cover_chosen_name_still_never_overwrites_another_cover(tmp_path):
+    first = save_cover(tmp_path, "v1", "標題", JPEG, name="甲")
+    second = save_cover(tmp_path, "v2", "標題", JPEG, name="甲")
+    assert first.name == "甲.jpg" and second.name == "甲_2.jpg"

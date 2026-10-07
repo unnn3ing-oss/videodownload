@@ -126,15 +126,17 @@ _ERRORS = [  # order matters: first match wins
     ("region", ("in your country", "not available in your region"), "這支影片在目前的地區無法觀看"),
     ("unavailable", ("video unavailable", "has been removed", "no longer available", "has been terminated"),
      "影片無法使用（已下架或不存在）"),
+    # "not a bot" is YouTube pushing back on the connection; age limits and members-only videos are about one video
+    ("bot_check", ("not a bot",), "YouTube 要求驗證是否為機器人，請稍後再試，或改用住宅或公司網路"),
     ("login_required", ("sign in to confirm", "login required", "members-only"),
-     "YouTube 要求登入或驗證；請改用住宅或公司網路，或確認是否為年齡限制／會員專屬影片"),
+     "這支影片要登入才能看（年齡限制或會員專屬），無法下載"),
     # The next three come before "network": their text is usually wrapped in "Unable to download webpage: ...".
     ("rate_limited", ("http error 429", "too many requests"),
      "YouTube 暫時限制了請求，請等一陣子再試，並調高「間隔」"),
     ("forbidden", ("http error 403", "forbidden"),
      "YouTube 拒絕了這次請求（403），請稍後再試；若一直發生，請改用其他網路並調高「間隔」"),
     ("tls", ("certificate_verify_failed", "certificate verify failed", "self-signed certificate",
-             "self signed certificate", "unable to get local issuer certificate", "ssl:"),
+             "self signed certificate", "unable to get local issuer certificate", "wrong_version_number"),
      "公司網路可能攔截了加密連線（憑證驗證失敗），請洽資訊人員"),
     ("blocked_by_antivirus", ("winerror 225", "contains a virus",
                               "operation did not complete successfully because the file contains"),
@@ -143,13 +145,12 @@ _ERRORS = [  # order matters: first match wins
      "檔案被其他程式使用中，關閉後再試"),
     ("disk_full", ("no space left on device",), "磁碟空間不足"),
     ("network", ("unable to download webpage", "timed out", "temporary failure in name resolution",
-                 "network is unreachable", "connection reset", "getaddrinfo failed"),
+                 "network is unreachable", "connection reset", "getaddrinfo failed",
+                 "unexpected_eof_while_reading", "eof occurred in violation of protocol"),
      "網路連線失敗或逾時，請稍後再試"),
-    ("engine_outdated", ("js runtime", "javascript runtime"),
-     "下載引擎缺少 JavaScript 執行環境（Deno），請重新執行安裝檔"),
     ("engine_outdated", ("challenge solving failed", "signature solving failed", "unable to extract",
                          "requested format is not available"),
-     "下載引擎可能過舊，請重新執行安裝檔（它會一併更新下載引擎）"),
+     "下載引擎可能過舊，請打開擴充功能的側邊面板，到「設定與工具」按「更新下載引擎」後再試"),
 ]
 
 

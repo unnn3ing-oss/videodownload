@@ -216,6 +216,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
   // The job ended just as rows were added. Its `done` event may still be on its way.
   function restartWhenFree() {
+    if (state.aborted) return; // the host stopped on purpose: starting again at once would hit the same trouble
     if (state.running) {
       restartAfterDone = true;
       return;

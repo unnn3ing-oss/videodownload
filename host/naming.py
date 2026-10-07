@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 _ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+_EXPANDED = re.compile(r"\$(?=[A-Za-z_{])")  # "$HOME" in a name: yt-dlp would swap in the variable's value
 _RESERVED = {"CON", "PRN", "AUX", "NUL",
              *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 MAX_NAME = 200
@@ -15,7 +16,9 @@ TEMP_SUFFIX_BYTES = 16
 
 
 def sanitize_filename(name: str, max_len: int = MAX_NAME, max_bytes: int | None = None) -> str:
-    cleaned = _ILLEGAL.sub("_", name).lstrip(" .")  # a leading dot would make a hidden file on macOS/Linux
+    cleaned = _EXPANDED.sub("＄", _ILLEGAL.sub("_", name)).lstrip(" .")  # a leading dot would make a hidden file
+    if cleaned.startswith("~"):  # yt-dlp reads "~name" as another user's home folder
+        cleaned = "～" + cleaned[1:]
     if cleaned.split(".")[0].strip().upper() in _RESERVED:
         cleaned = "_" + cleaned
     cleaned = cleaned[:max_len]

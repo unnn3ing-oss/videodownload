@@ -64,7 +64,7 @@ def test_parse_done():
     ("ERROR: [youtube] x: Private video. Sign in if you've been granted access to this video", "private"),
     ("ERROR: [youtube] x: Video unavailable", "unavailable"),
     ("ERROR: This video is not available in your country", "region"),
-    ("ERROR: Sign in to confirm you’re not a bot", "login_required"),
+    ("ERROR: Sign in to confirm you’re not a bot", "bot_check"),
     ("ERROR: Sign in to confirm your age", "login_required"),
     ("ERROR: Unable to download webpage: The read operation timed out", "network"),
     ("ERROR: Temporary failure in name resolution", "network"),
@@ -84,7 +84,9 @@ def test_parse_done():
     ("ERROR: Unable to rename file: [WinError 32] The process cannot access the file because it is being used "
      "by another process: 'a.part' -> 'a'", "file_locked"),
     ("ERROR: unable to open for writing: PermissionError(13, 'Permission denied')", "file_locked"),
-    ("ERROR: [youtube] x: No supported JavaScript runtime could be found", "engine_outdated"),
+    ("ERROR: [youtube] x: Unable to download webpage: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in "
+     "violation of protocol (_ssl.c:1006)", "network"),
+    ("ERROR: unable to download video data: Members-only content", "login_required"),
 ])
 def test_classify(stderr, code):
     got, message = classify_error(stderr)
@@ -102,12 +104,11 @@ def test_classify_user_messages_are_actionable_chinese():
         "檔案被其他程式使用中，關閉後再試"
 
 
-def test_classify_engine_hint_never_points_at_a_button():
+def test_classify_engine_hint_names_the_button_that_really_updates_the_engine():
+    # re-running the installer keeps a yt-dlp that still starts; only the panel's button updates it
     message = classify_error("ERROR: Unable to extract initial data")[1]
-    assert message == "下載引擎可能過舊，請重新執行安裝檔（它會一併更新下載引擎）"
-    assert "按" not in message
-    deno = classify_error("ERROR: No supported JavaScript runtime could be found")[1]
-    assert "Deno" in deno and "按" not in deno
+    assert message == "下載引擎可能過舊，請打開擴充功能的側邊面板，到「設定與工具」按「更新下載引擎」後再試"
+    assert "安裝檔" not in message
 
 
 def test_classify_looks_only_at_error_lines_when_there_are_any():

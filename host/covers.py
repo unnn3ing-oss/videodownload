@@ -60,8 +60,10 @@ def _record(directory: Path, video_id: str, filename: str) -> None:
     os.replace(tmp, directory / REGISTRY)
 
 
-def save_cover(directory: Path, video_id: str, title: str, data: bytes) -> Path:
-    """Write a JPEG into `directory`; one stable file name per video, a numeric suffix for other videos."""
+def save_cover(directory: Path, video_id: str, title: str, data: bytes, name: str | None = None) -> Path:
+    """Write a JPEG into `directory`; one stable file name per video, a numeric suffix for other videos.
+
+    `name` is the base name the extension picked when the title alone would clash (it adds " [id]")."""
     if not data.startswith(JPEG_MAGIC):
         raise CoverError("bad_cover", "封面圖片格式不正確")
     if len(data) > MAX_COVER_BYTES:
@@ -78,7 +80,7 @@ def save_cover(directory: Path, video_id: str, title: str, data: bytes) -> Path:
         known = registry.get(video_id)
         target = safe_output_path(directory, known) if known and known.lower() not in claimed else None
         if target is None:
-            base = cover_name(title, video_id)
+            base = (sanitize_filename(name, 120) if isinstance(name, str) else "") or cover_name(title, video_id)
             number = 1
             while True:
                 suffix = "" if number == 1 else f"_{number}"

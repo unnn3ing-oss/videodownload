@@ -218,8 +218,10 @@ export async function addPastedUrls(box, send) {
     }
   }
   const { remaining, note } = summarizeAdd(outcomes);
-  // someone typing while this ran keeps their text; what was rejected goes after it
-  box.value = box.value === typed ? remaining : [box.value.trimEnd(), remaining].filter(Boolean).join("\n");
+  // someone typing while this ran keeps their new text (the urls sent above are not new); what was rejected goes after it
+  const sent = new Set(urls);
+  const typedMeanwhile = box.value === typed ? "" : box.value.split(/\s+/).filter((token) => token && !sent.has(token)).join("\n");
+  box.value = [typedMeanwhile, remaining].filter(Boolean).join("\n");
   return note;
 }
 

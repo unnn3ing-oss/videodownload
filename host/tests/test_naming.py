@@ -99,3 +99,21 @@ def test_oserror_from_exists_becomes_valueerror(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "exists", boom)
     with pytest.raises(ValueError):
         resolve_target(tmp_path, "x", "vid")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("~新品發表", "～新品發表"), ("a~b", "a~b"), ("Pay $HOME now", "Pay ＄HOME now"), ("$5 off", "$5 off"),
+    ("${x} and $_y", "＄{x} and ＄_y"),
+])
+def test_names_yt_dlp_would_expand_stay_literal(raw, expected):
+    # yt-dlp runs the -o template through expanduser/expandvars: "~name" would become another user's home folder
+    assert sanitize_filename(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["~root", "~", "$HOME/x", "${HOME}", "a $PATH b", "~新品發表"])
+def test_cleaned_names_survive_expanduser_and_expandvars(raw, monkeypatch):
+    import os
+    monkeypatch.setenv("HOME", "/home/someone")
+    monkeypatch.setenv("USERPROFILE", "C:\\Users\\someone")
+    cleaned = sanitize_filename(raw)
+    assert os.path.expanduser(cleaned) == cleaned and os.path.expandvars(cleaned) == cleaned

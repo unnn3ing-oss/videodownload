@@ -642,7 +642,7 @@ def test_three_throttle_failures_in_a_row_stop_the_job(tmp_path):
 @pytest.mark.parametrize("stderr,code,needle", [
     (TOO_MANY, "rate_limited", "YouTube"),
     ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "forbidden", "403"),
-    ("ERROR: [youtube] x: Sign in to confirm you're not a bot", "login_required", "登入"),
+    ("ERROR: [youtube] x: Sign in to confirm you're not a bot", "bot_check", "機器人"),
     ("ERROR: Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", "tls", "資訊人員"),
 ])
 def test_every_throttle_class_counts_towards_the_stop(tmp_path, stderr, code, needle):
@@ -651,6 +651,19 @@ def test_every_throttle_class_counts_towards_the_stop(tmp_path, stderr, code, ne
     h.run([item(f"v{i}", f"標題{i}") for i in range(1, 5)])
     assert h.summary["aborted"]["code"] == code and needle in h.summary["aborted"]["message"]
     assert len(h.calls) == 3
+
+
+@pytest.mark.parametrize("stderr", [
+    "ERROR: [youtube] x: Sign in to confirm your age",
+    "ERROR: [youtube] x: Join this channel to get access to members-only content",
+])
+def test_restricted_videos_in_a_row_do_not_stop_the_job(tmp_path, stderr):
+    # age-gated or members-only videos say nothing about the connection: the job walks past all of them
+    h = Harness(tmp_path, fail={f"v{i}": stderr for i in range(1, 5)})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 6)])
+    assert h.summary["aborted"] is None and len(h.calls) == 5
+    assert h.summary["failed"] == 4 and h.summary["ok"] == 1
 
 
 def test_mixed_throttle_classes_stop_with_the_last_ones_code(tmp_path):
@@ -686,6 +699,16 @@ def test_file_locked_is_not_fatal(tmp_path):
     h.run([item("v1", "甲"), item("v2", "乙")])
     assert h.of("item_failed")[0]["code"] == "file_locked"
     assert h.summary["aborted"] is None and h.summary["ok"] == 1
+
+
+def test_output_folder_path_too_long_stops_the_job_without_touching_any_item(tmp_path):
+    h = Harness(tmp_path)
+    h.out = tmp_path / ("d" * 200)  # no room is left for a file name below it
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert h.calls == [] and h.of("item_failed") == [] and h.of("item_done") == []
+    aborted = h.summary["aborted"]
+    assert aborted["code"] == "bad_path" and "太長" in aborted["message"]
+    assert h.summary["failed"] == 0 and h.runner.running is False
 
 
 def test_unusable_output_folder_stops_the_job_without_touching_any_item(tmp_path):

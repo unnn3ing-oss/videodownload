@@ -234,7 +234,8 @@ class Host:
             return
         try:
             raw = base64.b64decode(data, validate=True)
-            path = save_cover(self.config.output_dir, video_id, title, raw)
+            name = msg.get("name")
+            path = save_cover(self.config.output_dir, video_id, title, raw, name if isinstance(name, str) else None)
         except (binascii.Error, ValueError):
             self._error(msg, "bad_cover", "封面圖片不是有效的編碼")
             return

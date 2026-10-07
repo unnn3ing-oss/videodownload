@@ -221,6 +221,20 @@ test("a job the host stopped on purpose keeps the rows it never tried waiting, s
   assert.deepEqual(rows(ctl).map((i) => i.sent), [false, false, false, false]);
 });
 
+test("an enqueue refused after the host stopped the job on purpose does not start a new job by itself", async () => {
+  const { host, ctl } = await withVideos(["a", "b"]);
+  await ctl.start();
+  host.replies.enqueue = async () => {
+    ctl.onHostEvent({ type: "item_failed", itemId: "a", reason: "x", code: "disk_full" });
+    ctl.onHostEvent({ type: "done", jobId: "j", summary: { aborted: ABORTED } });
+    return { type: "error", code: "not_running", message: "x" };
+  };
+  await ctl.add(url("c"));
+  await ctl.idle();
+  assert.equal(host.of("download").length, 1, "the same trouble would hit again at once: the person decides");
+  assert.deepEqual(rows(ctl).map((i) => i.status), ["failed", "waiting", "waiting"]);
+});
+
 test("after an aborted job the waiting rows can be started again, and the note goes when the new job starts", async () => {
   const { host, ctl } = await withVideos(["a", "b"]);
   await ctl.start();

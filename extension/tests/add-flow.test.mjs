@@ -69,3 +69,12 @@ test("addPastedUrls does not throw away what the person typed while the urls wer
   await addPastedUrls(typedOver, async () => { typedOver.value = "https://youtu.be/new"; return { ok: true }; });
   assert.equal(typedOver.value, "https://youtu.be/new", "everything was added: only the new text is left");
 });
+
+test("addPastedUrls: typing after the pasted urls while they are added does not duplicate any of them", async () => {
+  const input = box("https://youtu.be/a https://evil.example/b");
+  await addPastedUrls(input, async (m) => {
+    if (m.url.endsWith("/a")) input.value += " https://youtu.be/new"; // typed during the first request
+    return m.url.includes("youtu.be") ? { ok: true } : { ok: false, error: NOT_YT };
+  });
+  assert.equal(input.value, "https://youtu.be/new\nhttps://evil.example/b", "the added url is gone, the rejected one appears once");
+});

@@ -231,6 +231,16 @@ def test_save_cover_message_writes_into_output_dir(tmp_path):
     assert Path(events[-1]["file"]).name == "颱風假放不放.jpg"
 
 
+def test_save_cover_message_honours_the_chosen_name(tmp_path):
+    import base64
+    h, events = new_host(tmp_path)
+    data = base64.b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 8).decode()
+    h.handle({"type": "save_cover", "reqId": 1, "id": "v1", "title": "同標題", "data": data})
+    h.handle({"type": "save_cover", "reqId": 2, "id": "v2", "title": "同標題", "name": "同標題 [v2]", "data": data})
+    h.handle({"type": "save_cover", "reqId": 3, "id": "v3", "title": "同標題", "name": 5, "data": data})  # not text: ignored
+    assert [Path(e["file"]).name for e in events if e["type"] == "cover_saved"] == ["同標題.jpg", "同標題 [v2].jpg", "同標題_2.jpg"]
+
+
 def test_save_cover_message_rejects_bad_id_and_bad_base64(tmp_path):
     import base64
     h, events = new_host(tmp_path)

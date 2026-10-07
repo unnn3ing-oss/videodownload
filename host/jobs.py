@@ -18,7 +18,7 @@ from ytdlp import (Engine, ResolveError, build_download_args, classify_error, pa
                    parse_progress_line, resolve, stream_download)
 
 # A run of these means YouTube (or the network) is pushing back: wait longer, then give up before it gets worse.
-THROTTLE_CODES = {"network", "rate_limited", "login_required", "forbidden", "tls"}
+THROTTLE_CODES = {"network", "rate_limited", "bot_check", "forbidden", "tls"}
 FATAL_CODES = {"disk_full"}  # every following video would fail the same way
 MAX_THROTTLE_STREAK = 3
 MAX_MERGE_FAILURES = 2  # each one is a full download, so a broken ffmpeg is stopped sooner
@@ -27,7 +27,7 @@ JITTER = 0.25  # the wait between two attempts gets up to a quarter extra, so th
 ABORT_MESSAGES = {
     "network": "網路連線連續失敗，已先停止下載；請確認網路正常後再繼續",
     "rate_limited": "YouTube 連續限制了請求，已先停止下載以免被封鎖；請等一個小時以上，並把「每支間隔」調高後再繼續",
-    "login_required": "YouTube 連續要求登入或驗證，已先停止下載；請稍後再試，或改用住宅或公司網路",
+    "bot_check": "YouTube 連續要求驗證是否為機器人，已先停止下載；請稍後再試，或改用住宅或公司網路",
     "forbidden": "YouTube 連續拒絕了請求（403），已先停止下載；請稍後再試，並把「每支間隔」調高",
     "tls": "公司網路可能攔截了加密連線（憑證驗證失敗），已先停止下載；請洽資訊人員",
     "disk_full": "磁碟空間不足，已先停止下載；請清出空間，或到設定換一個資料夾後再繼續",
@@ -164,6 +164,14 @@ class JobRunner:
                     self._closing = True
                 summary["aborted"] = {"code": "bad_path",
                                       "message": f"無法建立輸出資料夾（{exc}）；請到設定換一個資料夾"}
+                return
+            try:
+                resolve_target(output_dir, "x", "x" * 11)  # a folder with no room left for a file name fails every item
+            except ValueError as exc:
+                with self._lock:
+                    self._closing = True
+                summary["aborted"] = {"code": "bad_path",
+                                      "message": f"輸出資料夾的路徑太長或無法使用（{exc}）；請到設定換一個比較短的資料夾"}
                 return
             archive = Archive(output_dir)
             seen: set[str] = set()
