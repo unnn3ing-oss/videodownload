@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -448,7 +449,12 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
-    reader.join(timeout)
+    deadline = time.monotonic() + timeout
+    while reader.is_alive() and time.monotonic() < deadline:
+        reader.join(0.25)
+        if proc.poll() is not None:  # the launcher is gone: something it left behind may still hold the pipe open
+            reader.join(2)
+            break
     try:
         if "message" not in result:
             if proc.poll() is None:

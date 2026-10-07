@@ -359,6 +359,18 @@ def test_a_launcher_that_dies_is_reported_with_what_it_said(tmp_path):
         setup.selftest(launcher)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the leftover process is made with a POSIX shell")
+def test_a_launcher_that_died_is_reported_at_once_even_if_a_leftover_process_holds_its_output(tmp_path):
+    # the launcher is gone but something it started still holds the pipe: waiting for the pipe to close would take the
+    # whole timeout (90 s) before saying what the launcher said
+    import time
+    launcher = make_launcher(tmp_path, "sleep 30 &\necho 'no python here' >&2\nexit 3\n", "exit /b 3\n")
+    began = time.monotonic()
+    with pytest.raises(SetupError, match="no python here"):
+        setup.selftest(launcher, timeout=20)
+    assert time.monotonic() - began < 10
+
+
 def test_a_launcher_that_says_nothing_times_out_with_a_clear_message(tmp_path):
     launcher = make_launcher(tmp_path, "sleep 30\n", "ping -n 31 127.0.0.1 >nul\n")
     with pytest.raises(SetupError, match="沒有回應"):

@@ -83,7 +83,9 @@ def run_all(tmp_path, home=None, **kwargs):
 def test_a_healthy_install_has_nothing_to_report(tmp_path):
     checks = run_all(tmp_path, ext_id="abc")
     assert all(c.status == "ok" for c in checks.values()), {k: (c.status, c.detail) for k, c in checks.items()}
-    assert list(checks) == ["python", "files", "engine", "ffmpeg", "deno", "output", "native", "network"]
+    expected = ["python", "files", "engine", "ffmpeg", "deno", "output", "native"]
+    expected += ["quarantine"] if HERE_PLATFORM == "darwin" else []  # (the extra check only a Mac has)
+    assert list(checks) == expected + ["network"]
     assert "2099.01.01" in checks["engine"].title and "ffmpeg" in checks["ffmpeg"].title.lower() and "deno" in checks["deno"].title.lower()
     assert not has_errors(list(checks.values()))
 

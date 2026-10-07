@@ -192,8 +192,9 @@ def test_subprocess_end_to_end(tmp_path):
         expect("started")
         assert expect("done")["summary"]["ok"] == 1
         assert (out_dir / "範例影片.mp4").exists()
-        send({"type": "update_engine"})
-        assert expect("engine_updated")["ytdlpVersion"] == "2099.01.01"
+        if sys.platform not in ("darwin", "win32"):  # (there the engine is installed again, from the network: unit tests cover it)
+            send({"type": "update_engine"})
+            assert expect("engine_updated")["ytdlpVersion"] == "2099.01.01"
         proc.stdin.close()
         assert proc.wait(15) == 0
     finally:
