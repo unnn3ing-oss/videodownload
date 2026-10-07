@@ -336,6 +336,7 @@ async function withExtension() {
       await view.waitForFunction(() => document.querySelectorAll('.qrow[data-kind="done"]').length === 2, null, { timeout: 40000 });
     }
     assert.ok(fs.existsSync(path.join(outDir, "範例影片.mp4")) && fs.existsSync(path.join(outDir, "影片 v2.mp4")));
+    for (const view of [web, panel]) await view.waitForSelector("#clear-all:not([hidden])", { timeout: 10000 }); // all done: the list can be cleared
     await shot("web-2-done");
 
     // B4. Both screens press "start" at the same moment: every video is still downloaded once.

@@ -1,6 +1,6 @@
 // Draws the download list. Used by the side panel and by the web page, which style the same classes.
 // Everything that comes from outside (titles, error texts) is set with textContent, never as markup.
-import { DEFAULT_SETTINGS, describeItem } from "./queue.js";
+import { DEFAULT_SETTINGS, canClearAll, describeItem } from "./queue.js";
 import { parseBoundedInt } from "./format.js";
 import { REINSTALL_ACTION, hostVersionNotice, updateButtonExtra } from "./connection.js";
 import { summarizeAdd } from "./add-flow.js";
@@ -192,6 +192,25 @@ export function renderAbortNote(node, state) {
   }
   setText(node, text);
   setHidden(node, !text);
+}
+
+// 清除全部: shown only once nothing is left to do. Failed rows lose their retry button, so that case asks first.
+export function renderClearButton(button, state) {
+  const show = canClearAll(state);
+  button.hidden = !show;
+  button.disabled = !show;
+  button.textContent = "清除全部";
+}
+
+export function clearConfirmText(state) {
+  const failed = (state?.items ?? []).filter((i) => i.status === "failed").length;
+  return failed ? `清單裡有 ${failed} 支失敗的影片，清除後就不能重試了。要全部清除嗎？` : null;
+}
+
+export async function clearList(send, state, ask = (text) => globalThis.confirm?.(text) !== false) {
+  const text = clearConfirmText(state);
+  if (text && !ask(text)) return { ok: true, cancelled: true };
+  return send({ type: "queue_clear" });
 }
 
 // The local program and the extension are different versions: said where it is seen (top of the panel / of the page), not

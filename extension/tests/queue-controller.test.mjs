@@ -862,3 +862,32 @@ test("a host that goes away takes the job's folder with it", async () => {
   finish(env.ctl, "a"); // a late event of a job this controller never saw start: the folder as it is now
   assert.equal(byId(env.ctl, "a").outDir, "/out/B");
 });
+
+test("clearAll empties a finished list and refuses while videos are still waiting or a job runs", async () => {
+  const { ctl } = await withVideos(["a", "b"]);
+  assert.deepEqual(ctl.clearAll(), { ok: false, error: "清單裡還有影片沒有處理完" });
+  assert.equal(rows(ctl).length, 2);
+  await ctl.start();
+  ctl.onHostEvent({ type: "item_done", itemId: "a", file: "/a.mp4", height: 720 });
+  ctl.onHostEvent({ type: "item_done", itemId: "b", file: "/b.mp4", height: 720 });
+  assert.equal(ctl.clearAll().ok, false, "the job has not reported done yet");
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { ok: 2 } });
+  await ctl.idle();
+  assert.deepEqual(ctl.clearAll(), { ok: true });
+  assert.equal(rows(ctl).length, 0);
+});
+
+test("after clearAll the same videos can be added and downloaded again", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  await ctl.start();
+  ctl.onHostEvent({ type: "item_done", itemId: "a", file: "/a.mp4", height: 720 });
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { ok: 1 } });
+  await ctl.idle();
+  ctl.clearAll();
+  await ctl.add(url("a"));
+  await ctl.idle();
+  assert.equal(rows(ctl).length, 1);
+  assert.equal(byId(ctl, "a").status, "waiting");
+  await ctl.start();
+  assert.deepEqual(host.of("download").at(-1).items.map((i) => i.id), ["a"]);
+});

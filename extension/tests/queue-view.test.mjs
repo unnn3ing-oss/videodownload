@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, coverResultText, renderAbortNote, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -88,4 +88,38 @@ test("coverResultText says where the cover went, and why when it is not next to 
   assert.match(moved, /下載資料夾/);
   assert.match(moved, /存放資料夾後來改過/);
   assert.doesNotMatch(moved, /連線小程式/, "the program is connected: that is not why");
+});
+
+const row = (status, extra = {}) => ({ uid: 1, status, dupOf: null, ...extra });
+
+test("the clear button shows only when everything is finished, and says so", () => {
+  const button = { hidden: true, disabled: true, textContent: "" };
+  renderClearButton(button, { items: [row("waiting")], running: false });
+  assert.equal(button.hidden, true, "a waiting video keeps the list");
+  renderClearButton(button, { items: [row("done"), row("skipped")], running: false });
+  assert.deepEqual([button.hidden, button.disabled, button.textContent], [false, false, "清除全部"]);
+  renderClearButton(button, { items: [row("done")], running: true });
+  assert.equal(button.hidden, true, "never while a job runs");
+  renderClearButton(button, { items: [], running: false });
+  assert.equal(button.hidden, true, "nothing to clear");
+  renderClearButton(button, null);
+  assert.equal(button.hidden, true);
+});
+
+test("clearing asks first only when failed videos would lose their retry button", () => {
+  assert.equal(clearConfirmText({ items: [row("done"), row("skipped")] }), null);
+  assert.match(clearConfirmText({ items: [row("done"), row("failed"), row("failed", { uid: 3 })] }), /2 支失敗.*不能重試/);
+});
+
+test("clearList sends the request at once when nothing would be lost, and waits for a yes when failed videos would", async () => {
+  const sent = [];
+  const send = async (m) => { sent.push(m.type); return { ok: true }; };
+  await clearList(send, { items: [row("done")] }, () => { throw new Error("no question needed"); });
+  assert.deepEqual(sent, ["queue_clear"]);
+  const failed = { items: [row("done"), row("failed", { uid: 2 })] };
+  const no = await clearList(send, failed, () => false);
+  assert.equal(no.cancelled, true);
+  assert.equal(sent.length, 1, "a no sends nothing");
+  await clearList(send, failed, () => true);
+  assert.equal(sent.length, 2);
 });

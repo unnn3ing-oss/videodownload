@@ -6,7 +6,7 @@ import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
-import { addPastedUrls, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
+import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -130,6 +130,7 @@ function renderQueueView() {
   button.className = `btn block ${queue.running ? "danger" : "primary"}`;
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
   button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
+  renderClearButton($("clear-all"), queue);
   renderHostNote($("host-note"), queue, { updateAvailable: updateOffered() });
   renderAbortNote($("abort-note"), queue);
 
@@ -422,6 +423,10 @@ $("tab-add").addEventListener("click", async () => {
 });
 $("start-all").addEventListener("click", async () => {
   const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });
+  note(result?.ok === false ? result.error : "", "error");
+});
+$("clear-all").addEventListener("click", async () => {
+  const result = await clearList(send, queue);
   note(result?.ok === false ? result.error : "", "error");
 });
 $("quality").addEventListener("change", (event) => {

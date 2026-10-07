@@ -198,6 +198,11 @@ export const markRunning = (state, running) => ({ ...state, running: Boolean(run
 export const outputDirLocked = (state) => Boolean(state?.running);
 export const OUTPUT_DIR_LOCKED_TEXT = "下載進行中，現在不能改存放資料夾。這一批下載完再改，新的資料夾從下一批開始使用。";
 
+// 清除全部: only when nothing is going on any more. A video that waits, loads or downloads (or a running job) keeps the list.
+export const canClearAll = (state) => Boolean(state?.items?.length) && !state.running
+  && !state.items.some((i) => i.status === "fetching" || i.status === "downloading" || (i.status === "waiting" && !i.dupOf));
+export const clearAll = (state) => (canClearAll(state) ? withItems(state, []) : state);
+
 export const pendingDownloads = (state) => state.items
   .filter((i) => i.status === "waiting" && !i.dupOf && i.id)
   .map((i) => ({ id: i.id, url: i.url, title: i.title }));

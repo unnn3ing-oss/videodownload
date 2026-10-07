@@ -2,7 +2,7 @@
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
 import {
-  addPastedUrls, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
+  addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
 } from "../extension/lib/queue-view.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
@@ -146,6 +146,7 @@ function renderQueueArea() {
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
   button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
   renderAbortNote($("abort-note"), queue);
+  renderClearButton($("clear-all"), queue);
 
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
@@ -334,6 +335,15 @@ $("add-url").addEventListener("input", () => setNote("add-note", ""));
 $("start-all").addEventListener("click", async () => {
   try {
     const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });
+    setNote("note", result?.ok === false ? result.error : "", "error");
+  } catch (error) {
+    setNote("note", error.message, "error");
+  }
+});
+
+$("clear-all").addEventListener("click", async () => {
+  try {
+    const result = await clearList(send, queue);
     setNote("note", result?.ok === false ? result.error : "", "error");
   } catch (error) {
     setNote("note", error.message, "error");

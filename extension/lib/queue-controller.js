@@ -2,7 +2,7 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
+  canClearAll, clearAll, markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
 import { buildCopyText, extractHashtags } from "./copytext.js";
 import { coverBaseName, coverName } from "./covername.js";
@@ -257,6 +257,13 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       }
       commit(removeItem(state, uid));
       syncRun();
+    },
+
+    clearAll() {
+      if (!canClearAll(state)) return fail("清單裡還有影片沒有處理完");
+      sentIds.clear();
+      commit(clearAll(state));
+      return { ok: true };
     },
 
     retry(uid) {

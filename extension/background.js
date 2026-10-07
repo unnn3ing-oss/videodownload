@@ -257,6 +257,7 @@ async function handle(msg) {
     case "queue_get": return { ok: true, state: controller.getState() };
     case "queue_add": return controller.add(msg.url);
     case "queue_remove": controller.remove(msg.uid); return { ok: true };
+    case "queue_clear": return controller.clearAll();
     case "queue_retry": controller.retry(msg.uid); return { ok: true };
     case "queue_start": return controller.start();
     case "queue_stop": controller.stop(); return { ok: true };

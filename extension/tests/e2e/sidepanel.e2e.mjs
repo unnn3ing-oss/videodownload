@@ -173,6 +173,7 @@ try {
   assert.ok(fs.existsSync(path.join(outDir, "影片 v2.mp4")));
   assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).length, 3, "the duplicate was not downloaded");
   assert.match(await page.textContent("#start-all"), /全部完成/);
+  await page.waitForSelector("#clear-all:not([hidden])", { timeout: 10000 }); // everything is finished: the list can be cleared
   // the cover of each finished video was saved by itself (v1 has one; the others are reported as having none)
   await page.waitForFunction(() => /封面已存/.test(document.querySelector(".qrow .qsub")?.textContent ?? ""));
   assert.match(await rowByTitle("範例影片").first().locator(".qsub").textContent(), /720p · 封面已存/);

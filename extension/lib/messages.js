@@ -1,7 +1,7 @@
 // Which messages each kind of sender may send to the background script.
 import { WEB_ORIGIN, WEB_PATH } from "./constants.js";
 
-const QUEUE = ["queue_get", "queue_add", "queue_remove", "queue_retry", "queue_start", "queue_stop",
+const QUEUE = ["queue_get", "queue_add", "queue_clear", "queue_remove", "queue_retry", "queue_start", "queue_stop",
   "queue_copy_text", "queue_download_cover", "settings_set"];
 
 // The side panel is the extension's own page: it may also run updates.

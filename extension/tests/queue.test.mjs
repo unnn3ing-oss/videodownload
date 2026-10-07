@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
   OUTPUT_DIR_LOCKED_TEXT, cooldownText, createState, describeItem, hostLost, markRunning, outputDirLocked, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
-  setCover, setSettings, setTags, summarize,
+  setCover, setSettings, setTags, summarize, canClearAll, clearAll,
 } from "../lib/queue.js";
 
 const url = (id) => `https://www.youtube.com/watch?v=${id}`;
@@ -606,4 +606,42 @@ test("retrying a video forgets the old cover result", () => {
   assert.deepEqual(state.items[0].cover, { status: "saved", where: "folder" });
   const retried = retryItem(state, uid);
   assert.deepEqual([retried.items[0].status, retried.items[0].cover], ["waiting", null]);
+});
+
+// ---- 清除全部：只在沒有任何影片還在等、下載或載入時，而且工作不在進行中 ----
+const doneEvent = (id) => ({ type: "item_done", itemId: id, file: `/${id}.mp4`, height: 720 });
+
+test("canClearAll: an empty list has nothing to clear, a list with waiting videos is not finished", () => {
+  assert.equal(canClearAll(createState()), false);
+  const state = stateWith(ref("a"), ref("b"));
+  assert.equal(canClearAll(state), false, "both are still waiting");
+});
+
+test("canClearAll: true once every video is done, skipped or failed and no job is running", () => {
+  let state = stateWith(ref("a"), ref("b"));
+  state = applyHostEvent(state, doneEvent("a"), 1);
+  assert.equal(canClearAll(state), false, "b is still waiting");
+  state = applyHostEvent(state, doneEvent("b"), 2);
+  assert.equal(canClearAll(state), true);
+  const failed = applyHostEvent(stateWith(ref("x")), { type: "item_failed", itemId: "x", reason: "網路" }, 1);
+  assert.equal(canClearAll(failed), true, "failed rows are finished too");
+  assert.equal(canClearAll(markRunning(state, true)), false, "never while a job runs");
+});
+
+test("canClearAll: a row that is still being read (fetching) or a held-back duplicate that has not been decided keeps the list", () => {
+  const added = addPlaceholder(setHostConnected(createState(), true), url("f"));
+  assert.equal(canClearAll(added.state), false, "fetching");
+});
+
+test("clearAll empties the list and keeps the settings; it does nothing while something is still going on", () => {
+  const settings = { ...DEFAULT_SETTINGS, cooldownSec: 20 };
+  let state = setSettings(stateWith(ref("a")), settings);
+  const waiting = clearAll(state);
+  assert.equal(waiting.items.length, 1, "unchanged while a video waits");
+  state = applyHostEvent(state, doneEvent("a"), 1);
+  const cleared = clearAll(state);
+  assert.deepEqual(cleared.items, []);
+  assert.equal(cleared.settings.cooldownSec, settings.cooldownSec);
+  assert.equal(cleared.hostConnected, true);
+  assert.equal(cleared.aborted, null);
 });
