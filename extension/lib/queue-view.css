@@ -29,6 +29,8 @@
 .qpill { flex: none; font: 700 11px var(--mono); padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .qsub { font: 11.5px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .qsub:empty { display: none; }
+.qhint { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.qhint:empty { display: none; }
 .qflash { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 /* an empty live region stays in the page (so screen readers announce what is put into it) but takes no room */
 .qflash:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

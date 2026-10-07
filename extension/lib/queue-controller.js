@@ -2,10 +2,10 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  markSent, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
+  markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
 import { buildCopyText, extractHashtags } from "./copytext.js";
-import { coverName } from "./covername.js";
+import { coverBaseName, coverName } from "./covername.js";
 import { findCover } from "./cover.js";
 import { toBase64 } from "./base64.js";
 import { versionAtLeast } from "./version.js";
@@ -22,6 +22,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   const resolving = new Set(); // uids with a resolve request in flight
   const expectRemoved = new Set(); // video ids the host was told to cancel mid-download; it will confirm each once
   const tasks = new Set();
+  let jobDir = null; // the output folder the host's current job was started with (it writes the whole job there)
   let starting = false;
   let restartAfterDone = false;
   let stopRequested = false;
@@ -98,6 +99,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
           type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
         }, TIMEOUT.download);
         if (event.type === "started") {
+          jobDir = host.outputDir?.() ?? null;
           commit(markRunning(state, true));
           break;
         }
@@ -132,19 +134,30 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     try { host.send({ type: "cancel" }); } catch { /* host gone */ }
   }
 
+  // The videos before this one in the list that count when two covers would get the same name.
+  const earlierRows = (item) => state.items.slice(0, state.items.findIndex((i) => i.uid === item.uid))
+    .filter((i) => i.id && !i.dupOf && i.status !== "fetching" && i.status !== "failed");
+
   async function storeCover(item) {
     const cover = await findCover(item.id, fetchFn);
     if (!cover) return fail("找不到封面圖片");
-    if (hostUsable()) {
+    const name = coverBaseName(item.title, item.id, earlierRows(item));
+    // The host writes covers into its folder as it is now; the video went into the folder its job started with. When the
+    // two differ the cover is not put next to some other folder's videos.
+    const folder = host.outputDir?.() ?? null;
+    const moved = hostUsable() && Boolean(item.outDir && folder && item.outDir !== folder);
+    if (hostUsable() && !moved) {
       try {
-        const event = await host.request({ type: "save_cover", id: item.id, title: item.title, data: toBase64(cover.bytes) }, TIMEOUT.save_cover);
+        const request = { type: "save_cover", id: item.id, title: item.title, data: toBase64(cover.bytes) };
+        if (name !== coverName(item.title, item.id)) request.name = name; // the host's own name would clash with an earlier video's
+        const event = await host.request(request, TIMEOUT.save_cover);
         if (event.type === "cover_saved") return { ok: true, where: "folder", file: event.file };
         return fail(event.message ?? "無法儲存封面");
       } catch { /* host dropped while saving: fall back to the browser download below */ }
     }
     try {
-      await downloads.download({ url: cover.url, filename: `${coverName(item.title, item.id)}.jpg`, conflictAction: "uniquify" });
-      return { ok: true, where: "downloads" };
+      await downloads.download({ url: cover.url, filename: `${name}.jpg`, conflictAction: "uniquify" });
+      return moved ? { ok: true, where: "downloads", folderChanged: true } : { ok: true, where: "downloads" };
     } catch (error) {
       return fail(`無法下載封面：${error.message}`);
     }
@@ -277,7 +290,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       return idle();
     },
 
+    outputDirLocked: () => starting || outputDirLocked(state),
+
     onHostDisconnected() {
+      jobDir = null;
       sentIds.clear();
       starting = false;
       restartAfterDone = false;
@@ -287,7 +303,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
     onHostEvent(event) {
       if (event.type === "item_removed" && expectRemoved.delete(event.itemId)) return;
-      const next = applyHostEvent(state, event, now());
+      if (event.type === "started") jobDir = host.outputDir?.() ?? null;
+      // a video's folder is the one its job started with (a late event of a job we never saw start: the folder as it is now)
+      const seen = event.type === "item_done" ? { ...event, outDir: jobDir ?? host.outputDir?.() ?? null } : event;
+      const next = applyHostEvent(state, seen, now());
       if (next !== state) commit(next);
       if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);
       if (event.type === "item_done" && !event.skipped && state.settings.autoCover) {
@@ -296,9 +315,11 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       }
       if (event.type === "done") {
         sentIds.clear();
-        const again = restartAfterDone && !stopRequested;
+        // a job the host stopped on purpose (failures in a row, disk full) would only stop again: the person restarts it
+        const again = restartAfterDone && !stopRequested && !state.aborted;
         restartAfterDone = false;
         stopRequested = false;
+        jobDir = null;
         const items = again ? pendingDownloads(state) : [];
         if (items.length) track(startRun(items));
       }

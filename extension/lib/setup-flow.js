@@ -1,7 +1,7 @@
 // The web page's setup flow as plain functions: which step is where, whether the install works, what to tell the
 // person when it does not. The page only draws what these return. See the setup-flow tests.
 import { UPDATE_REPO } from "./update-config.js";
-import { hostVersionNotice, versionNotice } from "./connection.js";
+import { REINSTALL_ACTION, hostVersionNotice, versionNotice } from "./connection.js";
 
 const SAFE = /^[A-Za-z0-9._-]+$/;
 
@@ -72,11 +72,13 @@ export function isDeployed({ detected, status, hostOutdated, extensionVersion, p
 
 const REINSTALL = "重新執行安裝檔（它會自動檢查並修復，最後列出哪一項有問題）";
 const item = (id, status, title, detail = "", fix = "") => ({ id, status, title, detail, fix });
+// The page's 「更新到最新版」 button only does something once an update was found: offered as an extra, and only then.
+const buttonExtra = (updateAvailable, note = "") => (updateAvailable ? `；也可以改按頁面左側「版本與更新」的「更新到最新版」${note}` : "");
 
-function hostItem({ status, hostOutdated, gaveUp }) {
+function hostItem({ status, hostOutdated, gaveUp, updateAvailable }) {
   if (status.state === "running") {
     return hostOutdated
-      ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}，或按頁面左側「版本與更新」的「更新到最新版」`)
+      ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}${buttonExtra(updateAvailable)}`)
       : item("host", "ok", `本機小程式已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
   }
   if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 1、2）：Mac 貼一行指令，Windows 下載後雙擊");
@@ -97,7 +99,8 @@ function partItems(ready) {
 
 // What the person sees when it does not work: every part, green or not, with the way forward. `doctor` is the host's own
 // environment report (see host/doctor.py), used instead of the quick look at the host's ready message when there is one.
-export function selfCheckItems({ detected, everDetected, extensionVersion, pageVersion, status, hostOutdated, gaveUp, doctor }) {
+// `updateAvailable`: the 「更新到最新版」 button on the page can be pressed right now (an update was found and can be applied).
+export function selfCheckItems({ detected, everDetected, extensionVersion, pageVersion, status, hostOutdated, gaveUp, doctor, updateAvailable = false }) {
   if (!detected) {
     return [everDetected
       ? item("extension", "error", "與擴充功能的連線中斷", "", "到 chrome://extensions 確認它已啟用；恢復後這裡會自動連上，也可以重新整理本頁")
@@ -106,13 +109,13 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   const list = [item("extension", "ok", `擴充功能${extensionVersion ? ` v${extensionVersion}` : "已偵測到"}`)];
   if (versionNotice({ extensionVersion, pageVersion })) {
     list.push(item("version", "error", `擴充功能 v${extensionVersion} 比網頁版 v${pageVersion} 舊，還在跑舊版`, "",
-      "關閉這個視窗，按頁面左側「版本與更新」的「更新到最新版」（會自動重新載入），或重新執行安裝檔"));
+      `關閉這個視窗，${REINSTALL_ACTION}${buttonExtra(updateAvailable, "（會自動重新載入）")}`));
   }
-  list.push(hostItem({ status, hostOutdated, gaveUp }));
+  list.push(hostItem({ status, hostOutdated, gaveUp, updateAvailable }));
   const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
   if (hostVersionNotice({ extensionVersion, hostVersion })) {
     list.push(item("hostVersion", "error", `本機小程式 v${hostVersion} 和擴充功能 v${extensionVersion} 版本不一致`, "",
-      "按頁面左側「版本與更新」的「更新到最新版」，或重新執行安裝檔"));
+      `${REINSTALL_ACTION}${buttonExtra(updateAvailable)}`));
   }
   if (status.state === "running") {
     list.push(...(Array.isArray(doctor) && doctor.length ? doctor.map((c) => item(c.id, c.status, c.title, c.detail, c.fix)) : partItems(status.ready ?? {})));

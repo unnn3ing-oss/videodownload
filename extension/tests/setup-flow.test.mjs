@@ -122,12 +122,19 @@ test("an old extension, an old host and a host that is not there each say what t
   const stale = byId(items({ extensionVersion: "0.2.1" }));
   assert.equal(stale.version.status, "error");
   assert.ok(stale.version.title.includes("0.2.1") && stale.version.title.includes("0.2.3"));
-  assert.match(stale.version.fix, /更新到最新版/);
-  assert.match(stale.version.fix, /重新載入/);
+  assert.match(stale.version.fix, /重新執行安裝檔/);
+  assert.doesNotMatch(stale.version.fix, /更新到最新版/, "that button is hidden until an update was found");
+  const withButton = byId(items({ extensionVersion: "0.2.1", updateAvailable: true }));
+  assert.match(withButton.version.fix, /重新執行安裝檔/);
+  assert.match(withButton.version.fix, /「版本與更新」.*「更新到最新版」/);
+  assert.match(withButton.version.fix, /重新載入/);
 
   const old = byId(items({ hostOutdated: true }));
   assert.equal(old.host.status, "error");
   assert.match(old.host.title, /版本太舊/);
+  assert.match(old.host.fix, /重新執行安裝檔/);
+  assert.doesNotMatch(old.host.fix, /更新到最新版/);
+  assert.match(byId(items({ hostOutdated: true, updateAvailable: true })).host.fix, /「更新到最新版」/);
 
   const notInstalled = byId(items({ status: { state: "not_installed", ready: null, detail: "Specified native messaging host not found." } }));
   assert.equal(notInstalled.host.status, "error");
@@ -193,6 +200,9 @@ test("the self-check names a local program whose version differs from the extens
   const list = byId(items({ extensionVersion: "0.2.3", status: { ...running, ready: { ...running.ready, hostVersion: "0.2.0" } } }));
   assert.equal(list.hostVersion.status, "error");
   assert.match(list.hostVersion.title, /0\.2\.0.*0\.2\.3/);
-  assert.match(list.hostVersion.fix, /更新到最新版/);
+  assert.match(list.hostVersion.fix, /重新執行安裝檔（Mac 貼上那一行指令，Windows 重新下載後雙擊）/);
+  assert.doesNotMatch(list.hostVersion.fix, /更新到最新版/);
+  const offered = byId(items({ extensionVersion: "0.2.3", updateAvailable: true, status: { ...running, ready: { ...running.ready, hostVersion: "0.2.0" } } }));
+  assert.match(offered.hostVersion.fix, /「更新到最新版」/);
   assert.equal(byId(items({})).hostVersion, undefined, "same versions: no line");
 });

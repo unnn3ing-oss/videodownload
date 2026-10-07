@@ -1,6 +1,10 @@
 // Draws the download list. Used by the side panel and by the web page, which style the same classes.
 // Everything that comes from outside (titles, error texts) is set with textContent, never as markup.
-import { describeItem } from "./queue.js";
+import { DEFAULT_SETTINGS, describeItem } from "./queue.js";
+import { parseBoundedInt } from "./format.js";
+import { REINSTALL_ACTION, hostVersionNotice, updateButtonExtra } from "./connection.js";
+import { summarizeAdd } from "./add-flow.js";
+import { SETTING_RANGES } from "./constants.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ICONS = {
@@ -78,10 +82,11 @@ function makeRow(item, handlers) {
   bar.append(document.createElement("i"));
   const line = el("div", "qline");
   line.append(el("span", "qpill"), el("span", "qsub"));
+  const hint = el("div", "qhint"); // "same title as row N, but another video": only a hint, the row downloads like any other
   const flashLine = el("div", "qflash");
   flashLine.setAttribute("role", "status"); // announced when it gets text, so it is in the page from the start
   flashLine.setAttribute("aria-live", "polite");
-  main.append(head, bar, line, flashLine);
+  main.append(head, bar, line, hint, flashLine);
 
   const acts = el("div", "qacts");
   const copy = button("qcopy", "複製內文", "copy");
@@ -117,6 +122,7 @@ function updateRow(row, state, item, index, now) {
   }
   q(".qpill").textContent = info.label;
   q(".qsub").textContent = info.sub;
+  q(".qhint").textContent = info.hint;
   q(".qdur").textContent = item.duration ? duration(item.duration) : "";
 
   if (row._id !== item.id) {
@@ -155,7 +161,7 @@ export function renderQueue(list, state, now, handlers) {
 }
 
 // Shown while the connected local host is too old for this extension: downloading is off until it is updated.
-export const HOST_OUTDATED_TEXT = "本機小程式的版本太舊，現在無法下載。請在擴充功能側邊面板的「版本與更新」按「更新」，完成後會自動重新連線。";
+export const HOST_OUTDATED_TEXT = `本機小程式的版本太舊，現在無法下載。請${REINSTALL_ACTION}，完成後會自動重新連線。`;
 
 // A live region is announced again whenever its text is rewritten, even with the same words (the list is drawn
 // on every progress push), so notes in live regions are only written when something changed.
@@ -167,10 +173,64 @@ export function setHidden(node, hidden) {
   if (node.hidden !== hidden) node.hidden = hidden;
 }
 
-export function renderHostNote(node, state) {
+// `updateAvailable`: the 「更新到最新版」 button can be pressed right now, so it is offered too.
+export function renderHostNote(node, state, { updateAvailable = false } = {}) {
   const outdated = Boolean(state?.hostOutdated);
-  setText(node, outdated ? HOST_OUTDATED_TEXT : "");
+  setText(node, outdated ? `${HOST_OUTDATED_TEXT}${updateButtonExtra(updateAvailable)}` : "");
   setHidden(node, !outdated);
+}
+
+// The host stopped the whole job on purpose (failures in a row, disk full): its reason, said where it is seen, and what is
+// left. The rows it never tried are still waiting, so pressing the start button again goes on with them.
+export function renderAbortNote(node, state) {
+  const aborted = state?.aborted;
+  let text = "";
+  if (aborted) {
+    const waiting = state.items.filter((i) => i.status === "waiting" && !i.dupOf).length;
+    text = /[。！？.!?]$/.test(aborted.message) ? aborted.message : `${aborted.message}。`;
+    if (waiting) text += `還有 ${waiting} 支沒下載，仍在清單裡；處理好後再按「開始全部下載」。`;
+  }
+  setText(node, text);
+  setHidden(node, !text);
+}
+
+// The local program and the extension are different versions: said where it is seen (top of the panel / of the page), not
+// only inside the collapsed update section. A host that is too old has its own note (renderHostNote), so this one waits.
+export function renderVersionNote(node, { extensionVersion, hostVersion, updateAvailable = false, hostOutdated = false }) {
+  const text = hostOutdated ? null : hostVersionNotice({ extensionVersion, hostVersion, updateAvailable });
+  setText(node, text ?? "");
+  setHidden(node, !text);
+}
+
+// 「加入」: every pasted url goes to the extension; the ones it rejected stay in the box and the returned note says why
+// (empty when all were added). `box` is the input element, `send` the message call of the page.
+export async function addPastedUrls(box, send) {
+  const typed = box.value;
+  const urls = typed.split(/\s+/).filter(Boolean);
+  if (!urls.length) return "";
+  const outcomes = [];
+  for (const url of urls) {
+    try {
+      const result = await send({ type: "queue_add", url });
+      outcomes.push({ url, ok: Boolean(result?.ok), error: result?.error ?? "無法加入" });
+    } catch (error) {
+      outcomes.push({ url, ok: false, error: error.message || "無法加入" });
+    }
+  }
+  const { remaining, note } = summarizeAdd(outcomes);
+  // someone typing while this ran keeps their text; what was rejected goes after it
+  box.value = box.value === typed ? remaining : [box.value.trimEnd(), remaining].filter(Boolean).join("\n");
+  return note;
+}
+
+// A number box for a setting (`key` in SETTING_RANGES). A box that was cleared or filled with something that is not a
+// number goes back to the value in use (`current()`), and the box shows what was really kept, not what was typed.
+export function bindNumberSetting(input, key, { send, current }) {
+  input.addEventListener("change", () => {
+    const value = parseBoundedInt(input.value, { ...SETTING_RANGES[key], fallback: current() ?? DEFAULT_SETTINGS[key] });
+    input.value = String(value);
+    send({ type: "settings_set", settings: { [key]: value } });
+  });
 }
 
 // Cooldown countdowns need a redraw every second even when the state itself does not change.
@@ -221,10 +281,18 @@ export function copyRowText(send, uid, target) {
   );
 }
 
+// Where a saved cover went. Not next to the video when the host is away, or when the output folder was changed after
+// the video was written (the host would put the cover into the new folder, away from it).
+export function coverResultText(result) {
+  if (result.where === "folder") return "已存到影片資料夾";
+  if (result.folderChanged) return "影片在原來的資料夾，封面先存到下載資料夾（存放資料夾後來改過；改回去再按一次，就會存到影片旁）";
+  return "已存到下載資料夾（連線小程式後可存到影片資料夾）";
+}
+
 export function downloadRowCover(send, uid, target) {
   flash(target, "busy", "下載中…");
   send({ type: "queue_download_cover", uid }).then((result) => {
     if (!result?.ok) return flash(target, "err", result?.error ?? "下載失敗");
-    return flash(target, "ok", result.where === "folder" ? "已存到影片資料夾" : "已存到下載資料夾（連線小程式後可存到影片資料夾）");
+    return flash(target, "ok", coverResultText(result));
   }, (error) => flash(target, "err", error.message || "下載失敗"));
 }

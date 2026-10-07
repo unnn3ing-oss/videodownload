@@ -41,7 +41,7 @@ try {
   }
   for (const [name, view] of [["panel", panel], ["web", web]]) {
     await view.waitForSelector("#host-note:not([hidden])");
-    assert.match(await view.textContent("#host-note"), /本機小程式.*太舊.*更新/, `${name}: says the host must be updated`);
+    assert.match(await view.textContent("#host-note"), /本機小程式.*太舊.*重新執行安裝檔/, `${name}: says the host is too old and to run the installer again`);
     assert.equal(await view.isDisabled("#start-all"), true, `${name}: start is off`);
     await view.locator(".qcopy").first().click();
     await view.waitForFunction(() => /請先更新本機小程式/.test(document.querySelector(".qflash")?.textContent ?? ""));

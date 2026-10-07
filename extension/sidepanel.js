@@ -2,10 +2,10 @@ import { classifyTabUrl } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
-import { hostVersionNotice } from "./lib/connection.js";
+import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
-import { summarize } from "./lib/queue.js";
-import { copyRowText, downloadRowCover, renderHostNote, renderQueue, startTicker } from "./lib/queue-view.js";
+import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
+import { addPastedUrls, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -120,16 +120,17 @@ function renderQueueView() {
   });
   $("queue-empty").hidden = queue.items.length > 0;
   $("queue-stats").textContent = queue.items.length ? `共 ${info.total} 支 · 完成 ${info.done}` : "";
-  const cooling = queue.cooldown && queue.cooldown.until > now;
+  const cooling = cooldownText(queue, now);
   $("cooldown-chip").hidden = !cooling;
-  if (cooling) $("cooldown-chip").textContent = `${Math.ceil((queue.cooldown.until - now) / 1000)} 秒後開始下一支`;
+  if (cooling) $("cooldown-chip").textContent = cooling;
 
   const button = $("start-all");
   const connected = status.state === "running";
   button.className = `btn block ${queue.running ? "danger" : "primary"}`;
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
   button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
-  renderHostNote($("host-note"), queue);
+  renderHostNote($("host-note"), queue, { updateAvailable: updateOffered() });
+  renderAbortNote($("abort-note"), queue);
 
   $("quality").querySelectorAll("input").forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
@@ -140,9 +141,12 @@ function renderQueueView() {
 function renderControls() {
   const running = status.state === "running";
   $("update").disabled = !running || Boolean(queue?.running);
-  $("save-outdir").disabled = !running;
+  const locked = outputDirLocked(queue); // a running job keeps the folder it started with: a change waits for the next job
+  $("save-outdir").disabled = !running || locked;
   $("doctor-check").disabled = !running;
-  $("outdir").disabled = !running;
+  $("outdir").disabled = !running || locked;
+  $("outdir-hint").textContent = locked ? OUTPUT_DIR_LOCKED_TEXT : "";
+  $("outdir-hint").hidden = !locked;
   if (running && status.ready?.outputDir && document.activeElement !== $("outdir")) {
     $("outdir").value = status.ready.outputDir;
   }
@@ -167,6 +171,17 @@ function updateReason() {
   return null;
 }
 
+// The 「更新到最新版」 button can be pressed right now (an update was found and nothing stops it).
+const updateOffered = () => updateWorking === null && hasUpdate() && updateReason() === null;
+
+// The local program and the extension are different versions: said at the top of the panel, where it is not folded away.
+function renderVersionBanner() {
+  const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
+  renderVersionNote($("version-note"), {
+    extensionVersion: chrome.runtime.getManifest().version, hostVersion, updateAvailable: updateOffered(), hostOutdated: Boolean(queue?.hostOutdated),
+  });
+}
+
 function renderUpdate() {
   const manifest = chrome.runtime.getManifest();
   const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
@@ -187,7 +202,7 @@ function renderUpdate() {
     else if (lastSummary?.sha && !(hasUpdate() || (!updateInfo && lastSummary.hasUpdate))) note = { text: "已是最新版", kind: "ok" };
   }
   // never "up to date" while the local program and the extension are different versions
-  const mismatch = hostVersionNotice({ extensionVersion: manifest.version, hostVersion });
+  const mismatch = hostVersionNotice({ extensionVersion: manifest.version, hostVersion, updateAvailable: updateOffered() });
   if (mismatch && updateWorking !== "check" && note?.kind !== "error") note = { text: mismatch, kind: "error" };
   noteEl.hidden = !note;
   noteEl.textContent = note?.text ?? "";
@@ -200,7 +215,7 @@ function renderUpdate() {
   const apply = $("update-apply");
   apply.disabled = updateWorking !== null || !hasUpdate() || reason !== null;
   apply.textContent = updateWorking === "apply" ? "更新中…"
-    : updateInfo?.extChanged.length > 0 && !folderSaved ? "選擇擴充功能資料夾並更新" : "更新到最新版";
+    : updateInfo?.extChanged.length > 0 && !folderSaved ? PANEL_UPDATE_BUTTON.pickFolder : PANEL_UPDATE_BUTTON.apply;
 
   const shown = updateWorking === "apply" ? updateProgress : (reason ? { text: reason, kind: "info" } : updateProgress);
   const progressEl = $("update-progress");
@@ -215,21 +230,12 @@ function render() {
   renderControls();
   renderTabCard();
   renderUpdate();
+  renderVersionBanner();
 }
 
 // ---------- adding videos ----------
 async function addFromBox() {
-  const urls = $("add-url").value.split(/\s+/).filter(Boolean);
-  if (!urls.length) return;
-  let first = null;
-  let added = 0;
-  for (const url of urls) {
-    const result = await send({ type: "queue_add", url });
-    if (result?.ok) added += 1;
-    else first ??= result?.error ?? "無法加入";
-  }
-  addNote(first ? `${first}${urls.length > 1 ? `（已加入 ${added} 筆）` : ""}` : "", "error");
-  if (added) $("add-url").value = "";
+  addNote(await addPastedUrls($("add-url"), send), "error");
 }
 
 async function deploy() {
@@ -419,7 +425,7 @@ $("auto-cover").addEventListener("change", () => {
   send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } });
 });
 for (const [id, key] of [["cooldown", "cooldownSec"], ["limit", "limit"]]) {
-  $(id).addEventListener("change", () => send({ type: "settings_set", settings: { [key]: Number($(id).value) } }));
+  bindNumberSetting($(id), key, { send, current: () => queue?.settings?.[key] });
 }
 const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
 $("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));

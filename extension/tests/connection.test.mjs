@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, versionNotice } from "../lib/connection.js";
+import {
+  PANEL_UPDATE_BUTTON, REINSTALL_ACTION, createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, updateAdvice, versionNotice,
+} from "../lib/connection.js";
 
 const stopped = { state: "stopped", ready: null, detail: "Native host has exited." };
 const closed = () => ({ ...stopped }); // every launch that ends makes the extension send a new report
@@ -77,8 +79,17 @@ test("versionNotice warns only when the extension is older than this page, and s
   const text = versionNotice({ extensionVersion: "0.2.0", pageVersion: "0.2.1" });
   assert.match(text, /0\.2\.0/);
   assert.match(text, /0\.2\.1/);
-  assert.match(text, /更新到最新版/);
-  assert.match(text, /重新載入/);
+  assert.ok(text.includes(REINSTALL_ACTION), "the action that always exists");
+  assert.doesNotMatch(text, /更新到最新版/, "the update button is hidden until an update was found: not promised then");
+  const withButton = versionNotice({ extensionVersion: "0.2.0", pageVersion: "0.2.1", updateAvailable: true });
+  assert.ok(withButton.includes(REINSTALL_ACTION));
+  assert.match(withButton, /版本與更新/);
+  assert.match(withButton, /更新到最新版/);
+  assert.match(withButton, /重新載入/);
+});
+
+test("the reinstall action says what to do on each system", () => {
+  assert.equal(REINSTALL_ACTION, "重新執行安裝檔（Mac 貼上那一行指令，Windows 重新下載後雙擊）");
 });
 
 test("hostVersionNotice warns when the local program and the extension are not the same version, either way round", () => {
@@ -86,13 +97,38 @@ test("hostVersionNotice warns when the local program and the extension are not t
   const older = hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0" });
   assert.match(older, /本機小程式是 v0\.2\.0/);
   assert.match(older, /擴充功能是 v0\.2\.7/);
-  assert.match(older, /更新到最新版/);
-  assert.match(older, /重新執行安裝檔/);
   assert.match(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.3.0" }), /不一致/);
+});
+
+test("hostVersionNotice names an action that always exists, and the update button only when it is there to press", () => {
+  const plain = hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0" });
+  assert.ok(plain.includes(REINSTALL_ACTION));
+  assert.doesNotMatch(plain, /更新到最新版/, "files already match: that button is hidden or disabled, so it is not mentioned");
+  assert.equal(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0", updateAvailable: false }), plain);
+  const extra = hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0", updateAvailable: true });
+  assert.ok(extra.includes(REINSTALL_ACTION), "the installer stays the first thing to do");
+  assert.match(extra, /「版本與更新」/);
+  assert.match(extra, /「更新到最新版」/);
+  assert.ok(extra.indexOf("重新執行安裝檔") < extra.indexOf("更新到最新版"));
 });
 
 test("hostVersionNotice says nothing while either version is not known", () => {
   assert.equal(hostVersionNotice({ extensionVersion: null, hostVersion: "0.2.0" }), null);
   assert.equal(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: undefined }), null);
   assert.equal(hostVersionNotice({ extensionVersion: "abc", hostVersion: "0.2.0" }), null, "not a version number");
+});
+
+test("updateAdvice tells where the update can be applied, naming the panel's button as it is really labelled", () => {
+  const found = { hasUpdate: true, canUpdateHere: true, hostChecked: true };
+  assert.equal(updateAdvice(found, true), "有新版本可以更新。");
+  assert.match(updateAdvice(found, false), /先讓下載助手連線/);
+  const elsewhere = updateAdvice({ ...found, canUpdateHere: false }, true);
+  assert.ok(elsewhere.includes(`「${PANEL_UPDATE_BUTTON.pickFolder}」`), "the button as it is labelled the first time (no folder chosen yet)");
+  assert.ok(elsewhere.includes(REINSTALL_ACTION), "the action that always exists");
+  assert.doesNotMatch(elsewhere, /插件/, "擴充功能, not 插件");
+  const unknown = updateAdvice({ ...found, canUpdateHere: false, hostChecked: false }, false);
+  assert.match(unknown, /下載助手還沒連線/);
+  assert.match(unknown, /先讓它連線/);
+  assert.doesNotMatch(unknown, /插件|本機小程式/, "the agreed words: 擴充功能 and 下載助手");
+  assert.equal(PANEL_UPDATE_BUTTON.apply, "更新到最新版");
 });

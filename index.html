@@ -44,6 +44,7 @@
             <input id="outdir" type="text" spellcheck="false" disabled>
             <button id="save-outdir" class="btn small" type="button" disabled>儲存</button>
           </div>
+          <p id="outdir-hint" class="st-note" hidden></p>
         </div>
         <p id="settings-note" class="st-note" role="status" aria-live="polite" hidden></p>
       </section>
@@ -78,6 +79,8 @@
       <div id="conn-note" class="notice" role="status" aria-live="polite" hidden></div>
       <div id="note" class="notice" role="status" aria-live="polite" data-kind="error" hidden></div>
       <div id="host-note" class="notice" role="status" aria-live="polite" data-kind="error" hidden></div>
+      <div id="version-note" class="notice" role="status" aria-live="polite" data-kind="error" hidden></div>
+      <div id="abort-note" class="notice" role="alert" data-kind="error" hidden></div>
 
       <section id="add-card" class="card addc" aria-label="增加影片">
         <label class="in">

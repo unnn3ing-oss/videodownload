@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
-  createState, describeItem, hostLost, markRunning, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
+  OUTPUT_DIR_LOCKED_TEXT, cooldownText, createState, describeItem, hostLost, markRunning, outputDirLocked, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
   setCover, setSettings, setTags, summarize,
 } from "../lib/queue.js";
 
@@ -81,6 +81,62 @@ test("applyResolved turns unresolvable urls into failed rows and respects the ex
   assert.equal(none.items[0].status, "failed");
 });
 
+const LIMIT_HINT = (n) => `已達上限 ${n} 支，頻道或播放清單可能還有更多；要更多請調高「最多展開」`;
+function resolveWith(sourceUrl, limit, refs) {
+  const added = addPlaceholder(setSettings(createState(), { limit }), sourceUrl);
+  return applyResolved(added.state, added.uid, refs);
+}
+const hintsOf = (state) => state.items.map((i) => describeItem(state, i, 0).hint);
+
+test("a channel or playlist that came back exactly as long as the limit says it may have more", () => {
+  const channel = resolveWith("https://www.youtube.com/@company/videos", 2, [ref("a"), ref("b")]);
+  assert.deepEqual(hintsOf(channel), ["", LIMIT_HINT(2)], "on the last row: this is where the list stops");
+  const playlist = resolveWith("https://www.youtube.com/playlist?list=PL1", 3, [ref("a"), ref("b"), ref("c")]);
+  assert.deepEqual(hintsOf(playlist), ["", "", LIMIT_HINT(3)]);
+  const host = resolveWith("https://www.youtube.com/@company", 2, [ref("a"), ref("b"), ref("c")]); // (a host that sent more than asked)
+  assert.deepEqual(hintsOf(host), ["", LIMIT_HINT(2)]);
+});
+
+test("no limit note when the list ended before the limit, or for a single video", () => {
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/@company", 5, [ref("a"), ref("b")])), ["", ""]);
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/watch?v=a&list=PL1", 1, [ref("a")])), [""], "a watch url with &list= is one video");
+  assert.deepEqual(hintsOf(resolveWith("https://youtu.be/a", 1, [ref("a")])), [""]);
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/shorts/a", 1, [ref("a")])), [""]);
+});
+
+test("a playlist of exactly one video with the limit at 1 still gets the honest 'may have more'", () => {
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/playlist?list=PL1", 1, [ref("a")])), [LIMIT_HINT(1)]);
+});
+
+test("a youtube address of an unknown kind is only taken for a list when it returned several videos", () => {
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/@company/streams", 1, [ref("a")])), [""]);
+  assert.deepEqual(hintsOf(resolveWith("https://www.youtube.com/@company/streams", 2, [ref("a"), ref("b")])), ["", LIMIT_HINT(2)]);
+});
+
+test("the limit note says nothing when the list was cut by a full queue instead (the limit was not reached)", () => {
+  let state = createState();
+  for (let i = 0; i < MAX_ITEMS - 1; i += 1) state = addPlaceholder(state, url(`v${i}`)).state;
+  const added = addPlaceholder(setSettings(state, { limit: 5 }), "https://www.youtube.com/@company");
+  const full = applyResolved(added.state, added.uid, [ref("a"), ref("b"), ref("c")]);
+  assert.equal(full.items.length, MAX_ITEMS);
+  assert.equal(full.items.at(-1).limitHit, null);
+});
+
+test("the limit note survives a restart, and a damaged value is dropped", () => {
+  const state = resolveWith("https://www.youtube.com/@company", 2, [ref("a"), ref("b")]);
+  const restored = createState(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(hintsOf(restored), ["", LIMIT_HINT(2)]);
+  const damaged = JSON.parse(JSON.stringify(state));
+  damaged.items[1].limitHit = "lots";
+  assert.deepEqual(hintsOf(createState(damaged)), ["", ""]);
+});
+
+test("the limit note and the same-title hint can both be on one row", () => {
+  let { state, uid } = addPlaceholder(setSettings(createState(), { limit: 2 }), "https://www.youtube.com/@company");
+  state = applyResolved(state, uid, [ref("a", "同名"), ref("b", "同名")]);
+  assert.equal(describeItem(state, state.items[1], 0).hint, `標題與第 1 支相同（不同影片） · ${LIMIT_HINT(2)}`);
+});
+
 test("applyResolved ignores a placeholder that no longer exists", () => {
   const { state, uid } = addPlaceholder(createState(), url("a"));
   const removed = removeItem(state, uid);
@@ -101,10 +157,35 @@ test("duplicates: same id, later one points at the earliest", () => {
   assert.deepEqual(pendingDownloads(state).map((i) => i.id), ["a", "b"]);
 });
 
-test("duplicates: same title after NFKC, trimming and case folding", () => {
-  const state = stateWith(ref("a", "Hello World"), ref("b", "  ｈｅｌｌｏ world "), ref("c", "完全不同"));
-  assert.equal(state.items[1].dupOf, state.items[0].uid);
-  assert.equal(state.items[2].dupOf, null);
+test("duplicates: the same title on a different video is not a duplicate, both are downloaded", () => {
+  const state = stateWith(ref("a", "Hello World"), ref("b", "  ｈｅｌｌｏ world "), ref("c", "Shorts"), ref("d", "Shorts"), ref("e", "Private video"));
+  assert.deepEqual(state.items.map((i) => i.dupOf), [null, null, null, null, null]);
+  assert.deepEqual(pendingDownloads(state).map((i) => i.id), ["a", "b", "c", "d", "e"]);
+  assert.deepEqual(state.items.map((i) => describeItem(state, i, 0).kind), ["waiting", "waiting", "waiting", "waiting", "waiting"]);
+});
+
+test("duplicates: only the same video id counts, whatever the titles are", () => {
+  const state = stateWith(ref("a", "同一個標題"), ref("b", "同一個標題"), ref("a", "同一個標題"), ref("b", "另一個標題"));
+  assert.deepEqual(state.items.map((i) => i.dupOf === null), [true, true, false, false]);
+  assert.deepEqual([state.items[2].dupOf, state.items[3].dupOf], [state.items[0].uid, state.items[1].uid]);
+  assert.deepEqual(pendingDownloads(state).map((i) => i.id), ["a", "b"]);
+});
+
+test("a row whose title is the same as an earlier, different video carries a hint saying so", () => {
+  const state = stateWith(ref("a", "Hello World"), ref("b", "  ｈｅｌｌｏ world "), ref("c", "完全不同"), ref("d", "HELLO WORLD"));
+  const hints = state.items.map((i) => describeItem(state, i, 0).hint);
+  assert.deepEqual(hints, ["", "標題與第 1 支相同（不同影片）", "", "標題與第 1 支相同（不同影片）"]);
+  assert.equal(describeItem(state, state.items[1], 0).kind, "waiting", "the hint does not hold the row back");
+});
+
+test("the same-title hint is not shown on rows that are still fetching, failed without an id, or real duplicates", () => {
+  let state = stateWith(ref("a", "標題"), ref("a", "標題"));
+  const placeholder = addPlaceholder(state, url("q"));
+  state = applyResolveFailed(placeholder.state, placeholder.uid, "x");
+  const more = addPlaceholder(state, url("z"));
+  state = more.state;
+  assert.deepEqual(state.items.map((i) => describeItem(state, i, 0).hint), ["", "", "", ""]);
+  assert.equal(describeItem(state, state.items[1], 0).kind, "duplicate");
 });
 
 test("describeItem labels a duplicate and says which row it repeats", () => {
@@ -128,41 +209,44 @@ test("removing the earliest copy promotes the next one and keeps the rest marked
 });
 
 // A slow playlist row sits before a later video that is already on its way; when the playlist resolves,
-// a same-title video lands in front of it.
+// the same video lands in front of it (items[0] is the playlist's copy, items[1] the one added on its own).
 function slowResolveBeforeStartedVideo(prepare) {
   let state = setHostConnected(createState(), true);
   const slow = addPlaceholder(state, url("list"));
   const quick = addPlaceholder(slow.state, url("b"));
-  state = applyResolved(quick.state, quick.uid, [ref("b", "同一個標題")]);
+  state = applyResolved(quick.state, quick.uid, [ref("b", "影片 b")]);
   state = prepare(state);
-  return applyResolved(state, slow.uid, [ref("p", "  同一個標題 ")]);
+  return applyResolved(state, slow.uid, [ref("b", "影片 b（播放清單裡的）")]);
 }
 
-test("duplicates: a later row that is downloading stays the original when an earlier row lands with its title", () => {
+test("duplicates: a later row that is downloading stays the original when an earlier row lands with its id", () => {
   const state = slowResolveBeforeStartedVideo((s) => applyHostEvent(s, { type: "progress", itemId: "b", percent: 5 }, 0));
-  assert.deepEqual(state.items.map((i) => i.id), ["p", "b"]);
-  assert.equal(byId(state, "b").dupOf, null);
-  assert.equal(byId(state, "p").dupOf, byId(state, "b").uid);
-  assert.equal(byId(state, "b").status, "downloading");
+  const [early, late] = state.items;
+  assert.equal(late.dupOf, null);
+  assert.equal(early.dupOf, late.uid);
+  assert.equal(late.status, "downloading");
   assert.deepEqual(pendingDownloads(state), []);
 });
 
 test("duplicates: a finished row stays the original too", () => {
   const state = slowResolveBeforeStartedVideo((s) => applyHostEvent(s, { type: "item_done", itemId: "b", file: "/b.mp4" }, 0));
-  assert.deepEqual([byId(state, "b").dupOf, byId(state, "p").dupOf === byId(state, "b").uid], [null, true]);
+  const [early, late] = state.items;
+  assert.deepEqual([late.dupOf, early.dupOf === late.uid], [null, true]);
 });
 
 test("duplicates: a row already handed to the host (still waiting) stays the original", () => {
   const state = slowResolveBeforeStartedVideo((s) => markSent(s, ["b"], true));
-  assert.equal(byId(state, "b").dupOf, null);
-  assert.equal(byId(state, "p").dupOf, byId(state, "b").uid);
-  assert.equal(describeItem(state, byId(state, "p"), 0).sub, "與第 2 筆相同，已暫停");
+  const [early, late] = state.items;
+  assert.equal(late.dupOf, null);
+  assert.equal(early.dupOf, late.uid);
+  assert.equal(describeItem(state, early, 0).sub, "與第 2 筆相同，已暫停");
 });
 
 test("duplicates: a row not sent yet still loses to the earlier row", () => {
   const state = slowResolveBeforeStartedVideo((s) => s);
-  assert.equal(byId(state, "p").dupOf, null);
-  assert.equal(byId(state, "b").dupOf, byId(state, "p").uid);
+  const [early, late] = state.items;
+  assert.equal(early.dupOf, null);
+  assert.equal(late.dupOf, early.uid);
 });
 
 test("markSent flags only rows that are not duplicates and is cleared when the host job ends or is lost", () => {
@@ -251,6 +335,29 @@ test("cooldown shows on the next row and counts down with the clock", () => {
   assert.equal(describeItem(state, byId(state, "a"), 1000).kind, "waiting");
 });
 
+test("a long cooldown (the host may wait up to two minutes after failures) is shown in minutes and counts down", () => {
+  let state = stateWith(ref("a"), ref("b"));
+  state = applyHostEvent(state, { type: "cooldown", seconds: 120, nextId: "b" }, 0);
+  const row = (now) => describeItem(state, byId(state, "b"), now);
+  assert.deepEqual([row(0).kind, row(0).label], ["cooling", "冷卻中，2 分鐘後開始"]);
+  assert.equal(row(30000).label, "冷卻中，1 分 30 秒後開始");
+  assert.equal(row(61000).label, "冷卻中，59 秒後開始");
+  assert.equal(row(120000).kind, "waiting");
+  assert.equal(cooldownText(state, 0), "2 分鐘後開始下一支");
+  assert.equal(cooldownText(state, 111000), "9 秒後開始下一支");
+  assert.equal(cooldownText(state, 120000), "", "over: nothing to show");
+  assert.equal(cooldownText(createState(), 0), "");
+});
+
+test("a cooldown event without a usable number of seconds shows nothing instead of NaN", () => {
+  let state = stateWith(ref("a"), ref("b"));
+  for (const seconds of [undefined, "soon", null]) {
+    const next = applyHostEvent(state, { type: "cooldown", seconds, nextId: "b" }, 0);
+    assert.equal(cooldownText(next, 0), "", String(seconds));
+    assert.equal(describeItem(next, byId(next, "b"), 0).kind, "waiting");
+  }
+});
+
 test("the next row's first progress ends the cooldown, and done clears everything", () => {
   let state = stateWith(ref("a"), ref("b"));
   state = applyHostEvent(state, { type: "cooldown", seconds: 10, nextId: "b" }, 0);
@@ -264,6 +371,72 @@ test("the next row's first progress ends the cooldown, and done clears everythin
   assert.equal(busy.cooldown, null);
   assert.equal(byId(busy, "a").status, "waiting", "an interrupted download goes back to waiting");
   assert.equal(byId(busy, "a").percent, null);
+});
+
+test("done with summary.aborted keeps what the host never tried waiting, ends the run and remembers why", () => {
+  let state = stateWith(ref("a"), ref("b"), ref("c"));
+  state = markSent(state, ["a", "b", "c"], true);
+  state = applyHostEvent(state, { type: "started", jobId: "j" }, 0);
+  state = applyHostEvent(state, { type: "item_failed", itemId: "a", reason: "網路連線失敗", code: "network" }, 0);
+  state = applyHostEvent(state, { type: "progress", itemId: "b", percent: 5 }, 0);
+  const aborted = { code: "too_many_failures", message: "連續 3 支影片失敗，已停止下載" };
+  const done = applyHostEvent(state, { type: "done", jobId: "j", summary: { ok: 0, failed: 1, aborted } }, 0);
+  assert.equal(done.running, false);
+  assert.equal(done.cooldown, null);
+  assert.deepEqual(done.aborted, aborted);
+  assert.deepEqual(done.items.map((i) => i.status), ["failed", "waiting", "waiting"], "b was in flight, c never started: both go back to waiting, none is failed or done");
+  assert.deepEqual(done.items.map((i) => i.sent), [false, false, false]);
+  assert.deepEqual(pendingDownloads(done).map((i) => i.id), ["b", "c"], "so the next start takes them again");
+  assert.equal(done.items[1].percent, null);
+});
+
+test("a normal done has no aborted note, and the next job's start clears an old one", () => {
+  let state = stateWith(ref("a"));
+  const aborted = { code: "disk_full", message: "磁碟已滿，已停止下載" };
+  state = applyHostEvent(state, { type: "done", jobId: "j", summary: { aborted } }, 0);
+  assert.deepEqual(state.aborted, aborted);
+  assert.equal(applyHostEvent(state, { type: "started", jobId: "j2" }, 0).aborted, null);
+  assert.equal(applyHostEvent(state, { type: "done", jobId: "j3", summary: { aborted: null } }, 0).aborted, null);
+  assert.equal(applyHostEvent(createState(), { type: "done", jobId: "j", summary: {} }, 0).aborted, null);
+  assert.equal(applyHostEvent(createState(), { type: "done", jobId: "j" }, 0).aborted, null, "a host that sends no summary at all");
+  assert.equal(createState().aborted, null);
+});
+
+test("an aborted note without a message still says something, and nonsense is ignored", () => {
+  const done = (aborted) => applyHostEvent(createState(), { type: "done", jobId: "j", summary: { aborted } }, 0).aborted;
+  assert.deepEqual(done({ code: "tls" }), { code: "tls", message: "下載已中止（tls）" });
+  assert.deepEqual(done({ message: "只有訊息" }), { code: "aborted", message: "只有訊息" });
+  for (const junk of [undefined, null, "x", 5, [], {}, { code: 1, message: 2 }]) assert.equal(done(junk), null, JSON.stringify(junk));
+});
+
+test("the aborted note survives a restart and a lost host, and a damaged one is dropped", () => {
+  const aborted = { code: "disk_full", message: "磁碟已滿，已停止下載" };
+  const state = applyHostEvent(stateWith(ref("a")), { type: "done", jobId: "j", summary: { aborted } }, 0);
+  assert.deepEqual(hostLost(state).aborted, aborted, "the host going away does not make the reason go away");
+  assert.deepEqual(createState(JSON.parse(JSON.stringify(state))).aborted, aborted);
+  assert.equal(createState({ items: [], aborted: { code: 1 } }).aborted, null);
+  assert.equal(createState({ items: [], aborted: "x" }).aborted, null);
+});
+
+test("a finished or skipped row keeps the folder the controller says its video went into, and a restart keeps it", () => {
+  let state = stateWith(ref("a"), ref("b"), ref("c"));
+  state = applyHostEvent(state, { type: "item_done", itemId: "a", file: "/A/a.mp4", outDir: "/A" }, 0);
+  state = applyHostEvent(state, { type: "item_done", itemId: "b", file: "/A/b.mp4", skipped: true, outDir: "/A" }, 0);
+  state = applyHostEvent(state, { type: "item_done", itemId: "c", file: "/c.mp4" }, 0);
+  assert.deepEqual(state.items.map((i) => i.outDir), ["/A", "/A", null], "a host event on its own says nothing about the folder");
+  assert.deepEqual(createState(JSON.parse(JSON.stringify(state))).items.map((i) => i.outDir), ["/A", "/A", null]);
+  const damaged = JSON.parse(JSON.stringify(state));
+  damaged.items[0].outDir = 5;
+  assert.equal(createState(damaged).items[0].outDir, null);
+});
+
+test("the output folder is locked exactly while a job runs", () => {
+  const idle = stateWith(ref("a"));
+  assert.equal(outputDirLocked(idle), false);
+  assert.equal(outputDirLocked(applyHostEvent(idle, { type: "started", jobId: "j" }, 0)), true);
+  assert.equal(outputDirLocked(applyHostEvent(applyHostEvent(idle, { type: "started", jobId: "j" }, 0), { type: "done", jobId: "j", summary: {} }, 0)), false);
+  assert.equal(outputDirLocked(null), false);
+  assert.match(OUTPUT_DIR_LOCKED_TEXT, /下一批/);
 });
 
 test("hostLost resets the run and puts interrupted rows back to waiting", () => {

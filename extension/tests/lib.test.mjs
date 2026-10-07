@@ -4,7 +4,7 @@ import { HOST_NAME } from "../lib/constants.js";
 import { parseUrlLines } from "../lib/urls.js";
 import { installerFor, classifyConnectError } from "../lib/platform.js";
 import { createRequestIds } from "../lib/ids.js";
-import { formatEta, formatSpeed } from "../lib/format.js";
+import { formatEta, formatSpeed, formatWait } from "../lib/format.js";
 import { classifyTabUrl } from "../lib/page.js";
 
 test("HOST_NAME is the registered native host name", () => {
@@ -79,4 +79,17 @@ test("classifyTabUrl tells videos, playlists and channels apart", () => {
 test("formatSpeed", () => {
   assert.equal(formatSpeed(1048576), "1.0 MB/s");
   assert.equal(formatSpeed(0), "");
+});
+
+test("formatWait says a wait in seconds, and in minutes once it is long (the host may ask for up to two minutes)", () => {
+  assert.equal(formatWait(4), "4 秒");
+  assert.equal(formatWait(3.2), "4 秒", "rounded up: never says 0 while still waiting");
+  assert.equal(formatWait(59), "59 秒");
+  assert.equal(formatWait(60), "1 分鐘");
+  assert.equal(formatWait(90), "1 分 30 秒");
+  assert.equal(formatWait(120), "2 分鐘");
+  assert.equal(formatWait(0), "0 秒");
+  assert.equal(formatWait(-5), "0 秒");
+  assert.equal(formatWait(NaN), "");
+  assert.equal(formatWait(undefined), "");
 });

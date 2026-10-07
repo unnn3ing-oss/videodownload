@@ -30,6 +30,8 @@
 
     <div id="note" class="note" role="status" aria-live="polite" hidden></div>
     <div id="host-note" class="note" data-kind="error" role="status" aria-live="polite" hidden></div>
+    <div id="version-note" class="note" data-kind="error" role="status" aria-live="polite" hidden></div>
+    <div id="abort-note" class="note" data-kind="error" role="alert" hidden></div>
 
     <section id="setup" class="card setup" hidden>
       <h2>開始使用</h2>
@@ -102,6 +104,7 @@
             <input id="outdir" type="text" disabled spellcheck="false">
             <button id="save-outdir" class="btn small" type="button" disabled>儲存</button>
           </div>
+          <p id="outdir-hint" class="add-note" hidden></p>
         </div>
         <div class="field">
           <label for="limit" class="field-label">頻道或播放清單最多展開</label>

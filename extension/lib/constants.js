@@ -8,3 +8,6 @@ export const WEB_PATH = "/videodownload/";
 export const EXTENSION_NAME = "YouTube 批量下載器";
 // Oldest local host that understands cooldown, enqueue, remove, meta and save_cover.
 export const MIN_HOST_VERSION = "0.2.0";
+
+// What the 「間隔」 (seconds between videos) and 「最多展開」 (videos taken from a channel or playlist) boxes accept.
+export const SETTING_RANGES = { cooldownSec: { min: 3, max: 60 }, limit: { min: 1, max: 1000 } };

@@ -50,14 +50,14 @@ try {
   assert.deepEqual(state.items.map((i) => [i.id, i.title, i.duration]), [["vA", "影片 vA", 222], ["vB", "影片 vB", 222]]);
   assert.equal(state.hostConnected, true);
 
-  // 2. Duplicates by id and by title are marked, not removed.
+  // 2. Duplicates are marked, not removed; only the same video id counts (same1 and same2 share a title but are different videos).
   await send({ type: "queue_add", url: url("vA") });
   await send({ type: "queue_add", url: url("same1") });
   await send({ type: "queue_add", url: url("same2") });
   state = await until((s) => s.items.length === 5 && s.items.every((i) => i.status !== "fetching"), "duplicates to resolve");
   assert.equal(state.items[2].dupOf, state.items[0].uid);
-  assert.equal(state.items[4].dupOf, state.items[3].uid);
-  assert.deepEqual(state.items.map((i) => i.dupOf === null), [true, true, false, true, false]);
+  assert.equal(state.items[4].dupOf, null);
+  assert.deepEqual(state.items.map((i) => i.dupOf === null), [true, true, false, true, true]);
 
   // 3. Ordered downloads with a cooldown; a row added during the run joins it without pressing start again.
   assert.equal((await send({ type: "set_output_dir", path: outDir })).ok, true);
@@ -91,10 +91,10 @@ try {
   assert.ok(seen.sawCooldown, "a cooldown was reported for the next row");
   assert.ok(seen.startB - seen.doneA >= 2500, `vB started ${seen.startB - seen.doneA} ms after vA finished`);
   assert.deepEqual(state.items.map((i) => [i.id, i.status]), [
-    ["vA", "done"], ["vB", "done"], ["vA", "waiting"], ["same1", "done"], ["same2", "waiting"], ["vC", "done"],
+    ["vA", "done"], ["vB", "done"], ["vA", "waiting"], ["same1", "done"], ["same2", "done"], ["vC", "done"],
   ]);
   assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith(".mp4")).sort(),
-    ["影片 vA.mp4", "影片 vB.mp4", "影片 vC.mp4", "相同標題.mp4"].sort());
+    ["影片 vA.mp4", "影片 vB.mp4", "影片 vC.mp4", "相同標題.mp4", "相同標題 [same2].mp4"].sort());
 
   // 3b. Covers are saved by themselves (on by default); a video without any cover is still done; the setting turns it off.
   state = await until((s) => row(s, "vA").cover?.status === "saved", "vA's cover to be saved by itself");

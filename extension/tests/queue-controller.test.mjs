@@ -84,6 +84,24 @@ test("adding while connected resolves right away, and a failing resolve marks th
   assert.deepEqual([rows(ctl)[0].status, rows(ctl)[0].error], ["failed", "這是私人影片，沒有權限下載"]);
 });
 
+test("a channel that comes back exactly as long as the limit says so on its last row; a short one does not", async () => {
+  const { host, ctl } = setup();
+  ctl.setSettings({ limit: 3 });
+  host.replies.resolve = (m) => ({ type: "resolved", items: ["a", "b", "c"].map((id) => ({ id, title: `影片 ${id}`, url: url(id), duration: 1 })) });
+  await ctl.add("https://www.youtube.com/@company/videos");
+  await ctl.idle();
+  assert.deepEqual(host.of("resolve")[0].limit, 3);
+  assert.deepEqual(rows(ctl).map((i) => i.limitHit), [null, null, 3]);
+  assert.equal(describeItem(ctl.getState(), rows(ctl)[2], 0).hint, "已達上限 3 支，頻道或播放清單可能還有更多；要更多請調高「最多展開」");
+
+  const short = setup();
+  short.ctl.setSettings({ limit: 5 });
+  short.host.replies.resolve = host.replies.resolve;
+  await short.ctl.add("https://www.youtube.com/@company/videos");
+  await short.ctl.idle();
+  assert.deepEqual(rows(short.ctl).map((i) => i.limitHit), [null, null, null]);
+});
+
 test("add rejects non-YouTube urls and a full list", async () => {
   const { ctl } = setup({ isConnected: false });
   const bad = await ctl.add("https://evil.example/x");
@@ -184,6 +202,49 @@ test("enqueue refused after the done event was already seen: start a new job rig
   assert.deepEqual(host.of("download").map((m) => m.items.map((i) => i.id)), [["a"], ["c"]]);
 });
 
+const ABORTED = { code: "too_many_failures", message: "連續 3 支影片失敗，已停止下載" };
+
+test("a job the host stopped on purpose keeps the rows it never tried waiting, shows why, and is not restarted by itself", async () => {
+  const { host, ctl } = await withVideos(["a", "b", "c"]);
+  await ctl.start();
+  host.replies.enqueue = { type: "error", code: "not_running", message: "目前沒有進行中的下載工作" };
+  await ctl.add(url("d")); // joins just as the host stops: a restart is pending for it
+  await ctl.idle();
+  ctl.onHostEvent({ type: "item_failed", itemId: "a", reason: "網路連線失敗", code: "network" });
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { ok: 0, failed: 1, aborted: ABORTED } });
+  await ctl.idle();
+  assert.equal(host.of("download").length, 1, "starting again would hit the same trouble: the person decides");
+  const state = ctl.getState();
+  assert.equal(state.running, false);
+  assert.deepEqual(state.aborted, ABORTED);
+  assert.deepEqual(rows(ctl).map((i) => i.status), ["failed", "waiting", "waiting", "waiting"]);
+  assert.deepEqual(rows(ctl).map((i) => i.sent), [false, false, false, false]);
+});
+
+test("after an aborted job the waiting rows can be started again, and the note goes when the new job starts", async () => {
+  const { host, ctl } = await withVideos(["a", "b"]);
+  await ctl.start();
+  ctl.onHostEvent({ type: "item_failed", itemId: "a", reason: "x", code: "network" });
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { aborted: ABORTED } });
+  assert.deepEqual(ctl.getState().aborted, ABORTED);
+  assert.deepEqual(await ctl.start(), { ok: true });
+  assert.deepEqual(host.of("download")[1].items.map((i) => i.id), ["b"], "only what is still waiting");
+  ctl.onHostEvent({ type: "started", jobId: "j2" });
+  assert.equal(ctl.getState().aborted, null);
+});
+
+test("a done event without an aborted note still restarts rows that raced with it", async () => {
+  const { host, ctl } = await withVideos(["a"]);
+  await ctl.start();
+  host.replies.enqueue = { type: "error", code: "not_running", message: "x" };
+  await ctl.add(url("c"));
+  await ctl.idle();
+  ctl.onHostEvent({ type: "item_done", itemId: "a", file: "/a.mp4", height: 720 });
+  ctl.onHostEvent({ type: "done", jobId: "j", summary: { ok: 1, aborted: null } });
+  await ctl.idle();
+  assert.deepEqual(host.of("download").map((m) => m.items.map((i) => i.id)), [["a"], ["c"]]);
+});
+
 test("stop does not trigger a restart", async () => {
   const { host, ctl } = await withVideos(["a"]);
   await ctl.start();
@@ -198,27 +259,26 @@ test("stop does not trigger a restart", async () => {
   assert.equal(ctl.getState().running, false);
 });
 
-test("a slow playlist that lands a same-title video in front of a row already handed to the host neither hides that row nor sends its twin", async () => {
+test("a slow playlist that lands the same video in front of a row already handed to the host neither hides that row nor sends its twin", async () => {
   const { host, ctl } = setup();
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   host.replies.resolve = async (m) => {
-    const id = idOf(m.urls[0]);
-    if (id === "list") await gate;
-    return { type: "resolved", items: [{ id: id === "list" ? "p" : id, title: "同一個標題", url: m.urls[0], duration: 1 }] };
+    if (idOf(m.urls[0]) === "list") await gate;
+    return { type: "resolved", items: [{ id: "b", title: "影片 b", url: url("b"), duration: 1 }] }; // the playlist holds video b too
   };
   await ctl.add(url("list"));
   await ctl.add(url("b"));
-  while (!byId(ctl, "b")) await new Promise((resolve) => setImmediate(resolve));
+  while (rows(ctl).filter((i) => i.id === "b").length < 1) await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(await ctl.start(), { ok: true });
   release();
   await ctl.idle();
-  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["p", false], ["b", true]]);
-  assert.equal(describeItem(ctl.getState(), byId(ctl, "p"), 0).kind, "duplicate");
+  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["b", false], ["b", true]]);
+  assert.equal(describeItem(ctl.getState(), rows(ctl)[0], 0).kind, "duplicate");
   assert.deepEqual(host.of("download")[0].items.map((i) => i.id), ["b"]);
   assert.deepEqual(host.of("enqueue"), [], "the twin is not sent");
   ctl.onHostEvent({ type: "progress", itemId: "b", percent: 10 });
-  assert.equal(byId(ctl, "b").status, "downloading", "progress still reaches the row that is really downloading");
+  assert.deepEqual(rows(ctl).map((i) => i.status), ["waiting", "downloading"], "progress still reaches the row that is really downloading");
 });
 
 test("a slow playlist that lands while the download request is still in flight does not hide the row being sent", async () => {
@@ -226,24 +286,33 @@ test("a slow playlist that lands while the download request is still in flight d
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   host.replies.resolve = async (m) => {
-    const id = idOf(m.urls[0]);
-    if (id === "list") await gate;
-    return { type: "resolved", items: [{ id: id === "list" ? "p" : id, title: "同一個標題", url: m.urls[0], duration: 1 }] };
+    if (idOf(m.urls[0]) === "list") await gate;
+    return { type: "resolved", items: [{ id: "b", title: "影片 b", url: url("b"), duration: 1 }] };
   };
   await ctl.add(url("list"));
   await ctl.add(url("b"));
-  while (!byId(ctl, "b")) await new Promise((resolve) => setImmediate(resolve));
+  while (rows(ctl).filter((i) => i.id === "b").length < 1) await new Promise((resolve) => setImmediate(resolve));
   host.replies.download = async () => {
     release(); // the playlist answers before the host's "started" does
-    while (!byId(ctl, "p")) await new Promise((resolve) => setImmediate(resolve));
+    while (rows(ctl).filter((i) => i.id === "b").length < 2) await new Promise((resolve) => setImmediate(resolve));
     return { type: "started", jobId: "j" };
   };
   assert.deepEqual(await ctl.start(), { ok: true });
   await ctl.idle();
-  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["p", false], ["b", true]]);
+  assert.deepEqual(rows(ctl).map((i) => [i.id, i.dupOf === null]), [["b", false], ["b", true]]);
   assert.deepEqual(host.of("enqueue"), [], "the twin is not sent");
   ctl.onHostEvent({ type: "progress", itemId: "b", percent: 10 });
-  assert.equal(byId(ctl, "b").status, "downloading");
+  assert.deepEqual(rows(ctl).map((i) => i.status), ["waiting", "downloading"]);
+});
+
+test("two different videos with the same title are both sent to the host", async () => {
+  const { host, ctl } = setup();
+  host.replies.resolve = (m) => ({ type: "resolved", items: [{ id: idOf(m.urls[0]), title: "Shorts", url: m.urls[0], duration: 1 }] });
+  await ctl.add(url("s1"));
+  await ctl.add(url("s2"));
+  await ctl.idle();
+  await ctl.start();
+  assert.deepEqual(host.of("download")[0].items.map((i) => i.id), ["s1", "s2"]);
 });
 
 test("rows are not left marked sent when the start request fails, or when the host turns out to be busy with a running job", async () => {
@@ -644,4 +713,138 @@ test("the cover button records its result in the row too, including the browser-
   const none = await withCovers(["a"], { covers: {} });
   assert.equal((await none.ctl.downloadCover(rows(none.ctl)[0].uid)).ok, false);
   assert.deepEqual(byId(none.ctl, "a").cover, { status: "failed", error: "找不到封面圖片" });
+});
+
+// ---- two videos whose covers would get the same name ----
+
+async function withTitles(titles, { hostOptions } = {}) {
+  const ids = Object.keys(titles);
+  const env = setup(hostOptions, { covers: Object.fromEntries(ids.map((id) => [coverUrl(id, "maxresdefault"), JPEG])) });
+  env.host.replies.resolve = (m) => ({ type: "resolved", items: m.urls.map((u) => ({ id: idOf(u), title: titles[idOf(u)], url: u, duration: 1 })) });
+  for (const id of ids) await env.ctl.add(url(id));
+  await env.ctl.idle();
+  return env;
+}
+const SAME_START = { a: "同一個標題一二", b: "同一個標題一三" }; // the first six characters are the same
+
+test("two different videos with the same cover name: the later one is told apart by its id, both covers are kept", async () => {
+  const { host, ctl } = await withTitles(SAME_START);
+  finish(ctl, "a");
+  finish(ctl, "b");
+  await ctl.idle();
+  const [first, second] = host.of("save_cover");
+  assert.equal(first.name, undefined, "the first one is called what it always was: the host names it from the title");
+  assert.equal(second.name, "同一個標題一 [b]", "the host is told the name to use");
+  assert.deepEqual([byId(ctl, "a").cover.status, byId(ctl, "b").cover.status], ["saved", "saved"]);
+});
+
+test("the browser-download fallback uses the told-apart name too, so nothing is overwritten or numbered by the browser", async () => {
+  const { ctl, downloaded } = await withTitles(SAME_START, { hostOptions: { ver: "0.1.0" } }); // (an old host cannot save covers)
+  assert.equal((await ctl.downloadCover(byId(ctl, "a").uid)).where, "downloads");
+  assert.equal((await ctl.downloadCover(byId(ctl, "b").uid)).where, "downloads");
+  assert.deepEqual(downloaded.map((d) => d.filename), ["同一個標題一.jpg", "同一個標題一 [b].jpg"]);
+});
+
+test("a row that comes before another with the same cover name keeps the plain name whatever order the covers are saved in", async () => {
+  const { host, ctl } = await withTitles(SAME_START);
+  finish(ctl, "b"); // b finishes first, but a is earlier in the list
+  finish(ctl, "a");
+  await ctl.idle();
+  const byVideo = Object.fromEntries(host.of("save_cover").map((m) => [m.id, m.name]));
+  assert.deepEqual(byVideo, { b: "同一個標題一 [b]", a: undefined });
+});
+
+test("videos with different cover names are saved as before, with no name field", async () => {
+  const { host, ctl } = await withTitles({ a: "甲乙丙丁戊己庚", b: "子丑寅卯辰巳午" });
+  finish(ctl, "a");
+  finish(ctl, "b");
+  await ctl.idle();
+  assert.deepEqual(host.of("save_cover").map((m) => Object.keys(m).sort()), [["data", "id", "title", "type"], ["data", "id", "title", "type"]]);
+});
+
+// ---- the output folder of a job ----
+
+function withFolder(initial = "/out/A", extra = {}) {
+  const env = setup(extra.hostOptions, { covers: { [coverUrl("a", "maxresdefault")]: JPEG, [coverUrl("b", "maxresdefault")]: JPEG } });
+  env.dir = { now: initial };
+  env.host.outputDir = () => env.dir.now;
+  return env;
+}
+async function started(env, ids = ["a", "b"]) {
+  for (const id of ids) await env.ctl.add(url(id));
+  await env.ctl.idle();
+  await env.ctl.start();
+  env.ctl.onHostEvent({ type: "started", jobId: "j" });
+  return env;
+}
+
+test("a finished video remembers the folder its job was started with", async () => {
+  const env = await started(withFolder("/out/A"));
+  env.ctl.onHostEvent({ type: "progress", itemId: "a", percent: 5 });
+  env.dir.now = "/out/B"; // changed behind the job's back
+  finish(env.ctl, "a");
+  await env.ctl.idle();
+  assert.equal(byId(env.ctl, "a").outDir, "/out/A", "the host keeps writing the whole job into the folder it started with");
+});
+
+test("the cover goes where the video went: with the folder changed meanwhile it is not put into the new folder", async () => {
+  const env = await started(withFolder("/out/A"));
+  env.dir.now = "/out/B";
+  finish(env.ctl, "a");
+  await env.ctl.idle();
+  assert.deepEqual(env.host.of("save_cover"), [], "the host would write it into /out/B, away from the video");
+  assert.deepEqual(env.downloaded.map((d) => d.filename), ["影片a.jpg"]);
+  assert.deepEqual(byId(env.ctl, "a").cover, { status: "saved", where: "downloads" });
+});
+
+test("the cover button on a video from an earlier job does not put the cover into the folder chosen since", async () => {
+  const env = await started(withFolder("/out/A"));
+  finish(env.ctl, "a");
+  await env.ctl.idle();
+  assert.equal(env.host.of("save_cover").length, 1, "same folder: next to the video");
+  env.ctl.onHostEvent({ type: "done", jobId: "j", summary: {} });
+  env.dir.now = "/out/B";
+  const result = await env.ctl.downloadCover(byId(env.ctl, "a").uid);
+  assert.deepEqual(result, { ok: true, where: "downloads", folderChanged: true });
+  assert.equal(env.host.of("save_cover").length, 1, "nothing more went to the host");
+  env.dir.now = "/out/A"; // changed back
+  assert.deepEqual(await env.ctl.downloadCover(byId(env.ctl, "a").uid), { ok: true, where: "folder", file: "/out/影片a.jpg" });
+});
+
+test("a host that does not say its folder, or rows saved before this was recorded, are covered as before", async () => {
+  const noFolder = await withCovers(["a"]);
+  finish(noFolder.ctl, "a");
+  await noFolder.ctl.idle();
+  assert.equal(noFolder.host.of("save_cover").length, 1);
+  assert.equal(byId(noFolder.ctl, "a").outDir, null);
+  const old = withFolder("/out/B");
+  await old.ctl.add(url("a"));
+  await old.ctl.idle();
+  assert.equal((await old.ctl.downloadCover(byId(old.ctl, "a").uid)).where, "folder", "no recorded folder: nothing to compare with");
+});
+
+test("the folder cannot be changed while a job runs or is being started, and can again afterwards", async () => {
+  const env = withFolder("/out/A");
+  for (const id of ["a", "b"]) await env.ctl.add(url(id));
+  await env.ctl.idle();
+  assert.equal(env.ctl.outputDirLocked(), false);
+  let during;
+  env.host.replies.download = async () => { during = env.ctl.outputDirLocked(); return { type: "started", jobId: "j" }; };
+  await env.ctl.start();
+  assert.equal(during, true, "while the start request is on its way");
+  assert.equal(env.ctl.outputDirLocked(), true, "while the job runs");
+  env.ctl.onHostEvent({ type: "done", jobId: "j", summary: {} });
+  assert.equal(env.ctl.outputDirLocked(), false);
+});
+
+test("a host that goes away takes the job's folder with it", async () => {
+  const env = await started(withFolder("/out/A"));
+  env.host.isConnected = false;
+  env.ctl.onHostDisconnected();
+  assert.equal(env.ctl.outputDirLocked(), false);
+  env.host.isConnected = true;
+  await env.ctl.onHostConnected({});
+  env.dir.now = "/out/B";
+  finish(env.ctl, "a"); // a late event of a job this controller never saw start: the folder as it is now
+  assert.equal(byId(env.ctl, "a").outDir, "/out/B");
 });

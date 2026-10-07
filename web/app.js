@@ -1,11 +1,13 @@
 // The web version of the batch downloader. It is a remote control: the extension holds the list and talks to
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
-import { copyRowText, downloadRowCover, renderHostNote, renderQueue, setHidden, setText, startTicker } from "../extension/lib/queue-view.js";
-import { summarize } from "../extension/lib/queue.js";
+import {
+  addPastedUrls, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
+} from "../extension/lib/queue-view.js";
+import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
-import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, versionNotice } from "../extension/lib/connection.js";
+import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, updateAdvice, versionNotice } from "../extension/lib/connection.js";
 import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
 import {
   FOLDER_HINTS, FOLDER_NAME, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand, selfCheckItems,
@@ -52,7 +54,7 @@ function renderWizard() {
   if (suggested > lastSuggested && cursor === lastSuggested) cursor = suggested;
   lastSuggested = suggested;
 
-  const stale = versionNotice({ extensionVersion: version, pageVersion });
+  const stale = versionNotice({ extensionVersion: version, pageVersion, updateAvailable: updateOffered() });
   setText($("ext-version-note"), stale ?? "");
   setHidden($("ext-version-note"), !stale);
   setText($("ext-version"), version ? `（v${version}）` : "");
@@ -81,6 +83,16 @@ function goToStep(n) {
   renderWizard();
 }
 
+// The notes that name the 「更新到最新版」 button when it can be pressed: drawn again when an update is found, not only when the list changes.
+function renderVersionNotes() {
+  const connected = client.detected() && status.state === "running";
+  renderVersionNote($("version-note"), {
+    extensionVersion: client.detected() ? client.version() : null, hostVersion: connected ? status.ready?.hostVersion : null,
+    updateAvailable: updateOffered(), hostOutdated: Boolean(queue?.hostOutdated),
+  });
+  renderHostNote($("host-note"), queue, { updateAvailable: updateOffered() });
+}
+
 function renderQueueArea() {
   const detected = client.detected();
   const connected = detected && status.state === "running";
@@ -96,8 +108,12 @@ function renderQueueArea() {
   setHidden($("conn-note"), !hostText);
   for (const id of ["add-url", "add-btn", "cooldown", "limit", "auto-cover"]) $(id).disabled = !detected;
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
-  $("outdir").disabled = !connected;
-  $("save-outdir").disabled = !connected;
+  renderVersionNotes();
+  const folderLocked = outputDirLocked(queue); // a running job keeps the folder it started with: a change waits for the next job
+  $("outdir").disabled = !connected || folderLocked;
+  $("save-outdir").disabled = !connected || folderLocked;
+  setText($("outdir-hint"), folderLocked ? OUTPUT_DIR_LOCKED_TEXT : "");
+  setHidden($("outdir-hint"), !folderLocked);
   $("doctor-check").disabled = !connected;
   if (connected && status.ready?.outputDir && document.activeElement !== $("outdir")) $("outdir").value = status.ready.outputDir;
 
@@ -119,15 +135,15 @@ function renderQueueArea() {
   if (info.speed) parts.push(`速度 ${formatSpeed(info.speed)}`);
   if (info.etaSec) parts.push(`剩餘 ${formatEta(info.etaSec)}`);
   $("queue-stats").textContent = parts.join(" · ");
-  const cooling = queue.cooldown && queue.cooldown.until > now;
+  const cooling = cooldownText(queue, now);
   $("cooldown-chip").hidden = !cooling;
-  if (cooling) $("cooldown-chip").textContent = `${Math.ceil((queue.cooldown.until - now) / 1000)} 秒後開始下一支`;
+  if (cooling) $("cooldown-chip").textContent = cooling;
 
   const button = $("start-all");
   button.className = `btn ${queue.running ? "danger" : "primary"}`;
   button.textContent = queue.running ? "停止" : info.total && info.waiting === 0 && info.done > 0 ? "全部完成" : "開始全部下載";
   button.disabled = !queue.running && (!connected || queue.hostOutdated || info.waiting === 0);
-  renderHostNote($("host-note"), queue);
+  renderAbortNote($("abort-note"), queue);
 
   document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
@@ -201,7 +217,7 @@ function refreshDoctor() {
 function renderCheck() {
   const items = selfCheckItems({
     detected: client.detected(), everDetected, extensionVersion: client.version(), pageVersion, status,
-    hostOutdated: Boolean(queue?.hostOutdated), gaveUp, doctor: doctorChecks,
+    hostOutdated: Boolean(queue?.hostOutdated), gaveUp, doctor: doctorChecks, updateAvailable: updateOffered(),
   });
   renderChecks($("check-list"), items);
   setText($("check-summary"), summarizeChecks(items).text);
@@ -307,21 +323,7 @@ $("start").addEventListener("click", () => {
 
 // ---------- adding and running ----------
 async function addFromBox() {
-  const urls = $("add-url").value.split(/\s+/).filter(Boolean);
-  if (!urls.length) return;
-  let firstError = null;
-  let added = 0;
-  for (const url of urls) {
-    try {
-      const result = await send({ type: "queue_add", url });
-      if (result?.ok) added += 1;
-      else firstError ??= result?.error ?? "無法加入";
-    } catch (error) {
-      firstError ??= error.message;
-    }
-  }
-  setNote("add-note", firstError ? `${firstError}${urls.length > 1 ? `（已加入 ${added} 筆）` : ""}` : "", "error");
-  if (added) $("add-url").value = "";
+  setNote("add-note", await addPastedUrls($("add-url"), send), "error");
 }
 $("add-btn").addEventListener("click", addFromBox);
 $("add-url").addEventListener("keydown", (event) => { if (event.key === "Enter") addFromBox(); });
@@ -338,8 +340,8 @@ $("start-all").addEventListener("click", async () => {
 
 $("quality").addEventListener("change", (event) => send({ type: "settings_set", settings: { quality: Number(event.target.value) } }));
 $("cooldown").addEventListener("input", () => { $("cooldown-out").textContent = `${$("cooldown").value} 秒`; });
-$("cooldown").addEventListener("change", () => send({ type: "settings_set", settings: { cooldownSec: Number($("cooldown").value) } }));
-$("limit").addEventListener("change", () => send({ type: "settings_set", settings: { limit: Number($("limit").value) } }));
+bindNumberSetting($("cooldown"), "cooldownSec", { send, current: () => queue?.settings?.cooldownSec });
+bindNumberSetting($("limit"), "limit", { send, current: () => queue?.settings?.limit });
 $("auto-cover").addEventListener("change", () => send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } }));
 const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
 $("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));
@@ -370,17 +372,14 @@ const updateProgressText = ({ step, done, total }) => ({
   download: `下載更新檔案 ${done} / ${total}`, host: "更新本機小程式…", write: "寫入擴充功能的檔案…",
 })[step] ?? "更新中…";
 
-function updateAdvice(info, connected) {
-  if (!info.canUpdateHere && !info.hostChecked) return "本機小程式還沒連線，所以不知道插件的資料夾在哪裡。請先讓它連線（設定流程最後一步的「啟動」），再更新。";
-  if (!info.canUpdateHere) return "這份擴充功能不是用安裝檔放的，網頁不知道它的資料夾在哪裡。請到側邊面板「設定與工具」按「更新到最新版」（第一次要選一次資料夾），或重新執行安裝檔。";
-  if (!connected) return "請先讓本機小程式連線（設定流程最後一步的「啟動」），再更新。";
-  return "有新版本可以更新。";
-}
+// The 「更新到最新版」 button can be pressed right now (it is hidden until an update was found).
+const updateOffered = () => Boolean(updateInfo?.hasUpdate && updateInfo.canUpdateHere && client.detected() && status.state === "running") && !updateBusy;
 
 // The local program and the extension should be the same version (see hostVersionNotice).
 const versionMismatch = () => hostVersionNotice({
   extensionVersion: client.detected() ? client.version() : null,
   hostVersion: status.state === "running" ? status.ready?.hostVersion : null,
+  updateAvailable: updateOffered(),
 });
 
 function renderUpdate() {
@@ -406,6 +405,7 @@ function renderUpdate() {
     else if (updateInfo?.hasUpdate) note = { kind: "info", text: updateAdvice(updateInfo, connected) };
   }
   setNote("up-note", note.text, note.kind);
+  renderVersionNotes();
   if (connected && !autoChecked && !updateBusy) { // once per visit, quietly
     autoChecked = true;
     checkUpdate({ quiet: true });

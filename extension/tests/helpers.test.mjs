@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { buildCopyText, extractHashtags } from "../lib/copytext.js";
-import { coverName } from "../lib/covername.js";
+import { coverBaseName, coverName } from "../lib/covername.js";
 import { COVER_VARIANTS, MAX_COVER_BYTES, findCover } from "../lib/cover.js";
 import { versionAtLeast } from "../lib/version.js";
 import { toBase64 } from "../lib/base64.js";
@@ -47,6 +47,39 @@ test("coverName agrees with the Python implementation on the shared fixture", ()
   const cases = JSON.parse(fs.readFileSync(new URL("../../tests/fixtures/cover-names.json", import.meta.url), "utf8"));
   assert.ok(cases.length >= 7);
   for (const { title, id, expected } of cases) assert.equal(coverName(title, id), expected, title);
+});
+
+test("coverBaseName is the usual short name, unless an earlier different video would get the very same one", () => {
+  const a = { id: "idA", title: "颱風假放不放？氣象署最新預測" };
+  assert.equal(coverBaseName(a.title, a.id), "颱風假放不放");
+  assert.equal(coverBaseName(a.title, a.id, []), "颱風假放不放");
+  const b = { id: "idB", title: "颱風假放不放：另一支影片" };
+  assert.equal(coverBaseName(b.title, b.id, [a]), "颱風假放不放 [idB]", "told apart the way the host names video files");
+  assert.equal(coverBaseName(a.title, a.id, [b]), "颱風假放不放 [idA]", "it is about who comes first in the list, so the caller passes only earlier rows");
+  assert.equal(coverBaseName(a.title, a.id, [{ id: "idA", title: "別的標題" }]), "颱風假放不放", "the same video is not a clash");
+  assert.equal(coverBaseName(a.title, a.id, [{ id: "idC", title: "完全不同的標題" }]), "颱風假放不放");
+});
+
+test("coverBaseName: names that differ only in letter case are the same name on most disks", () => {
+  assert.equal(coverBaseName("ai詐騙新手法", "x2", [{ id: "x1", title: "AI 詐騙新手法" }]), "ai詐騙新手 [x2]");
+});
+
+test("coverBaseName: videos without any usable title characters are told apart by their ids already", () => {
+  assert.equal(coverBaseName("？！", "abc", [{ id: "xyz", title: "！？" }]), "abc");
+});
+
+test("a cover name is never hidden, empty or ending in a dot or space, whatever the title or id", () => {
+  const titles = ["...隱藏", "．．．隱藏的檔案", ". . .", "。。。", "  .hidden", "\u200b.\u200b", "CON", "con.txt", "a:b*c?d", "x".repeat(300), "😀😀😀", ""];
+  for (const title of titles) {
+    for (const name of [coverName(title, "id1"), coverBaseName(title, "id1", [{ id: "id0", title }])]) {
+      assert.ok(name.length > 0, JSON.stringify(title));
+      assert.ok(!/^[ .]/.test(name), `${JSON.stringify(title)} -> ${JSON.stringify(name)} starts with a dot or space`);
+      assert.ok(!/[ .]$/.test(name), `${JSON.stringify(title)} -> ${JSON.stringify(name)} ends with a dot or space`);
+      assert.ok(!/[\\/:*?"<>|\x00-\x1f]/.test(name), `${JSON.stringify(title)} -> ${JSON.stringify(name)}`);
+    }
+  }
+  assert.equal(coverName("？！", ".hidden-id"), "hidden-id", "even an id that starts with a dot does not make a hidden file");
+  assert.equal(coverName("？！", ".CON"), "_CON", "and a reserved name hiding behind the dot is still caught (as the host's sanitize_filename does)");
 });
 
 function coverFetch(available, calls = []) {

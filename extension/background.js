@@ -7,6 +7,7 @@ import { checkLatest } from "./lib/updater.js";
 import { applyUpdate, collectUpdateInfo } from "./lib/update-pipeline.js";
 import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
+import { OUTPUT_DIR_LOCKED_TEXT } from "./lib/queue.js";
 import { classifySender, isAllowed } from "./lib/messages.js";
 import { injectBridge } from "./lib/inject.js";
 
@@ -54,6 +55,7 @@ let requestSeq = 0;
 const host = {
   connected: () => Boolean(port) && status.state === "running",
   version: () => status.ready?.hostVersion ?? null,
+  outputDir: () => status.ready?.outputDir ?? null,
   send(message) {
     if (!port) throw new Error("尚未連線本機小程式");
     port.postMessage(message);
@@ -157,6 +159,8 @@ const deployInstaller = () => downloadInstaller({ runtime: chrome.runtime, downl
 
 async function setOutputDir(path) {
   if (!host.connected()) return { ok: false, error: "請先連線本機小程式" };
+  // a job writes everything (videos and covers) into the folder it started with: a change waits for the next job
+  if ((await controllerReady).outputDirLocked()) return { ok: false, error: OUTPUT_DIR_LOCKED_TEXT };
   try {
     const event = await host.request({ type: "set_config", outputDir: path });
     if (event.type !== "config") return { ok: false, error: event.message ?? "無法使用這個資料夾" };
