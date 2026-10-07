@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,10 @@ ALLOWED_NAME = re.compile(r"[A-Za-z0-9_]+\.py")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 RAW_BASE = f"https://raw.githubusercontent.com/{OWNER}/{REPO}"
 _CHECK_CODE = "import sys; sys.path.insert(0, sys.argv[1]); import host"
+SMOKE_TIMEOUT = 30
+PENDING_NAME = "update-pending.json"
+TRIAL_GRACE = 30  # seconds: a second start this soon after the first one is a parallel start, not a failed one
+_VERSION_LINE = re.compile(r'^VERSION\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 class UpdateError(Exception):
@@ -217,8 +222,54 @@ def _restore(home: Path) -> int:
     return len(replaced) + len(added)
 
 
+def _pending_path(home: Path) -> Path:
+    return Path(home) / PENDING_NAME
+
+
+def _source_version(path: Path) -> str | None:
+    try:
+        match = _VERSION_LINE.search(Path(path).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+def _write_pending(home: Path, record: dict) -> None:
+    _pending_path(home).write_text(json.dumps(record), encoding="utf-8")
+
+
+def clear_pending(home: Path) -> None:
+    """The new version has started well (it sent `ready`), or the update was undone: nothing is pending any more."""
+    try:
+        _pending_path(home).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def smoke_check(home: Path, expected_version: str | None) -> None:
+    """Start the host files that are now in place as `host.py --selfcheck` in a new process: it imports every module and
+    reads VERSION (which must be the one in the source, or Python ran stale bytecode). Raises selfcheck_failed."""
+    cmd = [sys.executable, "-B", str(Path(home) / "host" / "host.py"), "--selfcheck"]  # -B: leaves no bytecode behind
+    if expected_version:
+        cmd += ["--expect-version", expected_version]
+    try:
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=SMOKE_TIMEOUT, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    except subprocess.TimeoutExpired:
+        raise UpdateError("selfcheck_failed", "沒有在時間內完成", detail=f"timed out after {SMOKE_TIMEOUT} s") from None
+    except Exception as exc:
+        raise UpdateError("selfcheck_failed", str(exc), detail=str(exc)) from exc
+    if done.returncode != 0 or not done.stdout.strip().endswith("OK"):
+        detail = (done.stderr.strip() or done.stdout.strip() or f"exit code {done.returncode}")[-2000:]
+        raise UpdateError("selfcheck_failed", detail.splitlines()[-1][:200], detail=detail)
+
+
 def commit_update(home: Path) -> int:
-    """Swap the staged files into host/, keeping the previous versions in backup/host/."""
+    """Swap the staged files into host/, keeping the previous versions in backup/host/.
+
+    The new files are started once in a separate process before this returns; if that fails they are taken out again.
+    update-pending.json says "these files have not been seen starting yet" until the host sends `ready` with them.
+    """
     home = Path(home)
     staging, host_dir, backup = _staging(home), home / "host", _backup(home)
     names = _staged_names(staging)
@@ -234,6 +285,9 @@ def commit_update(home: Path) -> int:
         else:
             added.append(name)
     (backup / "_backup.json").write_text(json.dumps({"replaced": replaced, "added": added}), encoding="utf-8")
+    # written before the swap: a host killed half way through is undone by the next start as well
+    _write_pending(home, {"version": _source_version(staging / "version.py") or _source_version(host_dir / "version.py"),
+                          "backupDir": str(backup), "time": int(time.time()), "started": None})
     try:
         for name in names:
             os.replace(staging / name, host_dir / name)
@@ -242,11 +296,71 @@ def commit_update(home: Path) -> int:
             _restore(home)
         except Exception:
             pass
+        clear_pending(home)
         raise UpdateError("update_install_failed", f"安裝更新失敗，已還原：{exc}", rolled_back=True) from exc
-    _drop_bytecode(host_dir)
+    _drop_bytecode(host_dir)  # before the check: a cached .pyc of an old file of the same size and date would be trusted
+    try:
+        smoke_check(home, _source_version(host_dir / "version.py"))
+    except UpdateError as exc:
+        try:
+            _restore(home)
+            undone = True
+        except Exception:
+            undone = False
+        clear_pending(home)
+        _rmtree(staging)
+        raise UpdateError("selfcheck_failed",
+                          ("新版小程式啟動檢查失敗，已還原成舊版：" if undone else "新版小程式啟動檢查失敗，而且無法還原，請重新執行安裝檔：") + exc.message,
+                          rolled_back=undone, detail=exc.detail) from exc
     _rmtree(staging)
     return len(names)
 
 
 def rollback_update(home: Path) -> int:
-    return _restore(Path(home))
+    count = _restore(Path(home))
+    clear_pending(home)
+    return count
+
+
+def recover_pending_update(home: Path, now: float | None = None, log: Callable[[str], None] | None = None) -> str:
+    """Called first thing when the host starts. Returns what it found:
+
+    "none"         no update is pending
+    "first_start"  this is the first start with the committed files: it is now the trial (marker gets `started`)
+    "concurrent"   a trial started a moment ago and has not said `ready` yet; it is most likely still starting, left alone
+    "restored"     a trial never reached `ready`: the files from before the update are back and the marker is gone
+    "restore_failed"  same, but nothing could be put back (the marker is gone all the same, so this happens once)
+    """
+    log = log or (lambda message: None)
+    now = time.time() if now is None else now
+    path = _pending_path(home)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            raise ValueError("not an object")
+    except FileNotFoundError:
+        return "none"
+    except (OSError, ValueError):
+        clear_pending(home)  # unreadable: it cannot be trusted to say anything
+        log("update-pending.json was unreadable and has been removed")
+        return "none"
+    started = record.get("started")
+    if not isinstance(started, (int, float)) or isinstance(started, bool):
+        try:
+            _write_pending(home, {**record, "started": int(now)})
+        except OSError:
+            pass
+        log(f"first start with the files of update {record.get('version')}")
+        return "first_start"
+    if now - started < TRIAL_GRACE:
+        log(f"update {record.get('version')} is already starting (since {int(now - started)} s), left alone")
+        return "concurrent"
+    clear_pending(home)  # first, so that whatever happens next this is done at most once
+    log(f"update {record.get('version')} never reached ready, restoring the previous files")
+    try:
+        count = _restore(home)
+    except Exception as exc:
+        log(f"restoring the previous files failed: {exc}")
+        return "restore_failed"
+    log(f"restored the previous files ({count} changed)")
+    return "restored"

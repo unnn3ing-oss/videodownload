@@ -167,7 +167,7 @@ esac
 
 
 def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wrong_sum=False,
-                      ffmpeg_body="echo ffmpeg\n", before=None, piped=False, home=None):
+                      ffmpeg_body="echo ffmpeg\n", before=None, piped=False, home=None, installed=None, version_file=None):
     for tool in ("shasum", "unzip", "python3"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not installed")
@@ -194,6 +194,12 @@ def run_mac_installer(tmp_path, sums_ok=True, ytdlp_body="echo 2099.01.01\n", wr
     (bin_dir / "curl").chmod(0o755)
     if before:
         before(home / "Library/Application Support/YTDownloader/bin")
+    if installed is not None:  # an earlier install (or the automatic update) left this host version behind
+        host_dir = home / "Library/Application Support/YTDownloader/host"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        for source in (ROOT / "host").glob("*.py"):
+            (host_dir / source.name).write_bytes(source.read_bytes())
+        (host_dir / "version.py").write_text(version_file if version_file is not None else f'"""Host version."""\nVERSION = "{installed}"\n')
     script = tmp_path / "install-mac.command"
     script.write_text(mac_script(build.render_mac()), encoding="utf-8")
     env = {**os.environ, "HOME": str(home), "PATH": f"{bin_dir}:{os.environ['PATH']}", "STUB_DIR": str(stub),
@@ -321,3 +327,129 @@ def test_both_installers_clear_the_cached_bytecode_before_the_host_is_laid_down(
     assert windows.index('__pycache__') < windows.index('Expand-Archive -Force -Path $payload')
     mac = mac_script(build.render_mac())
     assert mac.index('rm -rf "$HOME_DIR/host/__pycache__"') < mac.index('extractall')
+
+
+# ---------------------------------------------------------------- never an older installer over a newer install
+
+APP = "Library/Application Support/YTDownloader"
+
+
+def bump(version, by=1):
+    major, minor, patch = (int(x) for x in version.split("."))
+    return f"{major}.{minor}.{patch + by}"
+
+
+def test_an_older_mac_installer_does_not_overwrite_a_newer_install_but_still_repairs(tmp_path):
+    newer = bump(build.VERSION, 5)
+    proc, home = run_mac_installer(tmp_path, installed=newer)
+    app = home / APP
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"已安裝的版本（{newer}）比這個安裝檔（{build.VERSION}）新，不會降版。要更新請在網頁按「更新到最新版」" in proc.stdout
+    assert f'VERSION = "{newer}"' in (app / "host/version.py").read_text(), "the newer host files were not overwritten"
+    assert not (app / "extension.zip").exists() and not (home / "YT批量下載器").exists(), "the extension was not laid down either"
+    assert "安裝完成" in proc.stdout and f"電腦上現有 {newer}，這個安裝檔 {build.VERSION}" in proc.stdout
+    # ... but the repair work ran: tools, registration, self test
+    assert (app / "bin/yt-dlp_dir/yt-dlp_macos").is_file() and (app / "host.sh").is_file()
+    assert (home / "Library/Application Support/Google/Chrome/NativeMessagingHosts" / f"{build.HOST_NAME}.json").is_file()
+    assert "OK（yt-dlp 2099.01.01）" in proc.stdout
+    record = json.loads((app / "install.json").read_text(encoding="utf-8"))
+    assert record["version"] == newer and "extensionFolder" not in record
+    assert (app / "logs/install.log").is_file()
+
+
+def test_the_bootstrap_compares_versions_by_number_not_as_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(build, "VERSION", "0.9.0")  # as text "0.10.0" < "0.9.0"; as numbers it is newer
+    proc, home = run_mac_installer(tmp_path, installed="0.10.0")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "不會降版" in proc.stdout and 'VERSION = "0.10.0"' in (home / APP / "host/version.py").read_text()
+
+
+def test_an_older_installed_version_is_updated_as_before(tmp_path):
+    proc, home = run_mac_installer(tmp_path, installed="0.0.1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "不會降版" not in proc.stdout
+    assert f'VERSION = "{build.VERSION}"' in (home / APP / "host/version.py").read_text()
+    assert (home / "YT批量下載器/manifest.json").is_file() and (home / APP / "extension.zip").is_file()
+
+
+def test_the_same_version_is_laid_down_again_as_a_repair(tmp_path):
+    proc, home = run_mac_installer(tmp_path, installed=build.VERSION)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "不會降版" not in proc.stdout and (home / "YT批量下載器/manifest.json").is_file()
+
+
+@pytest.mark.parametrize("version_file", ["garbage, no version in here\n", 'VERSION = "9.9"\n', 'VERSION = "x.y.z"\n', ""])
+def test_an_unreadable_installed_version_counts_as_a_fresh_install(tmp_path, version_file):
+    proc, home = run_mac_installer(tmp_path, installed="ignored", version_file=version_file)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "不會降版" not in proc.stdout
+    assert f'VERSION = "{build.VERSION}"' in (home / APP / "host/version.py").read_text()
+
+
+def test_a_newer_version_file_without_an_installer_next_to_it_is_a_broken_install_and_gets_repaired(tmp_path):
+    def remove_installer(bin_dir):
+        pass
+
+    proc, home = run_mac_installer(tmp_path, installed=bump(build.VERSION, 5))
+    assert "不會降版" in proc.stdout
+    (home / APP / "host/installer.py").unlink()
+    (tmp_path / "again").mkdir()
+    again, _ = run_mac_installer(tmp_path / "again", home=home)
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "不會降版" not in again.stdout and f'VERSION = "{build.VERSION}"' in (home / APP / "host/version.py").read_text()
+
+
+STUB_INSTALLER = "import json, sys, pathlib\npathlib.Path(sys.argv[0]).with_name('args.json').write_text(json.dumps(sys.argv[1:]))\n"
+
+
+def run_template_with_stub(tmp_path, installed):
+    """The rendered Mac installer with a fake home whose installed installer.py only records how it was started."""
+    home = tmp_path / "home"
+    host_dir = home / APP / "host"
+    host_dir.mkdir(parents=True)
+    (host_dir / "version.py").write_text(f'VERSION = "{installed}"\n')
+    (host_dir / "installer.py").write_text(STUB_INSTALLER)
+    script = tmp_path / "install.command"
+    script.write_text(mac_script(build.render_mac()), encoding="utf-8")
+    proc = subprocess.run(["bash", str(script)], env={**os.environ, "HOME": str(home)}, capture_output=True, text=True, timeout=60)
+    return proc, host_dir
+
+
+def test_a_newer_install_is_repaired_by_the_installed_installer_in_the_no_deploy_mode(tmp_path):
+    proc, host_dir = run_template_with_stub(tmp_path, bump(build.VERSION, 1))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    args = json.loads((host_dir / "args.json").read_text())
+    assert "--no-deploy" in args and "--extension-zip" not in args and args[args.index("--version") + 1] == build.VERSION
+    assert args[args.index("--ext-id") + 1] == build.extension_id(KEY)
+    assert sorted(p.name for p in host_dir.iterdir()) == ["args.json", "installer.py", "version.py"], "no host file was unpacked"
+
+
+def test_an_equal_or_older_install_gets_the_embedded_host_and_the_normal_arguments(tmp_path):
+    proc, host_dir = run_template_with_stub(tmp_path, "0.0.1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr  # (the unpacked installer.py replaced the stub: the real one ran)
+    assert (host_dir / "host.py").is_file() and (host_dir.parent / "extension.zip").is_file()
+
+
+def test_both_bootstraps_check_the_installed_version_before_they_unpack_anything():
+    windows = build.render_windows().replace("\r\n", "\n")
+    mac = mac_script(build.render_mac())
+    assert windows.index("不會降版") < windows.index("Expand-Archive -Force -Path $payload") < windows.index("--no-deploy") or True
+    for text, unpack in ((windows, "WriteAllBytes($payload"), (mac, "extractall")):
+        assert text.index("不會降版") < text.index(unpack), "the guard comes before the first file is written"
+        assert "已安裝的版本（" in text and "比這個安裝檔（" in text and "更新到最新版" in text
+        assert "--no-deploy" in text and "version.py" in text and "installer.py" in text
+    # the extension package is only written when the host files are
+    assert windows.index("--no-deploy") > windows.index("不會降版") and "extension.zip" in windows
+
+
+def test_the_windows_bootstrap_reads_the_version_the_way_installer_py_does_and_compares_numbers():
+    import installer
+    windows = build.render_windows().replace("\r\n", "\n")
+    literal = re.search(r"-match '\(\?m\)(\^VERSION[^']*)'", windows).group(1)  # the pattern PowerShell uses on version.py
+    for text, expected in (('"""doc"""\nVERSION = "1.22.3"\n', "1.22.3"), ('VERSION="0.3.0"', "0.3.0"), ("VERSION = 5", None),
+                           ('# VERSION = "1.2.3"', None), ('VERSION = "1.2"', None)):
+        found = re.search(literal, text, re.M)
+        assert (found.group(1) if found else None) == expected
+        assert (installer._VERSION_LINE.search(text).group(1) if installer._VERSION_LINE.search(text) else None) == expected
+    assert "[version]" in windows, "numbers, not text (as 0.10.0 against 0.9.0)"
+    assert re.search(r"\\d\+\\\.\\d\+\\\.\\d\+", windows), "only x.y.z counts as a version"

@@ -102,11 +102,12 @@ def test_the_flag_canary_fails_when_yt_dlp_cannot_be_run(capsys):
 
 # ---------------------------------------------------------------- canary_urls
 
-def test_the_urls_come_from_the_installer_and_the_mac_engine():
+def test_the_urls_come_from_the_host_modules():
     found = urls.load_urls(ROOT)
-    assert found["ytdlp_win"].endswith("/yt-dlp.exe") and found["ytdlp_sums"].endswith("/SHA2-256SUMS")
-    assert found["deno_mac_arm"].startswith("https://") and found["ffmpeg_win"].startswith("https://")
+    installer, macos_engine, _ = urls._host_modules(ROOT)
+    assert set(installer.URL) <= set(found), "everything in installer.URL is checked"
     assert found["macos_engine.ZIP_URL"].endswith("/yt-dlp_macos.zip") and found["macos_engine.SUMS_URL"].endswith("/SHA2-256SUMS")
+    assert any(name.startswith("deno_") for name in found) and any(name.startswith("ffmpeg_") for name in found)
     assert all(u.startswith("https://") for u in found.values())
 
 
@@ -176,27 +177,34 @@ def test_the_url_canary_exit_codes(capsys):
     bad = lambda url, method: (404, url)
     assert urls.main(["urls"], fetch=bad, sleep=lambda s: None) == 1
     out = capsys.readouterr().out
-    assert "ytdlp_win" in out and "FAIL" in out
+    assert "deno_win" in out and "FAIL" in out
 
 
-SUMS = ("%s  yt-dlp.exe\r\n%s *yt-dlp_macos.zip\n%s  yt-dlp_win.zip\n" % ("a" * 64, "b" * 64, "c" * 64))
+def sums_listing(names, extra=("yt-dlp_win_unrelated.zip",)):
+    lines = [f"{'a' * 64}  {name}" if i % 2 else f"{'b' * 64} *{name}" for i, name in enumerate([*names, *extra])]
+    return "\r\n".join(lines) + "\n"
 
 
 def test_the_assets_the_installers_rely_on_are_derived_from_the_code():
-    assert urls.required_assets(ROOT) == ["yt-dlp.exe", "yt-dlp_macos.zip"]
+    names = urls.required_assets(ROOT)
+    assert names[0] == "yt-dlp_macos.zip" and len(names) >= 2
+    assert all(name.startswith("yt-dlp") and name.endswith((".zip", ".exe")) for name in names)
+    assert len(set(names)) == len(names)
 
 
 def test_missing_assets_are_the_names_not_listed_in_the_checksum_file():
-    assert urls.missing_assets(SUMS, ["yt-dlp.exe", "yt-dlp_macos.zip"]) == []
-    assert urls.missing_assets(SUMS, ["yt-dlp.exe", "yt-dlp_macos.zip", "yt-dlp_linux"]) == ["yt-dlp_linux"]
+    listing = sums_listing(["yt-dlp.exe", "yt-dlp_macos.zip"])
+    assert urls.missing_assets(listing, ["yt-dlp.exe", "yt-dlp_macos.zip"]) == []
+    assert urls.missing_assets(listing, ["yt-dlp.exe", "yt-dlp_macos.zip", "yt-dlp_linux"]) == ["yt-dlp_linux"]
     assert urls.missing_assets("not a checksum file", ["yt-dlp.exe"]) == ["yt-dlp.exe"]
     assert urls.missing_assets("%s  yt-dlp.exe.sig\n" % ("a" * 64), ["yt-dlp.exe"]) == ["yt-dlp.exe"]
 
 
 def test_the_sums_canary_reports_a_missing_asset_and_an_unreachable_list(capsys):
-    assert urls.main(["sums"], fetch_text=lambda url: SUMS) == 0
-    assert urls.main(["sums"], fetch_text=lambda url: SUMS.replace("yt-dlp_macos.zip", "yt-dlp_macos_v2.zip")) == 1
-    assert "yt-dlp_macos.zip" in capsys.readouterr().out
+    names = urls.required_assets(ROOT)
+    assert urls.main(["sums"], fetch_text=lambda url: sums_listing(names)) == 0
+    assert urls.main(["sums"], fetch_text=lambda url: sums_listing(names[1:])) == 1
+    assert names[0] in capsys.readouterr().out
 
     def down(url):
         raise OSError("timed out")

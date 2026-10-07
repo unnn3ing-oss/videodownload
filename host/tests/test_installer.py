@@ -633,11 +633,11 @@ def test_every_run_says_which_version_is_installed_and_which_one_this_installer_
     calls, parts = fake_parts(tmp_path)
     assert setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", parts=parts) == 0
     out = capsys.readouterr().out
-    assert "已安裝 0.3.0" in out and "這個安裝檔 0.3.0" in out
+    assert "電腦上現有 0.3.0" in out and "這個安裝檔 0.3.0" in out
     calls, parts = fake_parts(tmp_path)
     setup.run_setup(tmp_path / "fresh", "darwin", EXT_ID, version="0.3.0", parts=parts)
     out = capsys.readouterr().out
-    assert "已安裝 未安裝" in out and "這個安裝檔 0.3.0" in out
+    assert "電腦上現有 無" in out and "這個安裝檔 0.3.0" in out
 
 
 def test_no_deploy_repairs_but_leaves_the_extension_folder_alone_and_keeps_its_record(tmp_path, capsys):

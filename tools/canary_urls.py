@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canary: do the addresses the installers download from still answer, and does yt-dlp still publish what we rely on?
 
-    python3 tools/canary_urls.py urls    every address in host/installer.py's URL dict (and the two in host/macos_engine.py)
+    python3 tools/canary_urls.py urls    every address the host downloads from (host/installer.py's URL dict, macos_engine, winengine)
     python3 tools/canary_urls.py sums    yt-dlp's latest SHA2-256SUMS lists the files the installers verify
     python3 tools/canary_urls.py         both
 
@@ -35,32 +35,65 @@ class Outcome(NamedTuple):
 
 
 def _host_modules(root: Path):
-    sys.path.insert(0, str(Path(root) / "host"))
+    """(installer, macos_engine, winengine or None): the host's modules that know a download address."""
+    host = str(Path(root) / "host")
+    sys.path.insert(0, host)
     try:
         import installer
         import macos_engine
+        try:
+            import winengine
+        except ImportError:  # an older host without the unpacked Windows build
+            winengine = None
     finally:
-        sys.path.remove(str(Path(root) / "host"))
-    return installer, macos_engine
+        sys.path.remove(host)
+    return installer, macos_engine, winengine
+
+
+def _windows_zip_names(winengine) -> list:
+    if winengine is None or not hasattr(winengine, "zip_name_for"):
+        return []
+    names = []
+    for machine in ("AMD64", "arm64", "x86", ""):
+        name = winengine.zip_name_for(machine)
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def load_urls(root: Path = ROOT) -> dict:
-    installer, macos_engine = _host_modules(root)
+    """Every address the host downloads from: installer.URL, every *_URL constant of macos_engine / winengine, and the
+    yt-dlp zip of each Windows chip (built from the same pieces winengine uses)."""
+    installer, macos_engine, winengine = _host_modules(root)
     found = dict(installer.URL)
-    found["macos_engine.ZIP_URL"] = macos_engine.ZIP_URL
-    found["macos_engine.SUMS_URL"] = macos_engine.SUMS_URL
+    for label, module in (("macos_engine", macos_engine), ("winengine", winengine)):
+        for attr, value in vars(module).items() if module is not None else ():
+            if attr.endswith("_URL") and isinstance(value, str) and value.startswith("https://"):
+                found[f"{label}.{attr}"] = value
+    base = getattr(winengine, "_BASE", None)
+    for name in _windows_zip_names(winengine):
+        if isinstance(base, str):
+            found[f"winengine.{name}"] = f"{base}/{name}"
     return found
 
 
+def sums_url(root: Path = ROOT) -> str:
+    installer, macos_engine, winengine = _host_modules(root)
+    return getattr(winengine, "SUMS_URL", None) or installer.URL.get("ytdlp_sums") or macos_engine.SUMS_URL
+
+
 def required_assets(root: Path = ROOT) -> list:
-    """The release files the installers check against yt-dlp's checksum list, taken from the code, not typed again here."""
-    installer, macos_engine = _host_modules(root)
-    return [urlsplit(installer.URL["ytdlp_win"]).path.rsplit("/", 1)[-1], macos_engine.ZIP_NAME]
+    """The yt-dlp release files the installers check against its checksum list, taken from the code, not typed again here."""
+    installer, macos_engine, winengine = _host_modules(root)
+    windows = _windows_zip_names(winengine)
+    if not windows and "ytdlp_win" in installer.URL:  # older host: the single file
+        windows = [urlsplit(installer.URL["ytdlp_win"]).path.rsplit("/", 1)[-1]]
+    return [macos_engine.ZIP_NAME] + windows
 
 
 def missing_assets(sums_text: str, names: list) -> list:
     """The names the host's own checksum parser cannot find in `sums_text`."""
-    _, macos_engine = _host_modules(ROOT)
+    _, macos_engine, _ = _host_modules(ROOT)
     missing = []
     for name in names:
         try:
@@ -137,7 +170,7 @@ def run_urls(root: Path, fetch: Callable, sleep: Callable) -> int:
 
 
 def run_sums(root: Path, fetch_text: Callable) -> int:
-    url = load_urls(root)["ytdlp_sums"]
+    url = sums_url(root)
     names = required_assets(root)
     try:
         text = fetch_text(url)

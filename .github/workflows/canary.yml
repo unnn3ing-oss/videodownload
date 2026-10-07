@@ -1,0 +1,52 @@
+# Canary: does the outside world still match what the installers and the host expect?
+#
+# Nightly and on demand. It does NOT block merges (it is not a required check, and it does not run on pull requests):
+# it fails when something upstream moved, which is a reason to look, not a reason to stop a release.
+#
+#   urls    every address the installers download from still answers (GitHub release assets for yt-dlp, Deno, ffmpeg).
+#   sums    yt-dlp's latest SHA2-256SUMS still lists the files the installers verify against it.
+#   flags   the newest yt-dlp still knows every command-line option the host passes to it (host/ytdlp.py).
+#
+# A failing run shows up in the Actions tab (and GitHub e-mails the person who last changed the schedule). GitHub switches
+# scheduled workflows off after 60 days without any activity in the repository; re-enable it in the Actions tab if that happens.
+
+name: canary
+
+on:
+  schedule:
+    - cron: "17 21 * * *"  # 21:17 UTC = 05:17 in Taiwan
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary
+  cancel-in-progress: true
+
+jobs:
+  addresses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Every download address answers
+        run: python3 tools/canary_urls.py urls
+      - name: yt-dlp still publishes the files the installers verify
+        if: ${{ !cancelled() }}
+        run: python3 tools/canary_urls.py sums
+
+  ytdlp-flags:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install yt-dlp
+      - name: Every yt-dlp option the host uses is in yt-dlp --help
+        run: python3 tools/canary_flags.py

@@ -1,0 +1,171 @@
+# CI for the extension + local host.
+#
+# `main` is the live update channel: the extension and the host update themselves from it, GitHub Pages and the Mac
+# one-liner serve from it. So everything below is meant to be a REQUIRED check in the branch ruleset for `main`
+# (docs/RELEASING.md, "保護 main"). The job names are the check names:
+#
+#   linux         Python unit tests (host/tests + tests) on the oldest (3.9, the Python a Mac already has) and the
+#                 newest (3.12) supported Python. Shows up as two checks: "linux (3.9)" and "linux (3.12)".
+#   node          the extension's unit tests (extension/tests/*.test.mjs), including the extension id pin.
+#   build-fresh   re-generates the installers with build.py and fails when the committed ones differ: the installers
+#                 embed the host and the extension, so a forgotten `python3 build.py` ships stale code.
+#   e2e           the six end-to-end suites in a real Chromium that loads the extension (see docs/TESTING.md).
+#   windows       Python tests on Windows, the PowerShell parse of the Windows installer, and a real-registry round
+#                 trip of the Chrome native-host registration.
+#   macos         the host's tests on macOS.
+#
+# What CI cannot prove (a real Windows or Mac computer with Chrome, antivirus, company proxies) is listed in
+# docs/TESTING.md. The external-world checks (download addresses, yt-dlp options) are in canary.yml and never block.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:  # run it by hand on any branch: Actions -> ci -> Run workflow
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python3 -m pip install -r requirements-dev.txt
+      - run: python3 -m pytest -q
+
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test extension/tests/*.test.mjs
+
+  build-fresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the installers again
+        run: python3 build.py
+      - name: The committed installers must be the ones just built
+        run: |
+          if ! git diff --exit-code --stat -- extension/installers || [ -n "$(git status --porcelain -- extension/installers)" ]; then
+            echo "::error title=Generated installers are stale::extension/installers differs from what build.py produces. Run 'python3 build.py' and commit extension/installers (the installers embed host/*.py and the extension)."
+            exit 1
+          fi
+          echo "extension/installers is current"
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Chromium turns a non-ASCII download name into "Invalid filename" unless the locale is UTF-8.
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      # A browser that cannot be launched must fail the job, not pass as "unverified".
+      E2E_STRICT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5  # the suites start the host (python3 host/host.py) like Chrome does
+        with:
+          python-version: "3.12"
+      - name: Install playwright-core (pinned in package.json) and its Chromium
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          chromium="$(node -e "import('playwright-core').then(m => console.log(m.chromium.executablePath()))")"
+          test -x "$chromium" || { echo "::error::Chromium not found at $chromium"; exit 1; }
+          echo "PW_CHROMIUM=$chromium" >> "$GITHUB_ENV"
+      # The suites load the extension in Chromium started with --headless=new, which needs no display (no xvfb).
+      - name: Run the six suites, one after the other
+        run: |
+          mkdir -p e2e-logs/shots
+          export E2E_SHOTS="$PWD/e2e-logs/shots"
+          failed=""
+          for suite in queue oldhost sidepanel web update webupdate; do
+            echo "::group::$suite"
+            code=0  # (the runner's bash stops at the first failing command: keep going and count)
+            node "extension/tests/e2e/$suite.e2e.mjs" > "e2e-logs/$suite.log" 2>&1 || code=$?
+            cat "e2e-logs/$suite.log"
+            echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              failed="$failed $suite(exit $code)"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error title=e2e suites failed::$failed"
+            exit 1
+          fi
+      - name: Keep the logs when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: e2e-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep git from converting line endings (.gitattributes decides)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Python tests
+        run: python -m pytest -q -rs host/tests tests
+      - name: The Windows installer's PowerShell must parse (not skipped)
+        run: |
+          code=0
+          python -m pytest -q -rs "tests/test_build.py::test_windows_installer_script_parses" > pwsh-parse.log 2>&1 || code=$?
+          cat pwsh-parse.log
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+          if grep -q "SKIPPED" pwsh-parse.log; then
+            echo "::error::the PowerShell parse test was skipped (is pwsh installed?)"
+            exit 1
+          fi
+      - name: Registering the native host writes the real registry key and the doctor reads it back
+        run: python tools/win_registry_smoke.py
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install -r requirements-dev.txt
+      - run: python3 -m pytest -q host/tests

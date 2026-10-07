@@ -122,3 +122,30 @@ def test_update_stage_rejects_malformed_contents(tmp_path):
         h.wait(10)
         assert events[-1]["type"] == "error" and events[-1]["code"] == "update_bad_file", bad
     assert not (home / "update" / "staging").exists()
+
+
+def test_update_commit_of_a_broken_update_replies_selfcheck_failed_and_keeps_the_old_files(tmp_path):
+    import json
+    h, events, home = new_host(tmp_path)
+    before = {p.name: p.read_bytes() for p in (home / "host").glob("*.py")}
+    staging = home / "update" / "staging"  # as if it had slipped past the check at stage time
+    staging.mkdir(parents=True)
+    (staging / "quality.py").write_bytes(b"import a_module_that_does_not_exist\n")
+    (staging / "_files.json").write_text(json.dumps(["quality.py"]), encoding="utf-8")
+    h.handle({"type": "update_commit", "reqId": 9})
+    reply = events[-1]
+    assert reply["type"] == "error" and reply["code"] == "selfcheck_failed" and reply["reqId"] == 9
+    assert reply["rolledBack"] is True and "a_module_that_does_not_exist" in reply["message"]
+    assert "Traceback" in reply["detail"]
+    assert {p.name: p.read_bytes() for p in (home / "host").glob("*.py")} == before
+    assert not (home / "update-pending.json").exists()
+    assert "selfcheck_failed" in h.log.path.read_text(encoding="utf-8")
+
+
+def test_update_applied_reply_is_unchanged(tmp_path, monkeypatch):
+    h, events, home = new_host(tmp_path)
+    monkeypatch.setattr(selfupdate, "http_get", lambda url: NEW)
+    stage_request(h)
+    h.handle({"type": "update_commit", "reqId": 2})
+    assert events[-1] == {"type": "update_applied", "count": 1, "reqId": 2}
+    assert (home / "update-pending.json").exists()

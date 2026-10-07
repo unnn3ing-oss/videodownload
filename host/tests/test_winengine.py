@@ -211,3 +211,27 @@ def test_the_command_line_installs_into_a_bin_folder(tmp_path, capsys):
     assert winengine.main(["winengine.py", "install", str(tmp_path)], install_fn=lambda b: "9.9") == 0
     assert "yt-dlp 9.9" in capsys.readouterr().out
     assert winengine.main(["winengine.py"], install_fn=lambda b: "9.9") == 2
+
+
+# ---- the host finds the unpacked engine (locate_engine is in host.py; `windows` stands in for running on Windows) ----
+
+def test_the_host_starts_the_unpacked_engine_on_windows_and_falls_back_to_the_single_file_one(tmp_path):
+    from host import locate_engine
+    (tmp_path / "bin").mkdir()
+    assert locate_engine(tmp_path, windows=True).ytdlp == tmp_path / "bin/yt-dlp_dir/yt-dlp.exe", "nothing yet: where it is expected"
+    (tmp_path / "bin/yt-dlp.exe").write_bytes(b"x")
+    assert locate_engine(tmp_path, windows=True).ytdlp == tmp_path / "bin/yt-dlp.exe"
+    (tmp_path / "bin/yt-dlp_dir").mkdir()
+    (tmp_path / "bin/yt-dlp_dir/yt-dlp.exe").write_bytes(b"x")
+    assert locate_engine(tmp_path, windows=True).ytdlp == tmp_path / "bin/yt-dlp_dir/yt-dlp.exe"
+
+
+def test_elsewhere_the_engine_is_still_bin_yt_dlp_and_the_other_tools_are_found_as_before(tmp_path):
+    from host import locate_engine
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/ffmpeg.exe").write_bytes(b"x")
+    (tmp_path / "bin/deno.exe").write_bytes(b"x")
+    mac = locate_engine(tmp_path, windows=False)
+    assert mac.ytdlp == tmp_path / "bin/yt-dlp" and mac.ffmpeg_dir is None and mac.js_runtime is None
+    win = locate_engine(tmp_path, windows=True)
+    assert win.ffmpeg_dir == tmp_path / "bin" and win.js_runtime == tmp_path / "bin/deno.exe"

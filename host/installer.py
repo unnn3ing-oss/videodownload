@@ -506,6 +506,31 @@ def open_next_steps(platform: str, folder: Path, run: Run = run_capture) -> None
         run(["cmd", "/c", "start", "", "chrome", "chrome://extensions"])
 
 
+# ---------------------------------------------------------------- never an older installer over a newer install
+
+_VERSION = re.compile(r"\d+\.\d+\.\d+")
+_VERSION_LINE = re.compile(r'^VERSION\s*=\s*"(\d+\.\d+\.\d+)"', re.M)  # (the installers' bootstraps read it the same way)
+
+
+def _version_key(text: object) -> tuple | None:
+    return tuple(int(part) for part in text.split(".")) if isinstance(text, str) and _VERSION.fullmatch(text) else None
+
+
+def is_newer(a: str | None, b: str | None) -> bool:
+    """Version a is higher than b (x.y.z, by number). Anything unreadable is not newer: it counts as a fresh install."""
+    ka, kb = _version_key(a), _version_key(b)
+    return ka is not None and kb is not None and ka > kb
+
+
+def installed_version(home: Path) -> str | None:
+    """The version of the host files in `home` (their version.py), None when there are none to speak of."""
+    try:
+        found = _VERSION_LINE.search((Path(home) / "host" / "version.py").read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return found.group(1) if found else None
+
+
 # ---------------------------------------------------------------- the whole run
 
 def _default_parts(home: Path, platform: str, package: Path | None, network: bool) -> dict:
@@ -531,28 +556,48 @@ def _default_parts(home: Path, platform: str, package: Path | None, network: boo
 
 
 def run_setup(home: Path, platform: str, ext_id: str, *, parent: Path | None = None, package: Path | None = None,
-              version: str = "", open_things: bool = True, network: bool = True, parts: dict | None = None) -> int:
+              version: str = "", open_things: bool = True, network: bool = True, no_deploy: bool = False,
+              parts: dict | None = None) -> int:
     home = Path(home)
+    start_log(home)
+    try:
+        return _run_setup(home, platform, ext_id, parent, package, version, open_things, network, no_deploy, parts)
+    finally:
+        stop_log()
+
+
+def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, package: Path | None, version: str,
+               open_things: bool, network: bool, no_deploy: bool, parts: dict | None) -> int:
     steps = {**_default_parts(home, platform, package, network), **(parts or {})}
+    installed = installed_version(home)
+    say(f"版本：電腦上現有 {installed or '無'}，這個安裝檔 {version or '未知'}")
+    if is_newer(installed, version) and not no_deploy:  # (the bootstraps already keep their old files away: this is for any other way of running it)
+        no_deploy = True
+        say(f"已安裝的版本（{installed}）比這個安裝檔（{version}）新，不會降版。要更新請在網頁按「更新到最新版」。")
+    deployed = None
     try:
         steps["tools"](home, platform)
 
         step("登錄 Chrome Native Messaging")
         manifest = steps["register"](home, platform, ext_id)
 
-        step("放好擴充功能的資料夾")
         recorded = recorded_extension_folder(home) if parent is None else None
-        if recorded is not None:
-            deployed = steps["deploy"](recorded)
+        if no_deploy:
+            step("擴充功能的資料夾維持不動")
+            say("    不更動本機小程式與擴充功能的檔案，只檢查並修復其他項目" + (f"：{recorded}" if recorded else ""))
         else:
-            chosen = parent
-            if chosen is None:
-                chosen = steps["choose"]()
+            step("放好擴充功能的資料夾")
+            if recorded is not None:
+                deployed = steps["deploy"](recorded)
+            else:
+                chosen = parent
                 if chosen is None:
-                    chosen = Path.home()
-                    say("    沒有選擇資料夾，使用預設位置：使用者資料夾")
-            deployed = steps["deploy"](chosen)
-        say(f"    {deployed.path}（{deployed.count} 個檔案）")
+                    chosen = steps["choose"]()
+                    if chosen is None:
+                        chosen = Path.home()
+                        say("    沒有選擇資料夾，使用預設位置：使用者資料夾")
+                deployed = steps["deploy"](chosen)
+            say(f"    {deployed.path}（{deployed.count} 個檔案）")
 
         step("測試本機小程式能不能被 Chrome 啟動")
         ready = steps["selftest"](home, platform)
@@ -568,6 +613,12 @@ def run_setup(home: Path, platform: str, ext_id: str, *, parent: Path | None = N
         say("\n安裝尚未完成：上面標著 ✘ 的項目需要處理。")
         say("照每一項下面的「→」建議做；解決不了就把這個視窗截圖給提供工具的同事。")
         return 1
+    if no_deploy:  # nothing was laid down: the record keeps its folder, and says which version really is installed
+        write_record(home, extension_folder=read_record(home).get("extensionFolder"), version=installed_version(home) or version)
+        say("\n安裝完成！（本機小程式與擴充功能的檔案沒有更動）")
+        say("回到 Chrome，網頁版會自動連線；沒有反應時按「啟動」。")
+        say("之後如果遇到任何問題，重新執行這個安裝檔就會自動檢查並修復。")
+        return 0
     write_record(home, extension_folder=deployed.path, version=version)  # (only now: a run that failed leaves the next one a fresh start)
     say("\n安裝完成！")
     if recorded is None and open_things:  # the first run that worked: the extension still has to be loaded
@@ -591,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", default=os.environ.get("YTDL_PLATFORM") or sys.platform, help=argparse.SUPPRESS)  # tests: pretend to be another system
     parser.add_argument("--skip-network", action="store_true", default=os.environ.get("YTDL_SKIP_NETWORK") == "1", help=argparse.SUPPRESS)
     parser.add_argument("--no-open", action="store_true", help="完成後不要自動開啟資料夾與 Chrome 的擴充功能頁")
+    parser.add_argument("--no-deploy", action="store_true", help="不更動擴充功能的資料夾（安裝檔比已安裝的版本舊時用：只檢查並修復其他項目）")
     args = parser.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -598,7 +650,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
     return run_setup(Path(args.home), args.platform, args.ext_id, parent=Path(args.parent) if args.parent else None,
                      package=Path(args.extension_zip) if args.extension_zip else None, version=args.version,
-                     open_things=not args.no_open, network=not args.skip_network)
+                     open_things=not args.no_open, network=not args.skip_network, no_deploy=args.no_deploy)
 
 
 if __name__ == "__main__":

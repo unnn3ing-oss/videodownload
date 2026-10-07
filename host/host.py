@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import importlib
 import os
 import platform
 import re
 import sys
 import threading
+import traceback
 import uuid
 from pathlib import Path
 from typing import BinaryIO, Callable
@@ -38,11 +40,12 @@ def _uses_macos_engine() -> bool:
     return sys.platform == "darwin"
 
 
-def locate_engine(home: Path) -> Engine:
-    exe = ".exe" if os.name == "nt" else ""
+def locate_engine(home: Path, windows: bool | None = None) -> Engine:
+    win = os.name == "nt" if windows is None else windows
+    exe = ".exe" if win else ""
     bin_dir = Path(home) / "bin"
     return Engine(
-        bin_dir / f"yt-dlp{exe}",
+        doctor.engine_path(home, "win32") if win else bin_dir / "yt-dlp",  # Windows: the unpacked build, else the older single file
         bin_dir if (bin_dir / f"ffmpeg{exe}").exists() else None,
         bin_dir / f"deno{exe}" if (bin_dir / f"deno{exe}").exists() else None,
     )
@@ -433,7 +436,61 @@ class Host:
         self._background(msg, work)
 
 
+def _selfcheck(args: list[str]) -> int:
+    """`host.py --selfcheck [--expect-version X]`: the smoke test an update runs on its new files, in a separate process.
+
+    Imports every module next to this file and reads VERSION, prints OK. No message loop, no log, no marker."""
+    try:
+        for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            if path.stem != "host" and selfupdate.ALLOWED_NAME.fullmatch(path.name):
+                importlib.import_module(path.stem)
+        import version
+        found = getattr(version, "VERSION", None)
+        expected = args[args.index("--expect-version") + 1] if "--expect-version" in args[:-1] else None
+        if not isinstance(found, str) or not found:
+            raise ValueError(f"version.py has no usable VERSION (found {found!r})")
+        if expected and found != expected:
+            raise ValueError(f"VERSION is {found!r} but version.py says {expected!r} (stale bytecode?)")
+    except (Exception, SystemExit):
+        traceback.print_exc()
+        return 1
+    print("OK")
+    return 0
+
+
+def _undo_bad_update(home: Path, log: Callable[[str], None]):
+    """A commit whose files never got as far as `ready` is taken back at the next start. Returns the restored host's
+    main() to run instead of this one, or None to go on as usual.
+
+    The restored modules are imported again in this same process instead of starting a new one (os.execv): on Windows
+    that does not replace the process, the launcher would see the old one end and Chrome would close the pipes, and a
+    child process cannot be handed the browser's stdin under the rule that every child gets its own."""
+    if os.environ.get("YTDL_RECOVERED"):  # restored once already in this process: never again
+        return None
+    try:
+        if selfupdate.recover_pending_update(home, log=log) != "restored":
+            return None
+        os.environ["YTDL_RECOVERED"] = "1"
+        host_dir = Path(home) / "host"
+        for path in host_dir.glob("*.py"):
+            sys.modules.pop(path.stem, None)
+        sys.path.insert(0, str(host_dir))
+        importlib.invalidate_caches()
+        return importlib.import_module("host").main
+    except Exception:
+        log.exception("could not go back to the previous files")
+        return None
+
+
 def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if "--selfcheck" in args:
+        return _selfcheck(args)
+    home = Path(os.environ.get("YTDL_HOME") or Path(__file__).resolve().parent.parent)
+    log = hostlog.HostLog(home)
+    restored_main = _undo_bad_update(home, log)  # before anything that could fail
+    if restored_main:
+        return restored_main(argv, stdin, stdout)
     if stdin is None or stdout is None:
         if os.name == "nt":
             import msvcrt
@@ -441,8 +498,6 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
             msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
         stdin = stdin or sys.stdin.buffer
         stdout = stdout or sys.stdout.buffer
-    home = Path(os.environ.get("YTDL_HOME") or Path(__file__).resolve().parent.parent)
-    log = hostlog.HostLog(home)
     log(f"host start version={VERSION} os={platform.platform()} python={sys.version.split()[0]} home={home} pid={os.getpid()}")
     lock = threading.Lock()
     host: Host | None = None
@@ -468,6 +523,7 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
         try:
             ready = host.ready_message()
             if emit(ready):
+                selfupdate.clear_pending(home)  # these files started well, an update need not be undone
                 log(f"ready sent ytdlp={ready.get('ytdlpVersion')} ffmpegOk={ready.get('ffmpegOk')} jsRuntimeOk={ready.get('jsRuntimeOk')}")
             while True:
                 try:
@@ -483,11 +539,11 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
                     log("input closed, host stops")
                     return 0
                 host.handle(msg)
-        except Exception:
-            log.exception("host crashed")
-            raise
         finally:
             host.shutdown()  # never leave yt-dlp running with nobody to report to
+    except Exception:
+        log.exception("host crashed")
+        raise
     finally:
         sys.stdout = real_stdout
 
