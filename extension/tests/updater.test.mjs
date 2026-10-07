@@ -281,6 +281,6 @@ test("runUpdate skips the folder when only host files changed", async () => {
 test("summarizeCheck keeps what the badge and panel need", () => {
   const info = { sha: COMMIT, date: "d", message: "m", hasUpdate: true, extChanged: [1, 2], hostFiles: [1] };
   assert.deepEqual(summarizeCheck(info, 123), {
-    checkedAt: 123, sha: COMMIT, date: "d", message: "m", hasUpdate: true, extChangedCount: 2,
+    checkedAt: 123, sha: COMMIT, date: "d", message: "m", hasUpdate: true, extChangedCount: 2, hostChangedCount: 0, hostChecked: false, parts: "extension",
   });
 });
