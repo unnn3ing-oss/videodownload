@@ -22,6 +22,9 @@ TEMPLATES = ROOT / "installers" / "templates"
 # Every other download address lives in host/installer.py, so it can be fixed without a new installer.
 DEPS = {
     "URL_PYTHON_WIN": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip",
+    # Its SHA-256, taken from python.org over TLS in a CI run on 2026-10-07. The installer refuses anything else, so a changed
+    # version means changing both lines (docs/RELEASING.md).
+    "SHA256_PYTHON_WIN": "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb",
 }
 _ZIP_DATE = (1980, 1, 1, 0, 0, 0)  # fixed so output is reproducible
 
@@ -39,7 +42,7 @@ def extension_id(key_b64: str) -> str:
 def host_manifest(path: str, ext_id: str) -> dict:
     return {
         "name": HOST_NAME,
-        "description": "YouTube 批量下載器本機小程式",
+        "description": "YouTube 批量下載器下載助手",
         "path": path,
         "type": "stdio",
         "allowed_origins": [f"chrome-extension://{ext_id}/"],

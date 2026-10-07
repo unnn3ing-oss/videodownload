@@ -17,12 +17,12 @@ export function extensionNotice({ detected, everDetected, updating = false }) {
 export function hostNotice({ detected, status, wasRunning, gaveUp, updating = false }) {
   if (!detected || updating || status.state === "running") return null;
   if (status.state === "forbidden") {
-    return { kind: "error", text: "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）。請重新下載安裝檔並再執行一次。" };
+    return { kind: "error", text: "Chrome 拒絕連線下載助手（擴充功能識別碼與安裝檔不符）。請重新下載安裝檔並再執行一次。" };
   }
   if (gaveUp) {
-    return { kind: "error", text: "本機小程式啟動後馬上又關閉了，自動重試幾次都失敗。請重新執行安裝檔（它會自動檢查並修復，最後列出哪一項有問題），再按設定流程最後一步的「啟動」重試。" };
+    return { kind: "error", text: "下載助手啟動後馬上又關閉了，自動重試幾次都失敗。請重新執行安裝檔（它會自動檢查並修復，最後列出哪一項有問題），再按設定流程最後一步的「啟動」重試。" };
   }
-  if (wasRunning) return { kind: "info", text: "與本機小程式的連線中斷，下載已暫停。正在嘗試重新連線…" };
+  if (wasRunning) return { kind: "info", text: "與下載助手的連線中斷，下載已暫停。正在嘗試重新連線…" };
   return null;
 }
 
@@ -60,7 +60,7 @@ export function versionNotice({ extensionVersion, pageVersion, updateAvailable =
 export function hostVersionNotice({ extensionVersion, hostVersion, updateAvailable = false }) {
   const known = (version) => Boolean(version) && versionAtLeast(version, "0");
   if (!known(extensionVersion) || !known(hostVersion) || extensionVersion === hostVersion) return null;
-  return `本機小程式是 v${hostVersion}，擴充功能是 v${extensionVersion}，兩者版本不一致，功能可能異常。請${REINSTALL_ACTION}。${updateButtonExtra(updateAvailable)}`;
+  return `下載助手是 v${hostVersion}，擴充功能是 v${extensionVersion}，兩者版本不一致，功能可能異常。請${REINSTALL_ACTION}。${updateButtonExtra(updateAvailable)}`;
 }
 
 // Once the extension is there the page keeps asking it to launch the host until it answers: the person may still

@@ -275,8 +275,8 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
     async start() {
       syncHostFlag();
-      if (!host.connected()) return fail("請先連線本機小程式");
-      if (!versionAtLeast(host.version(), MIN_HOST_VERSION)) return fail("請先更新本機小程式");
+      if (!host.connected()) return fail("請先連線下載助手");
+      if (!versionAtLeast(host.version(), MIN_HOST_VERSION)) return fail("請先更新下載助手");
       if (state.running || starting) return { ok: true };
       const items = pendingDownloads(state);
       if (!items.length) return fail("沒有可下載的影片");
@@ -337,8 +337,8 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       const item = find(uid);
       if (!item || !item.id) return fail("找不到這支影片");
       if (item.tags) return { ok: true, text: buildCopyText(item.title, item.tags), tagCount: item.tags.length };
-      if (!host.connected()) return fail("請先連線本機小程式");
-      if (!hostUsable()) return fail("請先更新本機小程式");
+      if (!host.connected()) return fail("請先連線下載助手");
+      if (!hostUsable()) return fail("請先更新下載助手");
       let event;
       try {
         event = await host.request({ type: "meta", url: item.url }, TIMEOUT.meta);

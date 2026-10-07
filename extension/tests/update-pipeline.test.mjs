@@ -151,7 +151,7 @@ test("the host's slow steps are given time to finish (its own self-check alone c
 test("when the host files were replaced and putting them back fails too, the person is told exactly that", async () => {
   const h = host({ fail: { update_ext: "磁碟已滿", update_rollback: "沒有可還原的備份" } });
   const info = await collectUpdateInfo({ check: async () => latest(), hostRequest: h.request, fetchFn: fakeFetch(FILES), version: "1.0.0", key: KEY });
-  await assert.rejects(applyUpdate({ info, hostRequest: h.request, fetchFn: fakeFetch(FILES), key: KEY }), /磁碟已滿.*本機小程式已經更新.*再按一次/s);
+  await assert.rejects(applyUpdate({ info, hostRequest: h.request, fetchFn: fakeFetch(FILES), key: KEY }), /磁碟已滿.*下載助手已經更新.*再按一次/s);
 });
 
 test("a check that could not ask the host says so (hostChecked false) and never claims the host is up to date", async () => {

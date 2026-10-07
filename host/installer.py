@@ -397,7 +397,7 @@ def register(home: Path, platform: str, ext_id: str, *, python: str | None = Non
         launcher.chmod(0o755)
         manifest = Path(manifest_path) if manifest_path else doctor.default_manifest(platform)
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    data = {"name": HOST_NAME, "description": "YouTube 批量下載器本機小程式", "path": str(launcher), "type": "stdio",
+    data = {"name": HOST_NAME, "description": "YouTube 批量下載器下載助手", "path": str(launcher), "type": "stdio",
             "allowed_origins": [f"chrome-extension://{ext_id}/"]}
     manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if platform.startswith("win"):
@@ -481,7 +481,7 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
         proc = subprocess.Popen([str(launcher)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors)
     except OSError as exc:
         errors.close()
-        raise SetupError(f"小程式的啟動檔無法執行：{exc}") from exc
+        raise SetupError(f"下載助手的啟動檔無法執行：{exc}") from exc
     result: dict = {}
 
     def read() -> None:
@@ -509,13 +509,13 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
                 except subprocess.TimeoutExpired:
                     pass
             if proc.poll() is None:
-                raise SetupError(f"小程式啟動後 {int(timeout)} 秒沒有回應")
+                raise SetupError(f"下載助手啟動後 {int(timeout)} 秒沒有回應")
             errors.seek(0)
             err = errors.read().decode("utf-8", errors="replace").strip()[-300:]
-            raise SetupError(f"小程式一啟動就結束了（結束碼 {proc.returncode}）{('：' + err) if err else ''}")
+            raise SetupError(f"下載助手一啟動就結束了（結束碼 {proc.returncode}）{('：' + err) if err else ''}")
         message = result["message"]
         if message.get("type") != "ready":
-            raise SetupError(f"小程式第一則訊息不是預期的 ready：{message}")
+            raise SetupError(f"下載助手第一則訊息不是預期的 ready：{message}")
         return message
     finally:
         try:
@@ -642,7 +642,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         recorded = recorded_extension_folder(home) if parent is None else None
         if no_deploy:
             step("擴充功能的資料夾維持不動")
-            say("    不更動本機小程式與擴充功能的檔案，只檢查並修復其他項目" + (f"：{recorded}" if recorded else ""))
+            say("    不更動下載助手與擴充功能的檔案，只檢查並修復其他項目" + (f"：{recorded}" if recorded else ""))
         else:
             step("放好擴充功能的資料夾")
             if recorded is not None:
@@ -660,7 +660,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         if not no_deploy:
             selfupdate.clear_pending(home)  # a marker left by an older update must not undo files this run just laid down
 
-        step("測試本機小程式能不能被 Chrome 啟動")
+        step("測試下載助手能不能被 Chrome 啟動")
         ready = steps["selftest"](home, platform)
         say(f"    OK（yt-dlp {ready.get('ytdlpVersion') or '?'}）")
 
@@ -676,7 +676,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         return 1
     if no_deploy:  # nothing was laid down: the record keeps its folder, and says which version really is installed
         write_record(home, extension_folder=read_record(home).get("extensionFolder"), version=installed_version(home) or version)
-        say("\n安裝完成！（本機小程式與擴充功能的檔案沒有更動）")
+        say("\n安裝完成！（下載助手與擴充功能的檔案沒有更動）")
         say("回到 Chrome，網頁版會自動連線；沒有反應時按「啟動」。")
         say("之後如果遇到任何問題，重新執行這個安裝檔就會自動檢查並修復。")
         return 0
@@ -694,7 +694,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="安裝（或修復）本機小程式與擴充功能資料夾")
+    parser = argparse.ArgumentParser(description="安裝（或修復）下載助手與擴充功能資料夾")
     parser.add_argument("--home", default=os.environ.get("YTDL_HOME") or str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--ext-id", required=True)
     parser.add_argument("--extension-zip")

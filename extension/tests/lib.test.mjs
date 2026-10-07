@@ -93,3 +93,13 @@ test("formatWait says a wait in seconds, and in minutes once it is long (the hos
   assert.equal(formatWait(NaN), "");
   assert.equal(formatWait(undefined), "");
 });
+
+test("isYouTubeUrl accepts only the listed hosts, with no credentials, odd ports or hidden extra text", async () => {
+  const { isYouTubeUrl } = await import("../lib/urls.js");
+  for (const ok of ["https://youtu.be/a", "http://m.youtube.com/@x", "https://music.youtube.com/playlist?list=1", "https://youtube.com/@x", "https://WWW.YOUTUBE.COM:443/watch?v=a", " https://youtu.be/a "]) {
+    assert.equal(isYouTubeUrl(ok), true, ok);
+  }
+  for (const bad of ["https://evil.youtube.com/x", "https://studio.youtube.com/", "https://www.youtube.com:8443/x", "https://u:p@www.youtube.com/", "https://www.youtube.com/x --exec y", "https://www.youtube.com/x\nhttps://evil.com/", "https://www.youtube.com\\@evil.com/", "https://www.youtube.com./x", `https://www.youtube.com/${"a".repeat(2100)}`, "", null]) {
+    assert.equal(isYouTubeUrl(bad), false, String(bad));
+  }
+});

@@ -55,10 +55,10 @@ try {
   // 1. Once the host runs, the page checks by itself (quietly) and offers the update.
   await web.waitForFunction(() => document.getElementById("outdir").value !== "", null, { timeout: 30000 });
   await web.waitForFunction(() => !document.getElementById("up-apply").hidden, null, { timeout: 30000 });
-  assert.match(await text("up-current"), new RegExp(`擴充功能 v${manifest.version.replaceAll(".", "\\.")} · 小程式 v`));
+  assert.match(await text("up-current"), new RegExp(`擴充功能 v${manifest.version.replaceAll(".", "\\.")} · 下載助手 v`));
   assert.match(await text("up-latest"), /v9\.9\.9（release: v9\.9\.9）/);
   assert.equal(await web.isDisabled("#up-apply"), false);
-  assert.match(await text("up-note"), /本機小程式是 v0\.2\.0，擴充功能是 v.*版本不一致/, "the page says the two versions differ");
+  assert.match(await text("up-note"), /下載助手是 v0\.2\.0，擴充功能是 v.*版本不一致/, "the page says the two versions differ");
 
   // 2. A tampered download is refused before anything local changes.
   tamper.add("extension/background.js");

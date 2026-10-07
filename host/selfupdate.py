@@ -137,10 +137,10 @@ def self_check(home: Path, python: str | None = None) -> None:
             done = subprocess.run([python or sys.executable, "-c", _CHECK_CODE, str(check)], stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=30)
         except Exception as exc:
-            raise UpdateError("update_selfcheck_failed", f"新版小程式無法檢查：{exc}") from exc
+            raise UpdateError("update_selfcheck_failed", f"新版下載助手無法檢查：{exc}") from exc
         if done.returncode != 0:
             tail = (done.stderr.strip().splitlines() or ["未知原因"])[-1]
-            raise UpdateError("update_selfcheck_failed", f"新版小程式無法載入：{tail}")
+            raise UpdateError("update_selfcheck_failed", f"新版下載助手無法載入：{tail}")
     finally:
         _rmtree(check)
 
@@ -310,7 +310,7 @@ def commit_update(home: Path) -> int:
         clear_pending(home)
         _rmtree(staging)
         raise UpdateError("selfcheck_failed",
-                          ("新版小程式啟動檢查失敗，已還原成舊版：" if undone else "新版小程式啟動檢查失敗，而且無法還原，請重新執行安裝檔：") + exc.message,
+                          ("新版下載助手啟動檢查失敗，已還原成舊版：" if undone else "新版下載助手啟動檢查失敗，而且無法還原，請重新執行安裝檔：") + exc.message,
                           rolled_back=undone, detail=exc.detail) from exc
     _rmtree(staging)
     return len(names)

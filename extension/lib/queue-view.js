@@ -161,7 +161,7 @@ export function renderQueue(list, state, now, handlers) {
 }
 
 // Shown while the connected local host is too old for this extension: downloading is off until it is updated.
-export const HOST_OUTDATED_TEXT = `本機小程式的版本太舊，現在無法下載。請${REINSTALL_ACTION}，完成後會自動重新連線。`;
+export const HOST_OUTDATED_TEXT = `下載助手的版本太舊，現在無法下載。請${REINSTALL_ACTION}，完成後會自動重新連線。`;
 
 // A live region is announced again whenever its text is rewritten, even with the same words (the list is drawn
 // on every progress push), so notes in live regions are only written when something changed.
@@ -307,7 +307,7 @@ export function copyRowText(send, uid, target) {
 export function coverResultText(result) {
   if (result.where === "folder") return "已存到影片資料夾";
   if (result.folderChanged) return "影片在原來的資料夾，封面先存到下載資料夾（存放資料夾後來改過；改回去再按一次，就會存到影片旁）";
-  return "已存到下載資料夾（連線小程式後可存到影片資料夾）";
+  return "已存到下載資料夾（連線下載助手後可存到影片資料夾）";
 }
 
 export function downloadRowCover(send, uid, target) {

@@ -29,7 +29,7 @@ test("renderVersionNote puts the version mismatch where it can be seen, and take
   const node = note();
   renderVersionNote(node, { extensionVersion: "0.2.7", hostVersion: "0.2.0", updateAvailable: false });
   assert.equal(node.hidden, false);
-  assert.match(node.textContent, /本機小程式是 v0\.2\.0，擴充功能是 v0\.2\.7/);
+  assert.match(node.textContent, /下載助手是 v0\.2\.0，擴充功能是 v0\.2\.7/);
   assert.ok(node.textContent.includes(REINSTALL_ACTION));
   renderVersionNote(node, { extensionVersion: "0.2.7", hostVersion: "0.2.0", updateAvailable: true });
   assert.match(node.textContent, /「更新到最新版」/);
@@ -83,11 +83,11 @@ test("renderAbortNote does not repeat a sentence stop that the host already put 
 
 test("coverResultText says where the cover went, and why when it is not next to the video", () => {
   assert.equal(coverResultText({ ok: true, where: "folder" }), "已存到影片資料夾");
-  assert.match(coverResultText({ ok: true, where: "downloads" }), /已存到下載資料夾（連線小程式後可存到影片資料夾）/);
+  assert.match(coverResultText({ ok: true, where: "downloads" }), /已存到下載資料夾（連線下載助手後可存到影片資料夾）/);
   const moved = coverResultText({ ok: true, where: "downloads", folderChanged: true });
   assert.match(moved, /下載資料夾/);
   assert.match(moved, /存放資料夾後來改過/);
-  assert.doesNotMatch(moved, /連線小程式/, "the program is connected: that is not why");
+  assert.doesNotMatch(moved, /連線下載助手/, "the program is connected: that is not why");
 });
 
 const row = (status, extra = {}) => ({ uid: 1, status, dupOf: null, ...extra });

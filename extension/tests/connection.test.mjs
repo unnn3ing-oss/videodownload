@@ -95,7 +95,7 @@ test("the reinstall action says what to do on each system", () => {
 test("hostVersionNotice warns when the local program and the extension are not the same version, either way round", () => {
   assert.equal(hostVersionNotice({ extensionVersion: "0.2.9", hostVersion: "0.2.9" }), null);
   const older = hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.2.0" });
-  assert.match(older, /本機小程式是 v0\.2\.0/);
+  assert.match(older, /下載助手是 v0\.2\.0/);
   assert.match(older, /擴充功能是 v0\.2\.7/);
   assert.match(hostVersionNotice({ extensionVersion: "0.2.7", hostVersion: "0.3.0" }), /不一致/);
 });

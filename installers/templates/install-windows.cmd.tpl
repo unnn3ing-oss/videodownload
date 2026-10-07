@@ -53,7 +53,7 @@ try {
         Write-Host ''
         Write-Host "已安裝的版本（${Installed}）比這個安裝檔（${Embedded}）新，不會降版。要更新請在網頁按「更新到最新版」。" -ForegroundColor Yellow
     } else {
-        Step '寫入本機小程式'
+        Step '寫入下載助手'
         $payload = Join-Path $Tmp 'host.zip'
         [IO.File]::WriteAllBytes($payload, [Convert]::FromBase64String('@@PAYLOAD_B64@@'))
         # The files in the zip all carry the same fixed date, so an old __pycache__ would pass for current: drop it.
@@ -67,6 +67,12 @@ try {
         Step '下載 Python（內嵌版）'
         $zip = Join-Path $Tmp 'python.zip'
         Invoke-WebRequest -Uri '@@URL_PYTHON_WIN@@' -OutFile $zip -UseBasicParsing
+        # Nothing is unpacked or run before it is the exact file this installer was made for.
+        $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
+        if ($actual -ne '@@SHA256_PYTHON_WIN@@') {
+            Remove-Item -Force -Path $zip -ErrorAction SilentlyContinue
+            throw "下載的 Python 校驗碼和預期不同，已丟棄、不會安裝。預期 @@SHA256_PYTHON_WIN@@，實際 $actual。可能是下載不完整或被中途改過；請確認網路（公司網路若會改寫下載內容，請洽 IT）後重新執行。"
+        }
         Expand-Archive -Force -Path $zip -DestinationPath $PyDir
     }
     # The embeddable Python ignores the script folder, so list the host folder in its ._pth file.

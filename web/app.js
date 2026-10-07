@@ -384,7 +384,7 @@ function setUpNote(text, kind = "info") {
 }
 
 const updateProgressText = ({ step, done, total }) => ({
-  download: `下載更新檔案 ${done} / ${total}`, host: "更新本機小程式…", write: "寫入擴充功能的檔案…",
+  download: `下載更新檔案 ${done} / ${total}`, host: "更新下載助手…", write: "寫入擴充功能的檔案…",
 })[step] ?? "更新中…";
 
 // The wait for the reload after an update (see lib/update-wait.js). While it runs the page says one calm thing and keeps the
@@ -422,12 +422,12 @@ function renderUpdate() {
   const connected = detected && status.state === "running";
   const version = detected ? client.version() : null;
   const hostVersion = connected ? status.ready?.hostVersion : null;
-  setText($("up-current"), version ? `擴充功能 v${version}${hostVersion ? ` · 小程式 v${hostVersion}` : ""}` : "尚未連線");
+  setText($("up-current"), version ? `擴充功能 v${version}${hostVersion ? ` · 下載助手 v${hostVersion}` : ""}` : "尚未連線");
   let latest = "尚未檢查";
   if (updateInfo) {
     if (updateInfo.hasUpdate) latest = `${updateInfo.latestVersion ? `v${updateInfo.latestVersion}` : "有新版本"}（${updateInfo.message}）`;
-    else if (versionMismatch()) latest = "檔案已是最新，但小程式與擴充功能的版本不一致";
-    else latest = updateInfo.hostChecked ? "已是最新版" : "擴充功能已是最新（小程式尚未連線，沒有比對）";
+    else if (versionMismatch()) latest = "檔案已是最新，但下載助手與擴充功能的版本不一致";
+    else latest = updateInfo.hostChecked ? "已是最新版" : "擴充功能已是最新（下載助手尚未連線，沒有比對）";
   }
   setText($("up-latest"), latest);
   $("up-check").disabled = !detected || updateBusy;
@@ -457,7 +457,7 @@ async function checkUpdate({ quiet = false, inside = false } = {}) {
     if (result?.ok) {
       updateInfo = result.info;
       if (!quiet) {
-        const none = result.info.hostChecked ? "已是最新版。" : "擴充功能已是最新；小程式還沒連線，沒有比對它。";
+        const none = result.info.hostChecked ? "已是最新版。" : "擴充功能已是最新；下載助手還沒連線，沒有比對它。";
         const mismatch = versionMismatch();
         if (!result.info.hasUpdate && mismatch) upNote = { text: mismatch, kind: "error" }; // (never "up to date" while they differ)
         else upNote = { text: result.info.hasUpdate ? updateAdvice(result.info, status.state === "running") : none, kind: result.info.hasUpdate ? "info" : "ok" };

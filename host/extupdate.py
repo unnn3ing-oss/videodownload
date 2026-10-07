@@ -86,7 +86,7 @@ def apply(home: Path, files: object, contents: dict[str, bytes], on_write: Calla
     listed = validate_files(files)
     folder = recorded_extension_folder(home)
     if folder is None:
-        raise ExtUpdateError("no_extension_folder", "小程式不知道擴充功能資料夾在哪裡（不是用安裝檔放的，或資料夾被搬動了）")
+        raise ExtUpdateError("no_extension_folder", "下載助手不知道擴充功能資料夾在哪裡（不是用安裝檔放的，或資料夾被搬動了）")
     for entry in listed:  # everything is checked before anything is touched
         data = contents.get(entry["path"])
         if data is None:
@@ -132,5 +132,5 @@ def apply(home: Path, files: object, contents: dict[str, bytes], on_write: Calla
 def rollback(home: Path) -> int:
     folder = recorded_extension_folder(Path(home))
     if folder is None:
-        raise ExtUpdateError("no_extension_folder", "小程式不知道擴充功能資料夾在哪裡")
+        raise ExtUpdateError("no_extension_folder", "下載助手不知道擴充功能資料夾在哪裡")
     return _restore(Path(home), folder)
