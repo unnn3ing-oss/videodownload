@@ -371,6 +371,14 @@ def test_a_launcher_that_died_is_reported_at_once_even_if_a_leftover_process_hol
     assert time.monotonic() - began < 10
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the launcher closes its output with a POSIX shell")
+def test_a_launcher_that_closed_its_output_but_is_still_exiting_is_reported_with_what_it_said(tmp_path):
+    # the pipe closes a moment before the process is gone (on Windows the system takes its time): that is not "no answer"
+    launcher = make_launcher(tmp_path, "exec >&-\necho 'no python here' >&2\nsleep 1\nexit 3\n", "exit 3\n")
+    with pytest.raises(SetupError, match="no python here"):
+        setup.selftest(launcher, timeout=20)
+
+
 def test_a_launcher_that_says_nothing_times_out_with_a_clear_message(tmp_path):
     launcher = make_launcher(tmp_path, "sleep 30\n", "ping -n 31 127.0.0.1 >nul\n")
     with pytest.raises(SetupError, match="沒有回應"):

@@ -457,6 +457,11 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
             break
     try:
         if "message" not in result:
+            if not reader.is_alive():  # the output closed: the process is going, give the system a moment to say so
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
             if proc.poll() is None:
                 raise SetupError(f"小程式啟動後 {int(timeout)} 秒沒有回應")
             errors.seek(0)
