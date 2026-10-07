@@ -207,7 +207,7 @@ def test_repair_leaves_a_working_engine_alone_and_reports_a_failed_reinstall(tmp
 
 def test_repair_elsewhere_only_makes_sure_the_output_folder_exists(tmp_path):
     fake = Fake()
-    done = repair(make_home(tmp_path), platform="win32", run=fake, output_dir=tmp_path / "out")
+    done = repair(make_home(tmp_path), platform="linux", run=fake, output_dir=tmp_path / "out")
     assert (tmp_path / "out").is_dir() and done and not any(c[0] == "xattr" for c in fake.calls)
 
 
@@ -284,3 +284,76 @@ def test_the_recorded_extension_folder_is_checked(tmp_path):
     (ext / "manifest.json").write_text(json.dumps({"name": EXTENSION_NAME}))
     fine = by_id(diagnose(home, **common))["extension"]
     assert fine.status == "ok" and str(ext) in fine.detail
+
+
+# ---------------------------------------------------------------- Windows: the unpacked yt-dlp, and what an antivirus does to it
+
+VIRUS = "[WinError 225] Operation did not complete successfully because the file contains a virus or potentially unwanted software"
+
+
+def win_home(tmp_path, *, onedir="echo 2099.01.01\n", legacy=None):
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    if onedir is not None:
+        script(home / "bin" / "yt-dlp_dir" / "yt-dlp.exe", onedir)
+    if legacy is not None:
+        script(home / "bin" / "yt-dlp.exe", legacy)
+    return home
+
+
+def win_engine(home, run=None):
+    return doctor._check_engine(home, "win32", run or Fake())
+
+
+def test_on_windows_the_engine_is_the_unpacked_build_and_the_check_says_where_it_is_and_what_file_it_is(tmp_path):
+    import hashlib
+    home = win_home(tmp_path)
+    check = win_engine(home)
+    exe = home / "bin" / "yt-dlp_dir" / "yt-dlp.exe"
+    assert check.status == "ok" and "2099.01.01" in check.title
+    assert str(exe) in check.detail and hashlib.sha256(exe.read_bytes()).hexdigest() in check.detail and str(exe.stat().st_size) in check.detail
+    assert doctor.engine_path(home, "win32") == exe
+
+
+def test_a_single_file_engine_still_works_but_is_called_old(tmp_path):
+    check = win_engine(win_home(tmp_path, onedir=None, legacy="echo 2099.01.01\n"))
+    assert check.status == "warn" and "舊版單檔" in check.title and "重新執行安裝檔" in check.fix
+    assert doctor._engine_state(win_home(tmp_path / "x", onedir=None, legacy="echo 1\n"), "win32", Fake())[1] == "legacy"
+
+
+def test_an_engine_that_an_antivirus_blocks_is_reported_with_the_facts_for_IT(tmp_path):
+    from install_record import fingerprint, write_engine
+    home = win_home(tmp_path, onedir=f"echo '{VIRUS}' >&2\nexit 127\n")
+    exe = home / "bin" / "yt-dlp_dir" / "yt-dlp.exe"
+    write_engine(home, {**fingerprint(exe), "sha256": "e" * 64})  # what was verified at install time
+    check, kind = doctor._engine_state(home, "win32", Fake())
+    assert kind == "blocked" and check.status == "error" and "防毒" in check.title
+    assert str(exe) in check.detail and "e" * 64 in check.detail
+    assert str(home / "bin") in check.fix and "重新執行安裝檔" in check.fix
+
+
+def test_a_missing_engine_that_was_installed_before_is_probably_quarantined(tmp_path):
+    from install_record import write_engine
+    home = win_home(tmp_path, onedir=None)
+    assert "防毒" not in win_engine(home).title
+    write_engine(home, {"path": str(home / "bin/yt-dlp_dir/yt-dlp.exe"), "sha256": "f" * 64, "size": 7})
+    check, kind = doctor._engine_state(home, "win32", Fake())
+    assert kind == "missing" and check.status == "error" and "防毒" in check.title
+    assert "f" * 64 in check.detail and str(home / "bin/yt-dlp_dir/yt-dlp.exe") in check.detail
+
+
+def test_repair_on_windows_installs_the_unpacked_engine_again_when_it_is_missing_or_broken(tmp_path):
+    seen = []
+    done = repair(win_home(tmp_path, onedir="exit 3\n"), platform="win32", run=Fake(), output_dir=tmp_path / "o",
+                  reinstall_engine=lambda bin_dir: seen.append(bin_dir) or "2101.01.01")
+    assert seen == [tmp_path / "home" / "bin"] and any("2101.01.01" in line for line in done)
+    seen.clear()
+    repair(win_home(tmp_path / "b"), platform="win32", run=Fake(), output_dir=tmp_path / "o", reinstall_engine=lambda b: seen.append(b) or "x")
+    assert seen == [], "an engine that runs is left alone"
+
+
+def test_repair_does_not_download_again_what_the_antivirus_blocks(tmp_path):
+    seen = []
+    done = repair(win_home(tmp_path, onedir=f"echo '{VIRUS}' >&2\nexit 127\n"), platform="win32", run=Fake(), output_dir=tmp_path / "o",
+                  reinstall_engine=lambda bin_dir: seen.append(bin_dir) or "x")
+    assert seen == [] and any(line.startswith("✘") and "防毒" in line for line in done)

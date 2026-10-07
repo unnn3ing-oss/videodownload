@@ -6,15 +6,16 @@ import { versionAtLeast } from "./version.js";
 export const EXTENSION_MISSING_TEXT = "還沒偵測到擴充功能。請先照設定流程的步驟 1～3 安裝並載入；完成後這裡會自動解鎖，不用重新整理。這個網頁需要 Chrome（電腦版）。";
 export const EXTENSION_LOST_TEXT = "與擴充功能的連線中斷（它可能被停用、重新載入或移除）。請到 chrome://extensions 確認它已啟用；恢復後這裡會自動解鎖，也可以重新整理本頁。";
 
-export function extensionNotice({ detected, everDetected }) {
-  if (detected) return null;
+// `updating`: an update is reloading the extension right now; the page says that itself, and "lost" would contradict it.
+export function extensionNotice({ detected, everDetected, updating = false }) {
+  if (detected || updating) return null;
   return everDetected ? EXTENSION_LOST_TEXT : EXTENSION_MISSING_TEXT;
 }
 
 // { kind, text } about the local host, or null when there is nothing to say. `wasRunning`: it was connected
 // earlier in this page session; `gaveUp`: automatic launching stopped (see createAutoConnect).
-export function hostNotice({ detected, status, wasRunning, gaveUp }) {
-  if (!detected || status.state === "running") return null;
+export function hostNotice({ detected, status, wasRunning, gaveUp, updating = false }) {
+  if (!detected || updating || status.state === "running") return null;
   if (status.state === "forbidden") {
     return { kind: "error", text: "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）。請重新下載安裝檔並再執行一次。" };
   }

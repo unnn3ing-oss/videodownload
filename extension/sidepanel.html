@@ -119,6 +119,12 @@
         <p id="doctor-summary" class="dr-summary" role="status" aria-live="polite"></p>
         <p id="doctor-fixed" class="dr-fixed" role="status" aria-live="polite"></p>
         <button id="doctor-fix" class="btn small" type="button" hidden>嘗試自動修復</button>
+        <div class="diag">
+          <button id="diag-copy" class="btn small" type="button" aria-label="複製診斷資訊，貼給維護的人">複製診斷資訊</button>
+          <p class="diag-note">內容已隱藏使用者名稱，只含版本、檢查結果與近期紀錄</p>
+          <p id="diag-copy-status" class="diag-status" role="status" aria-live="polite" hidden></p>
+          <textarea id="diag-copy-text" class="diag-text" rows="6" readonly spellcheck="false" aria-label="診斷資訊，全選後複製" hidden></textarea>
+        </div>
         <div class="row between"><span>下載引擎（yt-dlp）</span><button id="update" class="btn small" type="button" disabled>更新下載引擎</button></div>
         <div class="row between"><span>本機小程式</span><button id="redeploy" class="btn small ghost" type="button">重新下載安裝檔</button></div>
         <section class="update" aria-labelledby="update-title">

@@ -1,13 +1,14 @@
 import { classifyTabUrl } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
-import { runDoctor } from "./lib/doctor-view.js";
+import { runCopyDiagnostics, runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
 import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
+import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
 import { addPastedUrls, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
-import { applyBadge, autoCheckDue, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
+import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
 
 const $ = (id) => document.getElementById(id);
@@ -164,6 +165,9 @@ function hasUpdate() {
   return Boolean(updateInfo) && (updateInfo.extChanged.length > 0 || hostChanged.length > 0);
 }
 
+// Something differs: found by a check in this panel, or by an earlier one (the background check, or the local program was not running).
+const pendingUpdate = () => hasUpdate() || Boolean(lastSummary?.hasUpdate);
+
 function updateReason() {
   if (!hasUpdate()) return null;
   if (status.state !== "running") return "請先按「啟動」才能更新本機小程式";
@@ -199,7 +203,8 @@ function renderUpdate() {
   }
   if (updateWorking !== "check") {
     if (lastSummary?.error) note = { text: lastSummary.error, kind: "error" };
-    else if (lastSummary?.sha && !(hasUpdate() || (!updateInfo && lastSummary.hasUpdate))) note = { text: "已是最新版", kind: "ok" };
+    else if (lastSummary?.sha && !pendingUpdate()) note = { text: "已是最新版", kind: "ok" };
+    else if (!hasUpdate() && lastSummary?.hasUpdate) note = { text: `${partsText(lastSummary)}（上次檢查的結果；連上下載助手後會再比對一次）`, kind: "info" };
   }
   // never "up to date" while the local program and the extension are different versions
   const mismatch = hostVersionNotice({ extensionVersion: manifest.version, hostVersion, updateAvailable: updateOffered() });
@@ -208,7 +213,7 @@ function renderUpdate() {
   noteEl.textContent = note?.text ?? "";
   noteEl.dataset.kind = note?.kind ?? "info";
 
-  $("update-badge").hidden = !(updateInfo ? hasUpdate() : lastSummary?.hasUpdate);
+  $("update-badge").hidden = !pendingUpdate();
   $("update-check").disabled = updateWorking !== null;
 
   const reason = updateReason();
@@ -279,7 +284,7 @@ async function refreshHostChanged() {
 }
 
 async function storeSummary() {
-  lastSummary = { ...summarizeCheck(updateInfo), hasUpdate: hasUpdate() };
+  lastSummary = summarizeCheck({ ...updateInfo, hostChanged, hostChecked }, Date.now(), lastSummary);
   await saveSummary(lastSummary).catch(() => {});
   await applyBadge(lastSummary.hasUpdate).catch(() => {});
 }
@@ -384,15 +389,16 @@ async function refreshCurrentTab() {
 }
 
 // ---------- wiring ----------
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "status") {
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!isExtensionPush(sender, chrome.runtime.id)) return; // (a web page can send anything through its content script)
+  if (msg?.type === "status") {
     status = { ...status, ...msg };
     render();
     if (status.state === "running") onHostRunning();
-  } else if (msg.type === "queue_state") {
+  } else if (msg?.type === "queue_state") {
     queue = msg.state;
     render();
-  } else if (msg.type === "host_event") {
+  } else if (msg?.type === "host_event") {
     const event = msg.event;
     if (event.reqId !== undefined && waiters.has(event.reqId)) {
       waiters.get(event.reqId)(event);
@@ -430,6 +436,7 @@ for (const [id, key] of [["cooldown", "cooldownSec"], ["limit", "limit"]]) {
 const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
 $("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));
 $("doctor-fix").addEventListener("click", () => runDoctor(send, doctorUi(), true));
+$("diag-copy").addEventListener("click", () => runCopyDiagnostics(send, { button: $("diag-copy"), status: $("diag-copy-status"), fallback: $("diag-copy-text") }));
 $("save-outdir").addEventListener("click", async () => {
   const result = await send({ type: "set_output_dir", path: $("outdir").value });
   note(result?.ok ? `已改為：${result.outputDir}` : result?.error ?? "無法使用這個資料夾", result?.ok ? "ok" : "error");

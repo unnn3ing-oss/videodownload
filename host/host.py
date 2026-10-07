@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import platform
 import re
 import sys
 import threading
@@ -11,7 +12,9 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Callable
 
+import diagnostics
 import extupdate
+import hostlog
 import selfupdate
 from install_record import recorded_extension_folder
 from config import ConfigStore
@@ -26,7 +29,7 @@ import macos_engine
 from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
-           "update_check", "update_stage", "update_commit", "update_rollback", "update_ext", "update_ext_rollback", "save_cover", "meta", "enqueue", "remove", "doctor"}
+           "update_check", "update_stage", "update_commit", "update_rollback", "update_ext", "update_ext_rollback", "save_cover", "meta", "enqueue", "remove", "doctor", "diagnostics"}
 MAX_LIMIT = 1000
 MAX_COOLDOWN = 300
 
@@ -46,12 +49,13 @@ def locate_engine(home: Path) -> Engine:
 
 
 class Host:
-    def __init__(self, home: Path, emit: Callable[[dict], None]):
+    def __init__(self, home: Path, emit: Callable[[dict], None], log: Callable[[str], None] | None = None):
         self.home = Path(home)
         self._emit = emit
+        self.log = log or hostlog.HostLog(self.home)
         self.engine = locate_engine(self.home)
         self.config = ConfigStore(self.home / "config.json")
-        self.runner = JobRunner(self.engine, emit)
+        self.runner = JobRunner(self.engine, emit, log=self.log)
         self._threads: list[threading.Thread] = []
 
     # -- helpers ---------------------------------------------------------
@@ -61,6 +65,7 @@ class Host:
         self._emit(payload)
 
     def _error(self, msg: dict, code: str, message: str) -> None:
+        self.log(f"error reply code={code} reqId={msg.get('reqId')} message={message}")
         self._reply(msg, {"type": "error", "code": code, "message": message})
 
     def _background(self, msg: dict, fn: Callable[[], None]) -> None:
@@ -68,6 +73,7 @@ class Host:
             try:
                 fn()
             except Exception as exc:  # a thread that dies silently leaves the extension waiting for its answer
+                self.log.exception(f"background handler failed ({msg.get('type')})")
                 self._error(msg, "internal", f"內部錯誤：{exc}")
 
         thread = threading.Thread(target=guarded, daemon=True)
@@ -99,14 +105,24 @@ class Host:
         self.runner.join(5)
 
     # -- dispatch --------------------------------------------------------
+    def _note_message(self, msg: dict) -> None:
+        """One log line per message: the type and reqId, never the payload (cover data, file contents)."""
+        extra = ""
+        urls = msg.get("urls") if isinstance(msg.get("urls"), list) else [msg.get("url")] if "url" in msg else []
+        if urls:
+            extra = f" urls={len(urls)} first={hostlog.clip(urls[0], 120)}"
+        self.log(f"msg {hostlog.clip(msg.get('type'), 40)} reqId={hostlog.clip(msg.get('reqId'), 40)}{extra}")
+
     def handle(self, msg: dict) -> None:
         kind = msg.get("type")
+        self._note_message(msg)
         if kind not in HANDLED:
             self._error(msg, "unknown_type", f"未知的訊息類型：{kind}")
             return
         try:
             getattr(self, f"_on_{kind}")(msg)
         except Exception as exc:  # never let one bad request end the host
+            self.log.exception(f"handler failed ({kind})")
             self._error(msg, "internal", f"內部錯誤：{exc}")
 
     def _on_ping(self, msg: dict) -> None:
@@ -140,11 +156,12 @@ class Host:
 
         def work() -> None:
             try:
-                refs = resolve(self.engine, urls, limit)
+                refs = resolve(self.engine, urls, limit, log=self.log)
             except ResolveError as exc:
                 self._error(msg, exc.code, exc.message)
                 return
             except Exception as exc:
+                self.log.exception("resolve failed")
                 self._error(msg, "internal", f"無法執行下載引擎：{exc}")
                 return
             self._reply(msg, {"type": "resolved", "items": [
@@ -163,11 +180,12 @@ class Host:
 
         def work() -> None:
             try:
-                meta = fetch_meta(self.engine, url)
+                meta = fetch_meta(self.engine, url, log=self.log)
             except ResolveError as exc:
                 self._error(msg, exc.code, exc.message)
                 return
             except Exception as exc:
+                self.log.exception("meta failed")
                 self._error(msg, "internal", f"無法執行下載引擎：{exc}")
                 return
             self._reply(msg, {"type": "meta", **meta})
@@ -246,9 +264,13 @@ class Host:
 
     # -- self-update of the host's own files (the extension coordinates it) -------------------
     def _update_error(self, msg: dict, exc: selfupdate.UpdateError) -> None:
+        self.log(f"update error code={exc.code} rolledBack={exc.rolled_back} message={exc.message}"
+                 + (f"\n{hostlog.tail_lines(exc.detail)}" if exc.detail else ""))
         payload = {"type": "error", "code": exc.code, "message": exc.message}
         if exc.rolled_back:
             payload["rolledBack"] = True
+        if exc.detail:
+            payload["detail"] = exc.detail
         self._reply(msg, payload)
 
     def _busy(self, msg: dict) -> bool:
@@ -264,6 +286,7 @@ class Host:
             self._update_error(msg, exc)
             return
         changed = selfupdate.changed_files(self.home / "host", files)
+        self.log(f"update_check: {len(changed)} of {len(files)} files differ")
         folder = recorded_extension_folder(self.home)
         self._reply(msg, {"type": "update_status", "changed": changed, "total": len(files),
                           "extensionFolder": str(folder) if folder else None})
@@ -285,8 +308,10 @@ class Host:
                 self._update_error(msg, exc)
                 return
             except Exception as exc:
+                self.log.exception("update_stage failed")
                 self._error(msg, "internal", f"更新失敗：{exc}")
                 return
+            self.log(f"update_stage ok: {count} files staged from {hostlog.clip(commit, 12)}")
             self._reply(msg, {"type": "update_staged", "count": count})
 
         self._background(msg, work)
@@ -299,6 +324,7 @@ class Host:
         except selfupdate.UpdateError as exc:
             self._update_error(msg, exc)
             return
+        self.log(f"update_commit ok: {count} files in place, smoke check passed")
         self._reply(msg, {"type": "update_applied", "count": count})
 
     def _on_update_rollback(self, msg: dict) -> None:
@@ -307,6 +333,7 @@ class Host:
         except selfupdate.UpdateError as exc:
             self._update_error(msg, exc)
             return
+        self.log("update_rollback ok")
         self._reply(msg, {"type": "update_rolled_back"})
 
     def _on_update_ext(self, msg: dict) -> None:
@@ -336,6 +363,7 @@ class Host:
                 self._reply(msg, payload)
                 return
             except Exception as exc:  # (a thread that dies silently leaves the extension waiting for its answer)
+                self.log.exception("update_ext failed")
                 self._error(msg, "internal", f"更新擴充功能失敗：{exc}")
                 return
             folder = recorded_extension_folder(self.home)
@@ -360,7 +388,21 @@ class Host:
             output = self.config.output_dir
             fixed = doctor.repair(self.home, output_dir=output) if fix else []
             checks = doctor.diagnose(self.home, ext_id=ext_id, output_dir=output)
+            self.log(f"doctor fix={fix}: {len(checks)} checks, errors={','.join(c.id for c in checks if c.status == 'error')}"
+                     f" warnings={','.join(c.id for c in checks if c.status == 'warn')} fixed={len(fixed)}")
             self._reply(msg, {"type": "doctor", "checks": [c.to_dict() for c in checks], "fixed": fixed})
+
+        self._background(msg, work)
+
+    def _on_diagnostics(self, msg: dict) -> None:
+        ext = msg.get("extensionId")
+        ext_id = ext if isinstance(ext, str) and re.fullmatch(r"[a-p]{32}", ext) else None
+
+        def work() -> None:
+            text = diagnostics.build_report(
+                self.home, ready=self.ready_message, last_job=self.runner.last_job,
+                diagnose=lambda: doctor.diagnose(self.home, ext_id=ext_id, output_dir=self.config.output_dir))
+            self._reply(msg, {"type": "diagnostics", "text": text})
 
         self._background(msg, work)
 
@@ -379,9 +421,11 @@ class Host:
                 else:
                     code, out, err = run_capture([str(self.engine.ytdlp), "-U"])
                     if code != 0:
+                        self.log(f"update_engine failed exit={code}\n{hostlog.tail_lines(err or out)}")
                         self._error(msg, "update_failed", f"更新失敗：{(err or out).strip()[-200:]}")
                         return
             except Exception as exc:
+                self.log.exception("update_engine failed")
                 self._error(msg, "update_failed", f"更新失敗：{exc}")
                 return
             self._reply(msg, {"type": "engine_updated", "ytdlpVersion": self._version()})
@@ -398,10 +442,12 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
         stdin = stdin or sys.stdin.buffer
         stdout = stdout or sys.stdout.buffer
     home = Path(os.environ.get("YTDL_HOME") or Path(__file__).resolve().parent.parent)
+    log = hostlog.HostLog(home)
+    log(f"host start version={VERSION} os={platform.platform()} python={sys.version.split()[0]} home={home} pid={os.getpid()}")
     lock = threading.Lock()
     host: Host | None = None
 
-    def emit(message: dict) -> None:
+    def emit(message: dict) -> bool:
         with lock:
             try:
                 try:
@@ -410,25 +456,36 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
                     write_message(stdout, {"type": "error", "code": "too_large",
                                            "message": "回應太大，無法傳送"})
             except (OSError, ValueError):  # nobody is listening any more
+                log(f"could not send {message.get('type')}: nobody is listening any more")
                 if host:
                     host.runner.cancel()
+                return False
+            return True
 
     real_stdout, sys.stdout = sys.stdout, sys.stderr  # stray prints must not hit the protocol stream
     try:
-        host = Host(home, emit)
+        host = Host(home, emit, log)
         try:
-            emit(host.ready_message())
+            ready = host.ready_message()
+            if emit(ready):
+                log(f"ready sent ytdlp={ready.get('ytdlpVersion')} ffmpegOk={ready.get('ffmpegOk')} jsRuntimeOk={ready.get('jsRuntimeOk')}")
             while True:
                 try:
                     msg = read_message(stdin)
                 except BadMessage as exc:
+                    log(f"bad message: {exc}")
                     emit({"type": "error", "code": "bad_json", "message": str(exc)})
                     continue
-                except (ProtocolError, OSError, ValueError):  # broken framing, or the pipe itself is gone
+                except (ProtocolError, OSError, ValueError) as exc:  # broken framing, or the pipe itself is gone
+                    log(f"input ended with an error: {type(exc).__name__}: {exc}")
                     return 1
                 if msg is None:
+                    log("input closed, host stops")
                     return 0
                 host.handle(msg)
+        except Exception:
+            log.exception("host crashed")
+            raise
         finally:
             host.shutdown()  # never leave yt-dlp running with nobody to report to
     finally:

@@ -204,7 +204,7 @@ def test_subprocess_end_to_end(tmp_path):
 
 
 def test_resolve_worker_exception_replies_error(tmp_path, monkeypatch):
-    def boom(engine, urls, limit):
+    def boom(engine, urls, limit, log=None):
         raise OSError("blocked by antivirus")
 
     monkeypatch.setattr(host_mod, "resolve", boom)
@@ -375,7 +375,7 @@ class BrokenOut(io.BytesIO):
 
 def test_too_large_reply_to_a_broken_pipe_does_not_kill_the_worker_thread(tmp_path, monkeypatch):
     refs = [VideoRef(f"v{i}", "題" * 100, URL, None) for i in range(12000)]  # one reply far over Chrome's 1 MB
-    monkeypatch.setattr(host_mod, "resolve", lambda engine, urls, limit: refs)
+    monkeypatch.setattr(host_mod, "resolve", lambda engine, urls, limit, log=None: refs)
     monkeypatch.setenv("YTDL_HOME", str(make_home(tmp_path)))
     died = []
     monkeypatch.setattr(threading, "excepthook", lambda args: died.append(args.exc_value))
@@ -395,9 +395,9 @@ def _boom(*args, **kwargs):
     (lambda mp: mp.setattr(host_mod.doctor, "diagnose", _boom), {"type": "doctor"}),
     (lambda mp: (mp.setattr(host_mod, "_uses_macos_engine", lambda: False), mp.setattr(Host, "_version", _boom)),
      {"type": "update_engine"}),
-    (lambda mp: mp.setattr(host_mod, "resolve", lambda engine, urls, limit: [object()]),
+    (lambda mp: mp.setattr(host_mod, "resolve", lambda engine, urls, limit, log=None: [object()]),
      {"type": "resolve", "urls": [URL]}),
-    (lambda mp: mp.setattr(host_mod, "fetch_meta", lambda engine, url: 5), {"type": "meta", "url": URL}),
+    (lambda mp: mp.setattr(host_mod, "fetch_meta", lambda engine, url, log=None: 5), {"type": "meta", "url": URL}),
 ])
 def test_background_handler_that_raises_still_answers_with_an_internal_error(tmp_path, monkeypatch, setup, message):
     setup(monkeypatch)

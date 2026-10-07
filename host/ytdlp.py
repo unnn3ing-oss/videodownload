@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
+from hostlog import clip, tail_lines
 from quality import format_selector, format_sort
 
 PROGRESS_PREFIX = "[ytdl-progress]"
@@ -26,7 +27,7 @@ class Engine:
     js_runtime: Path | None = None
 
     def base_args(self) -> list[str]:
-        args = [str(self.ytdlp), "--ignore-config", "--no-warnings", "--color", "no_color"]
+        args = [str(self.ytdlp), "--ignore-config", "--color", "no_color"]
         if self.ffmpeg_dir:
             args += ["--ffmpeg-location", str(self.ffmpeg_dir)]
         if self.js_runtime:
@@ -154,16 +155,27 @@ _ERRORS = [  # order matters: first match wins
 ]
 
 
+DENO_MISSING = ("deno_missing", "找不到 Deno（解開 YouTube 驗證需要），請重新執行安裝檔，它會自動補齊")
+
+
 def classify_error(stderr: str) -> tuple[str, str]:
     lines = [ln for ln in stderr.strip().splitlines() if ln.strip()]
     errors = [ln for ln in lines if ln.lstrip().startswith("ERROR:")]
-    relevant = errors or lines  # warnings must not decide the class when yt-dlp named an error
+    # warnings must not decide the class (or end up in the message) when yt-dlp named an error or printed anything else
+    relevant = errors or [ln for ln in lines if not ln.lstrip().startswith("WARNING:")] or lines
     lowered = "\n".join(relevant).lower()
+    result = None
     for code, needles, message in _ERRORS:
         if any(n in lowered for n in needles):
-            return code, message
-    last = relevant[-1] if relevant else ""
-    return "unknown", f"下載失敗（未知原因）：{last[:200]}"
+            result = code, message
+            break
+    if result is None:
+        last = relevant[-1] if relevant else ""
+        result = "unknown", f"下載失敗（未知原因）：{last[:200]}"
+    # yt-dlp reports a missing JavaScript runtime only as a WARNING, and the failure it causes looks like an old engine
+    if result[0] in ("engine_outdated", "unknown") and "no supported javascript runtime" in stderr.lower():
+        return DENO_MISSING
+    return result
 
 
 _CHANNEL_ROOT = re.compile(r"/(@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)")
@@ -204,7 +216,8 @@ def _is_single_video(url: str) -> bool:
 
 
 def resolve(engine: Engine, urls: list[str], limit: int | None = None,
-            run: Callable[[list[str]], tuple[int, str, str]] = run_capture) -> list[VideoRef]:
+            run: Callable[[list[str]], tuple[int, str, str]] = run_capture,
+            log: Callable[[str], None] | None = None) -> list[VideoRef]:
     refs: list[VideoRef] = []
     failed: list[str] = []
     first_error: ResolveError | None = None
@@ -227,8 +240,13 @@ def resolve(engine: Engine, urls: list[str], limit: int | None = None,
                 entries.append(entry)
         if code != 0 and not entries:
             failed.append(url)
-            first_error = first_error or ResolveError(*classify_error(err))
+            error = ResolveError(*classify_error(err))
+            first_error = first_error or error
+            if log:
+                log(f"resolve failed url={clip(url, 120)} exit={code} code={error.code}\n{tail_lines(err)}")
             continue
+        if log and err.strip():  # yt-dlp's warnings (a missing JavaScript runtime, ...) are only ever shown here
+            log(f"resolve warnings url={clip(url, 120)}\n{tail_lines(err)}")
         for entry in entries:
             vid = entry.get("id")
             if not vid or vid in seen:
@@ -248,12 +266,18 @@ MAX_DESCRIPTION = 8000
 
 
 def fetch_meta(engine: Engine, url: str,
-               run: Callable[[list[str]], tuple[int, str, str]] = run_capture) -> dict:
+               run: Callable[[list[str]], tuple[int, str, str]] = run_capture,
+               log: Callable[[str], None] | None = None) -> dict:
     """Full metadata of one video (the description is not part of the flat playlist listing)."""
     cmd = engine.base_args() + ["--skip-download", "--no-playlist", "--dump-json", "--", url]
     code, out, err = run(cmd)
     if code != 0:
-        raise ResolveError(*classify_error(err))
+        error = ResolveError(*classify_error(err))
+        if log:
+            log(f"meta failed url={clip(url, 120)} exit={code} code={error.code}\n{tail_lines(err)}")
+        raise error
+    if log and err.strip():
+        log(f"meta warnings url={clip(url, 120)}\n{tail_lines(err)}")
     try:
         info = json.loads(out.strip().splitlines()[-1])
     except (ValueError, IndexError):

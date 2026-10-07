@@ -132,3 +132,12 @@ test("updateAdvice tells where the update can be applied, naming the panel's but
   assert.doesNotMatch(unknown, /插件|本機小程式/, "the agreed words: 擴充功能 and 下載助手");
   assert.equal(PANEL_UPDATE_BUTTON.apply, "更新到最新版");
 });
+
+test("while an update reloads the extension, neither the lost extension nor the lost host is announced", () => {
+  const stopped = { state: "stopped", ready: null, detail: null };
+  assert.equal(extensionNotice({ detected: false, everDetected: true, updating: true }), null);
+  assert.equal(extensionNotice({ detected: false, everDetected: false, updating: true }), null);
+  assert.equal(hostNotice({ detected: true, status: stopped, wasRunning: true, gaveUp: false, updating: true }), null);
+  assert.equal(hostNotice({ detected: true, status: stopped, wasRunning: false, gaveUp: true, updating: true }), null);
+  assert.match(extensionNotice({ detected: false, everDetected: true, updating: false }), /連線中斷/, "and they return afterwards");
+});

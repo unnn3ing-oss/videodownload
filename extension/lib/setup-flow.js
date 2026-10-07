@@ -2,6 +2,7 @@
 // person when it does not. The page only draws what these return. See the setup-flow tests.
 import { UPDATE_REPO } from "./update-config.js";
 import { REINSTALL_ACTION, hostVersionNotice, versionNotice } from "./connection.js";
+import { UPDATING_TEXT } from "./update-wait.js";
 
 const SAFE = /^[A-Za-z0-9._-]+$/;
 
@@ -100,7 +101,9 @@ function partItems(ready) {
 // What the person sees when it does not work: every part, green or not, with the way forward. `doctor` is the host's own
 // environment report (see host/doctor.py), used instead of the quick look at the host's ready message when there is one.
 // `updateAvailable`: the 「更新到最新版」 button on the page can be pressed right now (an update was found and can be applied).
-export function selfCheckItems({ detected, everDetected, extensionVersion, pageVersion, status, hostOutdated, gaveUp, doctor, updateAvailable = false }) {
+// `updating`: an update is reloading the extension, which is gone for a moment: that is not a problem to report.
+export function selfCheckItems({ detected, everDetected, extensionVersion, pageVersion, status, hostOutdated, gaveUp, doctor, updateAvailable = false, updating = false }) {
+  if (!detected && updating) return [item("extension", "warn", UPDATING_TEXT, "", "完成後這裡會自動恢復")];
   if (!detected) {
     return [everDetected
       ? item("extension", "error", "與擴充功能的連線中斷", "", "到 chrome://extensions 確認它已啟用；恢復後這裡會自動連上，也可以重新整理本頁")
@@ -130,8 +133,9 @@ export const SETTLE_MS = { extension: 3500, host: 8000 }; // time to find the ex
 
 // "setup" (the step by step window), "check" (the self-check) or "hidden". `unhealthyMs`: how long it has not been working
 // (since the page loaded, or since it stopped working), so a short hiccup never pops a window up.
-export function decideView({ firstVisit, deployed, detected, unhealthyMs, dismissed = false }) {
-  if (deployed || dismissed) return "hidden";
+// `updating`: an update is reloading the extension; the window stays shut for that time.
+export function decideView({ firstVisit, deployed, detected, unhealthyMs, dismissed = false, updating = false }) {
+  if (deployed || dismissed || updating) return "hidden";
   if (firstVisit) return unhealthyMs >= FIRST_SHOW_DELAY_MS ? "setup" : "hidden";
   return unhealthyMs >= (detected ? SETTLE_MS.host : SETTLE_MS.extension) ? "check" : "hidden";
 }

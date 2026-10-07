@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import platform as platform_module
+import re
 import shutil
 import struct
 import subprocess
@@ -22,21 +23,22 @@ import threading
 import urllib.request
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 import doctor
 import macos_engine
-from install_record import EXTENSION_NAME, is_extension as _is_extension, read_record, recorded_extension_folder, write_record
+import winengine
+from install_record import (EXTENSION_NAME, fingerprint, is_extension as _is_extension, read_engine, read_record,
+                            recorded_extension_folder, write_engine, write_record)
 from ytdlp import run_capture
 
 HOST_NAME = doctor.HOST_NAME
 EXTENSION_FOLDER = "YT批量下載器"  # must equal FOLDER_NAME in extension/lib/setup-flow.js (a test enforces it)
 
 _GH = "https://github.com"
-URL = {
-    "ytdlp_win": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-    "ytdlp_sums": f"{_GH}/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+URL = {  # (yt-dlp's own addresses are in winengine.py and macos_engine.py, next to the code that unpacks it)
     "deno_win": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip",
     "deno_mac_arm": f"{_GH}/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip",
     "deno_mac_x64": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip",
@@ -53,8 +55,72 @@ class SetupError(Exception):
     """The message is shown to the person as it is."""
 
 
+LOG_NAME = "install.log"
+LOG_MAX_BYTES = 256 * 1024
+LOG_KEEP = 3  # install.log, install.log.1, install.log.2
+_LOG: dict = {"path": None, "home": "", "user": ""}
+
+
+def redact(text: str, user_home: str, user_name: str) -> str:
+    """What is written to the log carries neither the person's home folder nor their user name."""
+    if user_home:
+        for variant in sorted({user_home, user_home.replace("\\", "/"), user_home.replace("/", "\\")}, key=len, reverse=True):
+            text = re.sub(re.escape(variant), "<user>", text, flags=re.I)
+    if user_name and len(user_name) >= 3:  # (a very short name would blank out ordinary words)
+        pattern = re.compile(r"(?<!\w)" + re.escape(user_name) + r"(?!\w)", re.I)
+        text = "<user>".join(pattern.sub("<user>", piece) for piece in text.split("<user>"))
+    return text
+
+
+def _rotate(path: Path, keep: int) -> None:
+    oldest = path.with_name(f"{path.name}.{keep - 1}")
+    oldest.unlink(missing_ok=True)
+    for number in range(keep - 2, 0, -1):
+        older = path.with_name(f"{path.name}.{number}")
+        if older.exists():
+            os.replace(older, path.with_name(f"{path.name}.{number + 1}"))
+    os.replace(path, path.with_name(f"{path.name}.1"))
+
+
+def start_log(home: Path, *, user_home: str | None = None, user_name: str | None = None, max_bytes: int = LOG_MAX_BYTES) -> None:
+    """From now on what is said is also appended to <home>/logs/install.log. Never raises."""
+    try:
+        path = Path(home) / "logs" / LOG_NAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size >= max_bytes:
+            _rotate(path, LOG_KEEP)
+        if user_name is None:
+            import getpass
+            try:
+                user_name = getpass.getuser()
+            except Exception:
+                user_name = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+        _LOG.update(path=path, home=str(Path.home()) if user_home is None else user_home, user=user_name)
+    except Exception:
+        _LOG["path"] = None
+
+
+def stop_log() -> None:
+    _LOG["path"] = None
+
+
+def _log(text: str) -> None:
+    path = _LOG["path"]
+    if path is None:
+        return
+    try:
+        lines = [line for line in redact(text, _LOG["home"], _LOG["user"]).splitlines() if line.strip()]
+        if lines:
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write("".join(f"{stamp} {line}\n" for line in lines))
+    except Exception:
+        pass  # a log that cannot be written is never a reason to stop
+
+
 def say(text: str = "") -> None:
     print(text, flush=True)
+    _log(text)
 
 
 def step(text: str) -> None:
@@ -133,22 +199,6 @@ def _extract_member(zip_path: Path, wanted: str, dest: Path) -> None:
     dest.chmod(0o755)
 
 
-def _verified_ytdlp_exe(bin_dir: Path, fetch_file_: Callable, fetch_text_: Callable) -> None:
-    target = bin_dir / "yt-dlp.exe"
-    part = bin_dir / "yt-dlp.exe.part"
-    fetch_file_(URL["ytdlp_win"], part)
-    try:
-        expected = macos_engine.checksum_for(fetch_text_(URL["ytdlp_sums"]), "yt-dlp.exe")
-        if hashlib.sha256(part.read_bytes()).hexdigest() != expected:
-            raise SetupError("yt-dlp.exe 校驗碼不符，檔案可能損毀，請重新執行")
-    except macos_engine.EngineInstallError as exc:
-        raise SetupError(str(exc)) from exc
-    except BaseException:
-        part.unlink(missing_ok=True)
-        raise
-    os.replace(part, target)
-
-
 def _extract_gz(gz_path: Path, dest: Path) -> None:
     tmp = dest.with_name(dest.name + ".part")
     try:
@@ -169,9 +219,19 @@ def _must_run(path: Path, arg: str, label: str, run: Run, hint: str = "") -> Non
         raise SetupError(f"{label} 已下載，但無法執行（結束碼 {code}）{('：' + detail) if detail else ''}。{hint}".rstrip())
 
 
+def _remember_engine(home: Path, path: Path) -> None:
+    """Note the verified yt-dlp.exe's SHA-256 and size (for IT to allow-list it, and to tell later that it went missing)."""
+    try:
+        facts, old = fingerprint(path), read_engine(home)
+        write_engine(home, {**old, **facts} if old.get("sha256") == facts["sha256"] else facts)
+    except OSError:
+        pass
+
+
 def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_file: Callable = fetch_file,
                  fetch_text: Callable = fetch_text, machine: str | None = None,
-                 install_engine: Callable[[Path], str] = macos_engine.install) -> list[str]:
+                 install_engine: Callable[[Path], str] = macos_engine.install,
+                 install_win_engine: Callable[..., str] = winengine.install) -> list[str]:
     """yt-dlp, Deno and ffmpeg: each one is judged by whether it runs, and only what does not is (re)installed.
 
     Every part says what it is for and what it did, also when there was nothing to do.
@@ -185,10 +245,14 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
     mac = platform == "darwin"
     chip = machine or platform_module.machine()
     try:
-        engine = bin_dir / _exe("yt-dlp", platform)
         step("下載引擎 yt-dlp（真正下載影片的程式）")
-        if doctor._check_engine(home, platform, run).status != "error":
+        check, kind = doctor._engine_state(home, platform, run)
+        if kind == "ok":
             say("    已可使用，略過")
+            if win:
+                _remember_engine(home, doctor.engine_path(home, platform))
+        elif kind == "blocked":  # downloading it again would only get it blocked again
+            raise SetupError(f"{check.title}。\n    {check.detail}\n    {check.fix}\n    （重新下載也會被攔截，所以這次不重新下載。）")
         else:
             if mac:  # the unpacked build (see macos_engine): the single file one is blocked by macOS when Chrome starts it
                 say("    下載官方的免解壓縮版並核對校驗碼")
@@ -196,12 +260,16 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
                     say(f"    yt-dlp {install_engine(bin_dir)}")
                 except macos_engine.EngineInstallError as exc:
                     raise SetupError(f"yt-dlp 安裝失敗：{exc}") from exc
-            elif win:
-                engine.unlink(missing_ok=True)
-                say("    下載官方的 yt-dlp.exe 並核對校驗碼")
-                _verified_ytdlp_exe(bin_dir, fetch_file, fetch_text)
-                if not _works(engine, "--version", run):  # its first start (virus scan, unpacking) is slow: it happens here, not in the self test
-                    raise SetupError("下載的 yt-dlp.exe 無法啟動：可能被防毒軟體攔截。請暫時允許 " + str(engine) + " 後重新執行安裝檔。")
+            elif win:  # the unpacked build too (see winengine): the single file one unpacks itself on every start
+                if kind == "legacy":
+                    say("    目前是舊版單檔 yt-dlp.exe（每次啟動都要先解壓縮，比較慢），改裝免解壓縮版")
+                elif kind == "missing" and read_engine(home):
+                    say("    上次安裝的 yt-dlp.exe 不見了，可能被防毒軟體隔離；這次重新下載一次")
+                say("    下載官方的免解壓縮版並核對校驗碼")
+                try:
+                    say(f"    yt-dlp {install_win_engine(bin_dir, fetch_text=fetch_text, fetch_file=fetch_file, run=run, machine=chip)}")
+                except winengine.EngineInstallError as exc:
+                    raise SetupError(str(exc)) from exc
             else:
                 raise SetupError("這個系統沒有對應的 yt-dlp 安裝方式（支援 Windows 與 Mac）")
             done.append("yt-dlp")

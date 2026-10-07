@@ -57,6 +57,12 @@
         <p id="doctor-summary" class="dr-summary" role="status" aria-live="polite"></p>
         <p id="doctor-fixed" class="dr-fixed" role="status" aria-live="polite"></p>
         <button id="doctor-fix" class="btn small" type="button" hidden>嘗試自動修復</button>
+        <div class="diag">
+          <button id="diag-copy" class="btn small" type="button" aria-label="複製診斷資訊，貼給維護的人">複製診斷資訊</button>
+          <p class="diag-note">內容已隱藏使用者名稱，只含版本、檢查結果與近期紀錄</p>
+          <p id="diag-copy-status" class="diag-status" role="status" aria-live="polite" hidden></p>
+          <textarea id="diag-copy-text" class="diag-text" rows="6" readonly spellcheck="false" aria-label="診斷資訊，全選後複製" hidden></textarea>
+        </div>
       </section>
       <section aria-labelledby="update-title">
         <h2 id="update-title">版本與更新</h2>
@@ -73,6 +79,11 @@
     </aside>
 
     <main class="main">
+      <div id="update-banner" class="notice update-banner" role="status" aria-live="polite" data-kind="info" hidden>
+        <b id="update-banner-text"></b>
+        <span id="update-banner-hint" class="ub-hint"></span>
+        <div class="ub-bar" aria-hidden="true"><i></i></div>
+      </div>
       <div id="no-extension" class="notice" role="status" hidden>
         還沒偵測到擴充功能。請先照設定流程的步驟 1～3 安裝並載入；完成後這裡會自動解鎖，不用重新整理。這個網頁需要 Chrome（電腦版）。
       </div>
@@ -187,6 +198,12 @@
         <p id="check-lead" class="pane-note">網頁會逐項檢查哪裡還沒好，並告訴你下一步。</p>
         <ul id="check-list" class="dr-list"></ul>
         <p id="check-summary" class="dr-summary" role="status" aria-live="polite"></p>
+        <div class="diag">
+          <button id="diag-copy-check" class="btn small" type="button" aria-label="複製診斷資訊，貼給維護的人">複製診斷資訊</button>
+          <p class="diag-note">內容已隱藏使用者名稱，只含版本、檢查結果與近期紀錄</p>
+          <p id="diag-copy-check-status" class="diag-status" role="status" aria-live="polite" hidden></p>
+          <textarea id="diag-copy-check-text" class="diag-text" rows="6" readonly spellcheck="false" aria-label="診斷資訊，全選後複製" hidden></textarea>
+        </div>
         <div class="pane-actions">
           <button id="check-again" class="btn primary" type="button">重新檢查</button>
           <button id="check-to-steps" class="btn" type="button">回到設定步驟</button>

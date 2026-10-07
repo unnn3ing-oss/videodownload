@@ -273,3 +273,103 @@ def test_fetch_meta_classifies_failure():
     assert exc.value.code == "private"
     with pytest.raises(ResolveError):
         fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1", run=lambda cmd: (0, "not json", ""))
+
+
+# -- warnings are no longer hidden: yt-dlp reports a missing JavaScript runtime only as a WARNING ----------
+
+NO_DENO_WARNING = (
+    "WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another "
+    "runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been "
+    "deprecated, and some formats may be missing. See  https://github.com/yt-dlp/yt-dlp/wiki/EJS  for details on installing one")
+SABR_WARNING = ("WARNING: [youtube] abc123def45: Some web client https formats have been skipped as they are missing a url. "
+                "YouTube is forcing SABR streaming for this client.")
+
+
+def test_base_args_no_longer_hide_warnings():
+    assert "--no-warnings" not in Engine(Path("yt-dlp")).base_args()
+    assert "--no-warnings" not in Engine(Path("yt-dlp"), Path("/ff"), Path("/dn/deno")).base_args()
+
+
+def test_missing_javascript_runtime_behind_a_format_error_is_deno_missing():
+    stderr = (f"{NO_DENO_WARNING}\n{SABR_WARNING}\n"
+              "ERROR: [youtube] abc123def45: Requested format is not available. Use --list-formats for a list of available formats")
+    code, message = classify_error(stderr)
+    assert code == "deno_missing"
+    assert message == "找不到 Deno（解開 YouTube 驗證需要），請重新執行安裝檔，它會自動補齊"
+
+
+def test_missing_javascript_runtime_with_an_unknown_error_is_deno_missing():
+    stderr = f"{NO_DENO_WARNING}\nERROR: [youtube] abc123def45: Something nobody has seen before"
+    assert classify_error(stderr)[0] == "deno_missing"
+
+
+def test_missing_javascript_runtime_only_as_a_warning_with_a_crash_is_deno_missing():
+    stderr = f"{NO_DENO_WARNING}\nTraceback (most recent call last):\nKeyError: 'x'"
+    assert classify_error(stderr)[0] == "deno_missing"
+
+
+def test_missing_javascript_runtime_does_not_hide_a_real_cause():
+    assert classify_error(f"{NO_DENO_WARNING}\nERROR: [youtube] x: Private video. Sign in")[0] == "private"
+    assert classify_error(f"{NO_DENO_WARNING}\nERROR: [youtube] x: HTTP Error 429: Too Many Requests")[0] == "rate_limited"
+    assert classify_error(f"{NO_DENO_WARNING}\nERROR: [youtube] x: Unable to download webpage: timed out")[0] == "network"
+
+
+def test_signature_failure_without_the_javascript_warning_stays_engine_outdated():
+    stderr = ("WARNING: [youtube] abc: Signature solving failed: Some formats may be missing.\n"
+              "ERROR: [youtube] abc: Requested format is not available")
+    assert classify_error(stderr)[0] == "engine_outdated"
+
+
+def test_warnings_do_not_decide_the_class_when_there_is_no_error_line():
+    stderr = "WARNING: [download] Got error: timed out. Retrying (1/10)...\nTraceback (most recent call last):\nKeyError: 'x'"
+    code, message = classify_error(stderr)
+    assert code == "unknown" and "KeyError" in message and "Retrying" not in message
+
+
+def test_unknown_message_never_quotes_a_warning_when_something_else_exists():
+    code, message = classify_error("ERROR: odd failure\nWARNING: trailing noise about formats")
+    assert code == "unknown" and "odd failure" in message and "noise" not in message
+
+
+def test_stream_download_still_separates_progress_lines_from_warning_stderr():
+    script = ('import sys;print("[ytdl-progress]1|2|NA|NA|NA");'
+              'sys.stderr.write("WARNING: [youtube] something\\n")')
+    result, lines = collect([sys.executable, "-c", script])
+    assert lines == ["[ytdl-progress]1|2|NA|NA|NA"] and "WARNING" in result.stderr and result.returncode == 0
+
+
+# -- log hooks -------------------------------------------------------------------------------------
+
+def test_resolve_logs_the_stderr_tail_when_a_url_fails():
+    logged = []
+    run, _ = fake_run([], rc=1, err="WARNING: noise\nERROR: Private video")
+    with pytest.raises(ResolveError):
+        resolve(Engine(Path("yt-dlp")), [f"{ROOT}/watch?v=x" + "y" * 200], run=run, log=logged.append)
+    text = "\n".join(logged)
+    assert "resolve failed" in text and "code=private" in text and "ERROR: Private video" in text
+    assert "y" * 130 not in text  # urls are cut at 120 characters
+
+
+def test_resolve_logs_warnings_even_when_it_succeeds_but_not_the_json():
+    logged = []
+    run, _ = fake_run([{"id": "a1", "title": "T1"}], err=NO_DENO_WARNING)
+    assert resolve(Engine(Path("yt-dlp")), [f"{ROOT}/@abc"], run=run, log=logged.append)
+    text = "\n".join(logged)
+    assert "No supported JavaScript runtime" in text and '"id"' not in text
+
+
+def test_resolve_without_a_log_is_silent():
+    run, _ = fake_run([{"id": "a1", "title": "T1"}], err="WARNING: x")
+    assert resolve(Engine(Path("yt-dlp")), [f"{ROOT}/@abc"], run=run)
+
+
+def test_fetch_meta_logs_failures_and_warnings():
+    from ytdlp import fetch_meta
+    logged = []
+    with pytest.raises(ResolveError):
+        fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1", run=lambda cmd: (1, "", "ERROR: Private video"),
+                   log=logged.append)
+    assert "meta failed" in logged[-1] and "code=private" in logged[-1]
+    fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1",
+               run=lambda cmd: (0, json.dumps({"id": "v1", "title": "T"}), "WARNING: careful"), log=logged.append)
+    assert "WARNING: careful" in logged[-1]

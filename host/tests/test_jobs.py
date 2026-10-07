@@ -28,11 +28,11 @@ class Harness:
 
     def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None, delay=0, jitter=0.0):
         self.out = tmp_path / "out"
-        self.events, self.calls = [], []
+        self.events, self.calls, self.logged = [], [], []
         self.height, self.codec, self.fail = height, codec, fail or {}
         self.runner = JobRunner(Engine(Path("yt-dlp")), self.events.append, stream=self.stream,
                                 resolve_fn=resolve_fn or (lambda e, u, limit=None: []),
-                                sleep=lambda s: None, delay=delay, jitter=lambda: jitter)
+                                sleep=lambda s: None, delay=delay, jitter=lambda: jitter, log=self.logged.append)
 
     def stream(self, cmd, on_line, cancel):
         self.calls.append(cmd)
@@ -771,3 +771,86 @@ def test_running_flag_is_cleared_even_when_the_done_event_cannot_be_sent(tmp_pat
     h.runner._emit = emit
     h.run([item()])
     assert h.runner.running is False
+
+
+# -- log ---------------------------------------------------------------------------------------------
+
+def test_log_records_job_start_and_the_done_summary(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "甲"), item("v2", "乙")], job_id="job1", quality=720, cooldown=0)
+    text = "\n".join(h.logged)
+    assert "job start id=job1 items=2 quality=720 cooldown=0" in text
+    assert "job done id=job1" in text and "ok=2" in text and "aborted=None" in text
+
+
+def test_log_item_failed_has_code_and_the_stderr_tail_capped(tmp_path):
+    noisy = "\n".join(f"WARNING: noise {i}" for i in range(40)) + "\nERROR: [youtube] v1: Private video. Sign in"
+    h = Harness(tmp_path, fail={"v1": noisy}).run([item("v1", "甲")])
+    entry = next(m for m in h.logged if m.startswith("item_failed"))
+    assert "item=v1" in entry and "code=private" in entry and "Private video" in entry
+    assert "noise 39" in entry and "noise 5\n" not in entry  # only the last ~15 lines
+    assert len(entry) < 2048 + 300
+
+
+def test_log_item_failed_for_a_big_stderr_stays_under_2kb_of_stderr(tmp_path):
+    h = Harness(tmp_path, fail={"v1": "\n".join("E" * 500 for _ in range(30))}).run([item("v1", "甲")])
+    entry = next(m for m in h.logged if m.startswith("item_failed"))
+    assert len(entry) < 2048 + 300
+
+
+def test_log_keeps_warnings_of_a_successful_download(tmp_path):
+    h = Harness(tmp_path)
+    plain = h.stream
+
+    def warn(cmd, on_line, cancel):
+        result = plain(cmd, on_line, cancel)
+        return StreamResult(result.returncode, "WARNING: [youtube] No supported JavaScript runtime could be found", False)
+
+    h.runner._stream = warn
+    h.run([item()])
+    assert any("No supported JavaScript runtime" in m and m.startswith("item_warnings") for m in h.logged)
+    assert h.summary["ok"] == 1 and not h.of("item_failed")
+
+
+def test_log_records_cooldown_waits_and_backoff(tmp_path):
+    h = Harness(tmp_path, fail={v: "ERROR: HTTP Error 429: Too Many Requests" for v in ("v1", "v2")})
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙")], cooldown=10)
+    waits = [m for m in h.logged if m.startswith("cooldown")]
+    assert waits[0].startswith("cooldown 10.0s before v2") and "streak 1" in waits[0]
+    assert waits[1].startswith("cooldown 20.0s before v3") and "streak 2" in waits[1]
+
+
+def test_log_records_an_abort_in_the_done_line(tmp_path):
+    h = Harness(tmp_path, fail={v: "ERROR: HTTP Error 429: Too Many Requests" for v in ("v1", "v2", "v3")})
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙"), item("v4", "丁")], cooldown=0)
+    done = next(m for m in h.logged if m.startswith("job done"))
+    assert "rate_limited" in done and "failed=3" in done
+
+
+def test_log_records_an_unexpected_exception_with_its_traceback(tmp_path):
+    h = Harness(tmp_path)
+
+    def boom(cmd, on_line, cancel):
+        raise OSError("blocked by antivirus")
+
+    h.runner._stream = boom
+    h.run([item()])
+    entry = next(m for m in h.logged if m.startswith("item_failed"))
+    assert "code=unknown" in entry and "blocked by antivirus" in entry and "Traceback" in entry
+
+
+def test_last_job_keeps_a_summary_in_memory(tmp_path):
+    h = Harness(tmp_path, fail={"v2": "ERROR: Private video"})
+    assert h.runner.last_job is None
+    h.run([item("v1", "甲"), item("v2", "乙")], job_id="job9", quality=1080, cooldown=0)
+    last = h.runner.last_job
+    assert last["jobId"] == "job9" and last["items"] == 2 and last["quality"] == 1080 and last["cooldown"] == 0
+    assert last["summary"]["ok"] == 1 and last["summary"]["failed"] == 1
+    assert last["failures"] == [{"itemId": "v2", "code": "private"}]
+    assert isinstance(last["finishedAt"], str)
+
+
+def test_runner_without_a_log_still_works(tmp_path):
+    runner = JobRunner(Engine(Path("yt-dlp")), [].append, stream=lambda c, o, k: StreamResult(0, "", False),
+                       sleep=lambda s: None, delay=0)
+    runner.start("j", [item()], 720, tmp_path / "out")
+    runner.join(10)

@@ -1,2 +1,4 @@
-pytest
-yt-dlp
+# Everything `python3 -m pytest -q` needs (the host and the build use only the standard library).
+# Compatible-release range: same pytest 8.x on Python 3.9 and 3.12, so CI does not drift between them.
+# yt-dlp is NOT needed here: the tests use a stub. `pip install yt-dlp` is only for tools/canary_flags.py.
+pytest~=8.3

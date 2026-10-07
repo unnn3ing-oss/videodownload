@@ -2,6 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test extension/tests/*.test.mjs"
+    "test": "node --test extension/tests/*.test.mjs",
+    "test:node": "node --test extension/tests/*.test.mjs",
+    "test:e2e": "node extension/tests/e2e/queue.e2e.mjs && node extension/tests/e2e/oldhost.e2e.mjs && node extension/tests/e2e/sidepanel.e2e.mjs && node extension/tests/e2e/web.e2e.mjs && node extension/tests/e2e/update.e2e.mjs && node extension/tests/e2e/webupdate.e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
   }
 }

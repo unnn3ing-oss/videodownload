@@ -28,11 +28,12 @@ _CHECK_CODE = "import sys; sys.path.insert(0, sys.argv[1]); import host"
 
 
 class UpdateError(Exception):
-    def __init__(self, code: str, message: str, rolled_back: bool = False):
+    def __init__(self, code: str, message: str, rolled_back: bool = False, detail: str = ""):
         super().__init__(message)
         self.code = code
         self.message = message
         self.rolled_back = rolled_back
+        self.detail = detail  # the captured error text, for the log and the reply
 
 
 def git_blob_sha(data: bytes) -> str:

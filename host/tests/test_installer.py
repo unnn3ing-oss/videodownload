@@ -68,11 +68,21 @@ def test_the_extension_folder_name_is_the_one_the_web_page_suggests():
 
 # ---------------------------------------------------------------- tools
 
+def engine_zip(exe_body=b"MZ yt-dlp") -> bytes:
+    """A stand-in for yt-dlp_win.zip: the program at the root and the files it needs in _internal."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("yt-dlp.exe", exe_body)
+        z.writestr("_internal/lib.txt", "needed at run time")
+    return buf.getvalue()
+
+
 def win_net(exe_body=b"MZ yt-dlp", good_sum=True):
-    digest = hashlib.sha256(exe_body).hexdigest() if good_sum else "0" * 64
+    archive = engine_zip(exe_body)
+    digest = hashlib.sha256(archive).hexdigest() if good_sum else "0" * 64
     return Net({
-        "yt-dlp.exe": exe_body,
-        "SHA2-256SUMS": f"{digest}  yt-dlp.exe\n".encode(),
+        "yt-dlp_win.zip": archive,
+        "SHA2-256SUMS": f"{digest}  yt-dlp_win.zip\n".encode(),
         "deno-x86_64-pc-windows-msvc.zip": zip_bytes({"deno.exe": "deno"}),
         "ffmpeg-master-latest-win64-gpl.zip": zip_bytes({"ffmpeg-x/bin/ffmpeg.exe": "ffmpeg", "ffmpeg-x/bin/ffplay.exe": "no"}),
     })
@@ -82,7 +92,8 @@ def test_windows_tools_are_downloaded_checked_and_put_in_bin(tmp_path):
     net = win_net()
     done = setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
     assert sorted(done) == ["Deno", "ffmpeg", "yt-dlp"]
-    assert (tmp_path / "bin/yt-dlp.exe").read_bytes() == b"MZ yt-dlp"
+    assert (tmp_path / "bin/yt-dlp_dir/yt-dlp.exe").read_bytes() == b"MZ yt-dlp"
+    assert (tmp_path / "bin/yt-dlp_dir/_internal/lib.txt").is_file() and not (tmp_path / "bin/yt-dlp.exe").exists()
     assert (tmp_path / "bin/deno.exe").read_text() == "deno"
     assert (tmp_path / "bin/ffmpeg.exe").read_text() == "ffmpeg"
     assert not (tmp_path / "bin/ffplay.exe").exists()
@@ -92,13 +103,17 @@ def test_a_yt_dlp_download_with_the_wrong_checksum_is_rejected_and_not_left_behi
     net = win_net(good_sum=False)
     with pytest.raises(SetupError, match="校驗碼不符"):
         setup.ensure_tools(tmp_path, "win32", run=runs_ok({"yt-dlp.exe": 127}), fetch_file=net.file, fetch_text=net.text)
-    assert not (tmp_path / "bin/yt-dlp.exe").exists()
+    assert not (tmp_path / "bin/yt-dlp.exe").exists() and not (tmp_path / "bin/yt-dlp_dir").exists()
+
+
+def put_working_windows_tools(home, engine="yt-dlp_dir/yt-dlp.exe"):
+    for name in (engine, "deno.exe", "ffmpeg.exe"):
+        (home / "bin" / name).parent.mkdir(parents=True, exist_ok=True)
+        (home / "bin" / name).write_text("works")
 
 
 def test_parts_that_already_run_are_left_alone(tmp_path):
-    (tmp_path / "bin").mkdir()
-    for name in ("yt-dlp.exe", "deno.exe", "ffmpeg.exe"):
-        (tmp_path / "bin" / name).write_text("works")
+    put_working_windows_tools(tmp_path)
     net = win_net()
     done = setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
     assert done == [] and net.asked == []
@@ -163,9 +178,7 @@ def test_a_tool_that_still_does_not_run_after_it_was_installed_stops_the_install
 
 
 def test_every_step_says_what_it_is_for_and_what_it_did_also_when_it_had_nothing_to_do(tmp_path, capsys):
-    (tmp_path / "bin").mkdir()
-    for name in ("yt-dlp.exe", "deno.exe", "ffmpeg.exe"):
-        (tmp_path / "bin" / name).write_text("works")
+    put_working_windows_tools(tmp_path)
     setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=lambda *a: None, fetch_text=lambda *a: "")
     out = capsys.readouterr().out
     assert out.count("已可使用，略過") == 3
@@ -511,18 +524,236 @@ def test_a_byte_order_mark_in_the_dialog_answer_is_ignored():
     assert setup.choose_parent("win32", lambda cmd: (0, "\ufeffC:\\Users\\me\\Videos\r\n", "")) == Path("C:\\Users\\me\\Videos")
 
 
-def test_the_windows_yt_dlp_is_started_once_right_after_the_download(tmp_path):
+def test_the_windows_yt_dlp_is_started_right_after_the_download_before_the_self_test(tmp_path):
     net = win_net()
     seen = []
+
     def run(cmd):
-        seen.append(Path(cmd[0]).name)
+        seen.append(cmd[0])
         return 0, "ok", ""
-    setup.ensure_tools(tmp_path, "win32", run=lambda cmd: (127, "", "") if not (tmp_path / "bin/yt-dlp.exe").exists() and "yt-dlp.exe" in cmd[0] else run(cmd),
-                       fetch_file=net.file, fetch_text=net.text)
-    assert "yt-dlp.exe" in seen, "its first (slow, antivirus-scanned) start happens here, not inside the self test"
+
+    setup.ensure_tools(tmp_path, "win32", run=run, fetch_file=net.file, fetch_text=net.text)
+    assert any("yt-dlp.exe" in cmd for cmd in seen), "its first (slow, antivirus-scanned) start happens here, not inside the self test"
+    assert ".yt-dlp-update" in next(cmd for cmd in seen if "yt-dlp.exe" in cmd), "first where it was unpacked, before it replaces anything"
 
 
 def test_a_downloaded_yt_dlp_that_cannot_start_is_reported_with_the_likely_cause(tmp_path):
     net = win_net()
     with pytest.raises(SetupError, match="防毒"):
         setup.ensure_tools(tmp_path, "win32", run=runs_ok({"yt-dlp.exe": 127, "deno.exe": 127, "ffmpeg.exe": 127}), fetch_file=net.file, fetch_text=net.text)
+
+
+# ---------------------------------------------------------------- Windows: the single-file engine is replaced by the unpacked one
+
+def test_an_old_single_file_yt_dlp_on_windows_is_replaced_by_the_unpacked_build_and_only_then_removed(tmp_path, capsys):
+    put_working_windows_tools(tmp_path, engine="yt-dlp.exe")
+    net = win_net()
+    done = setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
+    assert done == ["yt-dlp"]
+    assert (tmp_path / "bin/yt-dlp_dir/yt-dlp.exe").read_bytes() == b"MZ yt-dlp" and not (tmp_path / "bin/yt-dlp.exe").exists()
+    assert "舊版單檔" in capsys.readouterr().out
+
+
+def test_the_old_single_file_yt_dlp_stays_when_the_new_one_cannot_start(tmp_path):
+    put_working_windows_tools(tmp_path, engine="yt-dlp.exe")
+    net = win_net()
+
+    def run(cmd):  # the one in the staging folder (and wherever else the unpacked one is) never starts
+        return (3, "", "boom") if "yt-dlp_dir" in cmd[0] or ".yt-dlp-update" in cmd[0] else (0, "ok", "")
+
+    with pytest.raises(SetupError, match="無法啟動"):
+        setup.ensure_tools(tmp_path, "win32", run=run, fetch_file=net.file, fetch_text=net.text)
+    assert (tmp_path / "bin/yt-dlp.exe").read_text() == "works" and not (tmp_path / "bin/yt-dlp_dir").exists()
+
+
+VIRUS = "[WinError 225] Operation did not complete successfully because the file contains a virus or potentially unwanted software"
+
+
+def test_an_engine_the_antivirus_blocks_is_not_downloaded_again_and_the_message_names_what_to_allow(tmp_path):
+    put_working_windows_tools(tmp_path)
+    net = win_net()
+    exe = tmp_path / "bin/yt-dlp_dir/yt-dlp.exe"
+    with pytest.raises(SetupError) as err:
+        setup.ensure_tools(tmp_path, "win32", run=lambda cmd: (127, "", VIRUS) if cmd[0] == str(exe) else (0, "ok", ""),
+                           fetch_file=net.file, fetch_text=net.text)
+    assert net.asked == [], "no silent loop of downloads"
+    assert "防毒" in str(err.value) and str(tmp_path / "bin") in str(err.value) and str(exe) in str(err.value)
+
+
+def test_a_fresh_download_the_antivirus_blocks_ends_the_run_with_the_hash_and_the_place_after_one_download(tmp_path):
+    net = win_net()
+    with pytest.raises(SetupError) as err:
+        setup.ensure_tools(tmp_path, "win32", run=lambda cmd: (127, "", VIRUS) if "yt-dlp.exe" in cmd[0] else (0, "ok", ""),
+                           fetch_file=net.file, fetch_text=net.text)
+    assert [u.rsplit("/", 1)[-1] for u in net.asked] == ["SHA2-256SUMS", "yt-dlp_win.zip"]
+    assert hashlib.sha256(b"MZ yt-dlp").hexdigest() in str(err.value) and str(tmp_path / "bin/yt-dlp_dir/yt-dlp.exe") in str(err.value)
+
+
+def test_an_engine_that_disappeared_after_an_earlier_install_is_said_to_be_probably_quarantined(tmp_path, capsys):
+    setup.write_engine(tmp_path, {"path": str(tmp_path / "bin/yt-dlp_dir/yt-dlp.exe"), "sha256": "a" * 64, "size": 3})
+    net = win_net()
+    setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=net.file, fetch_text=net.text)
+    assert "不見了" in capsys.readouterr().out
+    assert setup.read_engine(tmp_path)["sha256"] == hashlib.sha256(b"MZ yt-dlp").hexdigest(), "the record follows the new file"
+
+
+def test_a_working_engine_is_recorded_with_its_hash_and_size(tmp_path):
+    put_working_windows_tools(tmp_path)
+    setup.ensure_tools(tmp_path, "win32", run=runs_ok(), fetch_file=lambda *a: None, fetch_text=lambda *a: "")
+    record = setup.read_engine(tmp_path)
+    assert record["sha256"] == hashlib.sha256(b"works").hexdigest() and record["size"] == 5
+    assert record["path"] == str(tmp_path / "bin/yt-dlp_dir/yt-dlp.exe")
+
+
+# ---------------------------------------------------------------- never an older installer over a newer install
+
+def put_installed_host(home, version):
+    (home / "host").mkdir(parents=True, exist_ok=True)
+    (home / "host" / "version.py").write_text(f'"""Host version."""\nVERSION = "{version}"\n')
+
+
+@pytest.mark.parametrize("a, b, newer", [("0.3.10", "0.3.9", True), ("1.0.0", "0.99.99", True), ("0.3.0", "0.3.0", False),
+                                         ("0.2.9", "0.3.0", False), ("", "0.3.0", False), ("0.3.0", "", False), ("x", "0.3.0", False),
+                                         ("0.3", "0.2.0", False)])
+def test_versions_are_compared_by_number_and_anything_unreadable_is_not_newer(a, b, newer):
+    assert setup.is_newer(a, b) is newer
+
+
+def test_the_installed_version_is_read_from_the_hosts_version_file(tmp_path):
+    assert setup.installed_version(tmp_path) is None
+    put_installed_host(tmp_path, "0.4.2")
+    assert setup.installed_version(tmp_path) == "0.4.2"
+    (tmp_path / "host" / "version.py").write_text("garbage")
+    assert setup.installed_version(tmp_path) is None
+
+
+def test_every_run_says_which_version_is_installed_and_which_one_this_installer_has(tmp_path, capsys):
+    home = tmp_path / "home"
+    put_installed_host(home, "0.3.0")
+    calls, parts = fake_parts(tmp_path)
+    assert setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", parts=parts) == 0
+    out = capsys.readouterr().out
+    assert "已安裝 0.3.0" in out and "這個安裝檔 0.3.0" in out
+    calls, parts = fake_parts(tmp_path)
+    setup.run_setup(tmp_path / "fresh", "darwin", EXT_ID, version="0.3.0", parts=parts)
+    out = capsys.readouterr().out
+    assert "已安裝 未安裝" in out and "這個安裝檔 0.3.0" in out
+
+
+def test_no_deploy_repairs_but_leaves_the_extension_folder_alone_and_keeps_its_record(tmp_path, capsys):
+    home = tmp_path / "home"
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    (ext / "manifest.json").write_text(EXT_FILES["manifest.json"])
+    put_installed_host(home, "0.9.0")
+    setup.write_record(home, extension_folder=ext, version="0.9.0")
+    calls, parts = fake_parts(tmp_path)
+    assert setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", no_deploy=True, parts=parts) == 0
+    assert calls == ["tools", "register", "selftest", "report"], "tools, registration and the self test run; the files are not touched"
+    record = setup.read_record(home)
+    assert record["extensionFolder"] == str(ext) and record["version"] == "0.9.0", "the installed version, not the older installer's"
+    out = capsys.readouterr().out
+    assert "不更動" in out and "安裝完成" in out
+
+
+def test_an_installer_older_than_what_is_installed_does_not_deploy_even_without_the_flag(tmp_path, capsys):
+    home = tmp_path / "home"
+    put_installed_host(home, "0.9.0")
+    calls, parts = fake_parts(tmp_path)
+    assert setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", parts=parts) == 0
+    assert not any(c.startswith("deploy") for c in calls) and "不會降版" in capsys.readouterr().out
+
+
+def test_an_equal_or_newer_installer_deploys_as_before(tmp_path):
+    home = tmp_path / "home"
+    put_installed_host(home, "0.3.0")
+    calls, parts = fake_parts(tmp_path)
+    setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", parts=parts)
+    assert any(c.startswith("deploy") for c in calls)
+
+
+def test_the_no_deploy_flag_reaches_the_run(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(setup, "run_setup", lambda *a, **kw: seen.update(kw) or 0)
+    assert setup.main(["--home", str(tmp_path), "--ext-id", EXT_ID, "--no-deploy", "--version", "0.3.0"]) == 0
+    assert seen["no_deploy"] is True and seen["package"] is None
+    setup.main(["--home", str(tmp_path), "--ext-id", EXT_ID])
+    assert seen["no_deploy"] is False
+
+
+# ---------------------------------------------------------------- install.log
+
+import re
+
+
+def log_lines(home):
+    return (home / "logs" / "install.log").read_text(encoding="utf-8").splitlines()
+
+
+def test_what_is_said_is_also_written_with_a_time_to_the_install_log(tmp_path, capsys):
+    setup.start_log(tmp_path)
+    try:
+        setup.say("第一行")
+        setup.step("某個步驟")
+    finally:
+        setup.stop_log()
+    assert "第一行" in capsys.readouterr().out
+    lines = log_lines(tmp_path)
+    assert all(re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ", line) for line in lines)
+    assert any(line.endswith("第一行") for line in lines) and any(line.endswith("==> 某個步驟") for line in lines)
+
+
+def test_nothing_is_written_when_no_log_was_started_or_after_it_was_stopped(tmp_path):
+    setup.say("nobody listens")
+    setup.start_log(tmp_path)
+    setup.stop_log()
+    setup.say("after")
+    assert not (tmp_path / "logs" / "install.log").exists() or "after" not in (tmp_path / "logs" / "install.log").read_text(encoding="utf-8")
+
+
+def test_the_users_home_folder_and_name_are_not_written_to_the_log():
+    text = "C:\\Users\\Alice\\AppData\\Local\\YTDownloader 與 C:/Users/Alice/x，使用者 alice 在 /Users/alice/Library"
+    out = setup.redact(text, "C:\\Users\\Alice", "Alice")
+    assert "Alice" not in out and "alice" not in out.lower() and "<user>" in out and "YTDownloader" in out
+    assert setup.redact("a b c", "", "a") == "a b c", "a very short name is not blanked out of ordinary words"
+
+
+def test_the_log_gets_the_redacted_text(tmp_path):
+    user_home = tmp_path / "Users" / "Alice"
+    setup.start_log(tmp_path / "home", user_home=str(user_home), user_name="Alice")
+    try:
+        setup.say(f"    {user_home}/x 由 Alice 安裝")
+    finally:
+        setup.stop_log()
+    assert "Alice" not in "\n".join(log_lines(tmp_path / "home")) and "<user>/x" in "\n".join(log_lines(tmp_path / "home"))
+
+
+def test_the_log_is_rotated_by_size_and_only_the_last_three_files_are_kept(tmp_path):
+    for i in range(6):
+        setup.start_log(tmp_path, max_bytes=60)
+        try:
+            setup.say(f"run {i} " + "x" * 80)
+        finally:
+            setup.stop_log()
+    names = sorted(p.name for p in (tmp_path / "logs").iterdir())
+    assert names == ["install.log", "install.log.1", "install.log.2"]
+    assert "run 5" in log_lines(tmp_path)[-1] and "run 4" in (tmp_path / "logs" / "install.log.1").read_text(encoding="utf-8")
+
+
+def test_a_log_that_cannot_be_written_never_breaks_the_run(tmp_path, capsys):
+    (tmp_path / "logs").write_text("a file where the folder should be")
+    setup.start_log(tmp_path)
+    try:
+        setup.say("still printed")
+    finally:
+        setup.stop_log()
+    assert "still printed" in capsys.readouterr().out
+
+
+def test_a_whole_run_leaves_its_log_in_the_logs_folder(tmp_path):
+    home = tmp_path / "home"
+    calls, parts = fake_parts(tmp_path)
+    assert setup.run_setup(home, "darwin", EXT_ID, version="0.3.0", parts=parts) == 0
+    assert any("安裝完成" in line for line in log_lines(home))
+    setup.say("not in the log: the run is over")
+    assert not any("not in the log" in line for line in log_lines(home))

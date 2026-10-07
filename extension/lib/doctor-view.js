@@ -1,5 +1,7 @@
 // The environment check ("check the environment" / "try to repair"): what runs, what does not, and what to do about it.
 // Used by the side panel and by the web page. Everything that comes from the host is set with textContent.
+import { copyDiagnostics } from "./diagnostics.js";
+
 const MARKS = { ok: "✔", warn: "⚠", error: "✘" };
 
 export function summarizeChecks(checks) {
@@ -60,4 +62,24 @@ export async function runDoctor(send, ui, fix = false) {
     ui.check.disabled = false;
     ui.fix.disabled = false;
   }
+}
+
+// 「複製診斷資訊」. ui: { button, status, fallback } (the button, the line that says what happened, and a read-only text box
+// that only appears when the clipboard refused, so the person can select the text and copy it by hand)
+export async function runCopyDiagnostics(send, ui) {
+  ui.button.disabled = true;
+  ui.fallback.hidden = true;
+  ui.status.dataset.kind = "info";
+  ui.status.textContent = "產生中…";
+  ui.status.hidden = false;
+  const result = await copyDiagnostics({ send, writeText: (text) => navigator.clipboard.writeText(text) });
+  ui.status.dataset.kind = result.state === "copied" ? "ok" : "error";
+  ui.status.textContent = result.message;
+  if (result.state === "manual") {
+    ui.fallback.value = result.text;
+    ui.fallback.hidden = false;
+    ui.fallback.focus();
+    ui.fallback.select();
+  }
+  ui.button.disabled = false;
 }

@@ -7,10 +7,12 @@ import random
 import shutil
 import threading
 import time
+import traceback
 from collections import deque
 from pathlib import Path
 from typing import Callable
 
+from hostlog import tail_lines
 from naming import PARTIAL_DIR, partial_dir, resolve_target
 from quality import parse_quality
 from security import VIDEO_ID, is_allowed_url, safe_output_path
@@ -80,7 +82,8 @@ class Archive:
 
 class JobRunner:
     def __init__(self, engine: Engine, emit: Callable[[dict], None], stream=stream_download,
-                 resolve_fn=resolve, sleep=time.sleep, delay: float = 2.0, jitter=random.random):
+                 resolve_fn=resolve, sleep=time.sleep, delay: float = 2.0, jitter=random.random,
+                 log: Callable[[str], None] | None = None):
         self.engine = engine
         self._emit = emit
         self._stream = stream
@@ -88,6 +91,7 @@ class JobRunner:
         self._sleep = sleep
         self._delay = delay
         self._jitter = jitter
+        self._log = log or (lambda message: None)
         self._cancel = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -95,6 +99,7 @@ class JobRunner:
         self._closing = False
         self._current: tuple[str | None, threading.Event] | None = None
         self.running = False
+        self.last_job: dict | None = None  # what the last finished job did (the diagnostics bundle shows it)
 
     def start(self, job_id: str, items: list[dict], quality: int, output_dir: Path,
               title_override: str | None = None, cooldown: float | None = None) -> None:
@@ -147,12 +152,16 @@ class JobRunner:
 
     def _run(self, job_id, count, quality, output_dir, title_override, cooldown) -> None:
         summary = {"ok": 0, "skipped": 0, "failed": 0, "cancelled": False, "aborted": None}
+        failures: list[dict] = []
         last_code = None  # class of the failure the current item ended with
+        self._log(f"job start id={job_id} items={count} quality={quality} cooldown={cooldown}")
 
-        def fail(item_id: str, code: str, reason: str) -> None:
+        def fail(item_id: str, code: str, reason: str, detail: str = "") -> None:
             nonlocal last_code
             last_code = code
             summary["failed"] += 1
+            failures.append({"itemId": item_id, "code": code})
+            self._log(f"item_failed item={item_id} code={code} reason={reason}" + (f"\n{tail_lines(detail)}" if detail.strip() else ""))
             self._emit({"type": "item_failed", "jobId": job_id, "itemId": item_id,
                         "reason": reason, "code": code})
 
@@ -187,6 +196,7 @@ class JobRunner:
                 if attempted:
                     seconds = self._pause(cooldown, streak)
                     if seconds > 0:
+                        self._log(f"cooldown {seconds:.1f}s before {next_id} (throttle streak {streak})")
                         self._cooldown(job_id, next_id, seconds, item_cancel)
                 attempted = True
                 return self._stopped(job_id, next_id, item_cancel)
@@ -207,7 +217,7 @@ class JobRunner:
                                         count == 1 and title_override or None, wait_turn, item_cancel)
                 except Exception as exc:  # one bad item must never end the batch
                     fail(str(it.get("id") or it.get("url") or "?") if isinstance(it, dict) else "?",
-                         "unknown", f"內部錯誤：{exc}")
+                         "unknown", f"內部錯誤：{exc}", traceback.format_exc())
                     outcome = "failed"
                 finally:
                     with self._lock:
@@ -228,9 +238,18 @@ class JobRunner:
                                             or merge_failures >= MAX_MERGE_FAILURES):
                     summary["aborted"] = {"code": last_code, "message": ABORT_MESSAGES[last_code]}
                     break  # the items still waiting were never tried: they get no event
+        except Exception:
+            self._log(f"job crashed id={job_id}\n{traceback.format_exc()}")
+            raise
         finally:
             with self._lock:
                 self._closing = True
+            aborted = (summary["aborted"] or {}).get("code")
+            self._log(f"job done id={job_id} ok={summary['ok']} skipped={summary['skipped']} failed={summary['failed']} "
+                      f"cancelled={summary['cancelled']} aborted={aborted}")
+            self.last_job = {"jobId": job_id, "items": count, "quality": quality, "cooldown": cooldown,
+                             "summary": dict(summary), "failures": failures[-20:],
+                             "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
             try:
                 self._emit({"type": "done", "jobId": job_id, "summary": summary})
             finally:
@@ -328,18 +347,20 @@ class JobRunner:
                                                       partial_dir(output_dir, vid)),
                                   on_line, item_cancel)
         except Exception as exc:  # engine missing, permission denied, ...
-            fail(vid, "unknown", f"無法執行下載引擎：{exc}")
+            fail(vid, "unknown", f"無法執行下載引擎：{exc}", traceback.format_exc())
             return "failed"
         if result.cancelled:
             return self._stopped(job_id, vid, item_cancel) or "cancelled"
         if result.returncode != 0:
-            fail(vid, *classify_error(result.stderr))
+            fail(vid, *classify_error(result.stderr), detail=result.stderr)
             return "failed"
         if info is None or not _has_content(target):
             # with an unusable ffmpeg yt-dlp still exits 0 and prints its done line, but leaves "Title.f137.mp4" and
             # "Title.f140.m4a" apart instead of "Title.mp4"
-            fail(vid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」")
+            fail(vid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」", result.stderr)
             return "failed"
+        if result.stderr.strip():  # yt-dlp's warnings (a missing JavaScript runtime, ...) are only ever shown here
+            self._log(f"item_warnings item={vid}\n{tail_lines(result.stderr)}")
         shutil.rmtree(partial_dir(output_dir, vid), ignore_errors=True)  # kept after a failure: a retry resumes there
         try:
             (output_dir / PARTIAL_DIR).rmdir()  # only goes while no other video has unfinished files in it
@@ -349,6 +370,7 @@ class JobRunner:
             archive.record(vid, target.name)
         except OSError:
             pass  # file is on disk; a locked record file only means a rerun cannot skip it
+        self._log(f"item_done item={vid} height={info.height if info else None}")
         self._emit({"type": "item_done", "jobId": job_id, "itemId": vid, "file": str(target),
                     "height": info.height if info else None, "codec": info.codec if info else None,
                     "skipped": False})

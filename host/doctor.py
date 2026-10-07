@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Callable
 
 import macos_engine
+import winengine
 from config import ConfigStore
-from install_record import is_extension, read_record
+from install_record import fingerprint, is_extension, read_engine, read_record
 from version import VERSION
 from ytdlp import run_capture
 
@@ -61,10 +62,42 @@ def _check_python() -> Check:
     return Check("python", "ok", title, sys.executable)
 
 
-def _check_engine(home: Path, platform: str, run: Run) -> Check:
-    path = Path(home) / "bin" / _exe("yt-dlp", platform)
+def engine_path(home: Path, platform: str) -> Path:
+    """Where yt-dlp is. On Windows: the unpacked build (bin/yt-dlp_dir/yt-dlp.exe), else the older single file next to it."""
+    if platform.startswith("win"):
+        return winengine.engine_path(home)
+    return Path(home) / "bin" / "yt-dlp"
+
+
+def _blocked_check(home: Path, path: Path, why: str, expected: dict) -> Check:
+    """yt-dlp.exe was stopped by an antivirus: what to allow, and the facts IT needs to allow it."""
+    facts = dict(expected)
+    if not facts.get("sha256") and path.exists():
+        try:
+            facts = fingerprint(path)
+        except OSError:
+            facts = {}
+    detail = f"{path}"
+    if facts.get("sha256"):
+        detail += f"；SHA-256 {facts['sha256']}；大小 {facts.get('size', '?')} 位元組"
+    if why:
+        detail += f"；Windows 回報：{why}"
+    return Check("engine", "error", "下載引擎（yt-dlp.exe）被防毒軟體攔截", detail,
+                 f"請防毒軟體（或請公司 IT）排除資料夾 {Path(home) / 'bin'} 並允許上面的檔案，然後" + _REINSTALL)
+
+
+def _engine_state(home: Path, platform: str, run: Run) -> tuple[Check, str]:
+    """The engine's check, and what is the matter: "ok", "legacy" (an older single file build that works), "missing", "blocked"
+    (stopped by an antivirus) or "broken"."""
+    path = engine_path(home, platform)
+    win = platform.startswith("win")
+    recorded = read_engine(home) if win else {}
     if not path.exists():
-        return Check("engine", "error", "找不到下載引擎（yt-dlp）", str(path), _REINSTALL)
+        if win and recorded:
+            return Check("engine", "error", "找不到下載引擎（yt-dlp）：上次安裝後它不見了，可能被防毒軟體隔離",
+                         f"{path}；SHA-256 {recorded['sha256']}；大小 {recorded.get('size', '?')} 位元組",
+                         f"請防毒軟體（或請公司 IT）排除資料夾 {Path(home) / 'bin'}，並從隔離區還原或允許上面的檔案，然後" + _REINSTALL), "missing"
+        return Check("engine", "error", "找不到下載引擎（yt-dlp）", str(path), _REINSTALL), "missing"
     if platform == "darwin":
         try:
             head = path.read_bytes()[:4]
@@ -72,13 +105,31 @@ def _check_engine(home: Path, platform: str, run: Run) -> Check:
             head = b""
         if head in _MACHO:
             return Check("engine", "error", "yt-dlp 是舊版單檔版，Chrome 啟動它時會被 macOS 擋下", str(path),
-                         "按「嘗試自動修復」，或" + _REINSTALL)
+                         "按「嘗試自動修復」，或" + _REINSTALL), "broken"
     code, out, err = run([str(path), "--version"])
+    legacy = win and path.parent.name != macos_engine.INSTALL_DIR
     if code != 0 or not out.strip():
+        why = _tail(err or out)
+        if win and not legacy and winengine.classify_start_error(why) in ("virus", "denied"):
+            return _blocked_check(home, path, why, recorded), "blocked"
         fix = (_REINSTALL if platform == "darwin"
                else "可能缺少 Visual C++ 執行階段，或被防毒軟體攔截；" + _REINSTALL)
-        return Check("engine", "error", "下載引擎（yt-dlp）無法執行", _tail(err or out) or f"結束碼 {code}", fix)
-    return Check("engine", "ok", f"下載引擎 yt-dlp {out.strip()}", str(path))
+        return Check("engine", "error", "下載引擎（yt-dlp）無法執行", why or f"結束碼 {code}", fix), "broken"
+    if legacy:
+        return Check("engine", "warn", f"下載引擎 yt-dlp {out.strip()}（舊版單檔，每次啟動都要先解壓縮，比較慢）", str(path),
+                     "重新執行安裝檔，會改裝免解壓縮版"), "legacy"
+    detail = str(path)
+    if win:
+        try:
+            facts = fingerprint(path)
+            detail += f"；SHA-256 {facts['sha256']}；大小 {facts['size']} 位元組"
+        except OSError:
+            pass
+    return Check("engine", "ok", f"下載引擎 yt-dlp {out.strip()}", detail), "ok"
+
+
+def _check_engine(home: Path, platform: str, run: Run) -> Check:
+    return _engine_state(home, platform, run)[0]
 
 
 def _check_tool(home: Path, name: str, label: str, args: list, why: str, platform: str, run: Run) -> Check:
@@ -220,7 +271,7 @@ def format_report(checks: list[Check]) -> str:
 
 
 def repair(home: Path, *, platform: str = sys.platform, run: Run = run_capture, output_dir: Path | None = None,
-           reinstall_engine: Callable[[Path], str] = macos_engine.install) -> list[str]:
+           reinstall_engine: Callable[[Path], str] | None = None) -> list[str]:
     """Safe fixes only. Returns what was done, a line starting with ✘ for what could not be."""
     home = Path(home)
     done: list[str] = []
@@ -231,12 +282,18 @@ def repair(home: Path, *, platform: str = sys.platform, run: Run = run_capture, 
             done.append(f"已建立存放資料夾 {output}")
         except OSError as exc:
             done.append(f"✘ 無法建立存放資料夾 {output}：{exc}")
-    if platform == "darwin":
-        if _check_engine(home, platform, run).status == "error":
+    win = platform.startswith("win")
+    if platform == "darwin" or win:
+        check, kind = _engine_state(home, platform, run)
+        if kind == "blocked":  # downloading it again would only get it blocked again
+            done.append(f"✘ yt-dlp.exe 被防毒軟體攔截，重新下載也會再被攔截。{check.fix}（{check.detail}）")
+        elif check.status == "error":
+            reinstall = reinstall_engine or (winengine.install if win else macos_engine.install)
             try:
-                done.append(f"已重新安裝 yt-dlp（{reinstall_engine(home / 'bin')}）")
+                done.append(f"已重新安裝 yt-dlp（{reinstall(home / 'bin')}）")
             except macos_engine.EngineInstallError as exc:
                 done.append(f"✘ 重新安裝 yt-dlp 失敗：{exc}")
+    if platform == "darwin":
         run(["xattr", "-dr", "com.apple.quarantine", str(home / "bin"), str(home / "host")])
         done.append("已移除檔案上「從網路下載」的標記")
     return done

@@ -7,8 +7,9 @@ import {
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
 import { buildExtensionZip, deployToFolder } from "../extension/lib/deploy.js";
+import { UPDATING_HINT, UPDATING_TEXT, createReloadWait, describeOutcome } from "../extension/lib/update-wait.js";
 import { createAutoConnect, extensionNotice, hostNotice, hostVersionNotice, updateAdvice, versionNotice } from "../extension/lib/connection.js";
-import { renderChecks, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
+import { renderChecks, runCopyDiagnostics, runDoctor, summarizeChecks } from "../extension/lib/doctor-view.js";
 import {
   FOLDER_HINTS, FOLDER_NAME, STEP_LABELS, connectSummary, decideView, detectOs, isDeployed, macInstallCommand, selfCheckItems,
   wizardSteps,
@@ -25,7 +26,7 @@ let gaveUp = false; // automatic launching of the host stopped (it keeps closing
 let pageVersion = null; // the version of the extension files this page was published with
 const autoConnect = createAutoConnect();
 
-const LONG = new Set(["queue_copy_text", "queue_download_cover", "doctor", "update_info", "update_apply"]);
+const LONG = new Set(["queue_copy_text", "queue_download_cover", "doctor", "diagnostics", "update_info", "update_apply"]);
 const send = (message) => client.request(message, LONG.has(message.type) ? 180000 : 20000);
 
 function setNote(id, text, kind = "info") {
@@ -99,10 +100,11 @@ function renderQueueArea() {
   document.body.classList.toggle("is-locked", !detected);
   $("add-card").inert = !detected;
   $("queue-card").inert = !detected;
-  const missing = extensionNotice({ detected, everDetected });
+  const updating = reloading(); // (an update is reloading the extension: the banner says so, and "lost" would contradict it)
+  const missing = extensionNotice({ detected, everDetected, updating });
   setText($("no-extension"), missing ?? "");
   setHidden($("no-extension"), !missing);
-  const hostText = hostNotice({ detected, status, wasRunning: hostWasRunning, gaveUp });
+  const hostText = hostNotice({ detected, status, wasRunning: hostWasRunning, gaveUp, updating });
   setText($("conn-note"), hostText?.text ?? "");
   $("conn-note").dataset.kind = hostText?.kind ?? "info";
   setHidden($("conn-note"), !hostText);
@@ -217,10 +219,10 @@ function refreshDoctor() {
 function renderCheck() {
   const items = selfCheckItems({
     detected: client.detected(), everDetected, extensionVersion: client.version(), pageVersion, status,
-    hostOutdated: Boolean(queue?.hostOutdated), gaveUp, doctor: doctorChecks, updateAvailable: updateOffered(),
+    hostOutdated: Boolean(queue?.hostOutdated), gaveUp, doctor: doctorChecks, updateAvailable: updateOffered(), updating: reloading(),
   });
   renderChecks($("check-list"), items);
-  setText($("check-summary"), summarizeChecks(items).text);
+  setText($("check-summary"), reloading() ? "" : summarizeChecks(items).text);
 }
 
 function renderSetupWindow() {
@@ -241,7 +243,7 @@ function renderSetupWindow() {
   $("setup-dot").dataset.s = ok ? "ok" : "todo";
   if (dialog.open && !$("view-check").hidden) renderCheck();
   if (ok) return;
-  const view = decideView({ firstVisit: !everWorked, deployed: false, detected: client.detected(), unhealthyMs: now - unhealthySince, dismissed });
+  const view = decideView({ firstVisit: !everWorked, deployed: false, detected: client.detected(), unhealthyMs: now - unhealthySince, dismissed, updating: reloading() });
   if (view !== "hidden" && !dialog.open) openSetup(view === "check" ? "check" : "steps");
 }
 
@@ -346,6 +348,9 @@ $("auto-cover").addEventListener("change", () => send({ type: "settings_set", se
 const doctorUi = () => ({ check: $("doctor-check"), fix: $("doctor-fix"), list: $("doctor-list"), summary: $("doctor-summary"), fixed: $("doctor-fixed") });
 $("doctor-check").addEventListener("click", () => runDoctor(send, doctorUi(), false));
 $("doctor-fix").addEventListener("click", () => runDoctor(send, doctorUi(), true));
+for (const id of ["diag-copy", "diag-copy-check"]) {
+  $(id).addEventListener("click", () => runCopyDiagnostics(send, { button: $(id), status: $(`${id}-status`), fallback: $(`${id}-text`) }));
+}
 $("save-outdir").addEventListener("click", async () => {
   try {
     const result = await send({ type: "set_output_dir", path: $("outdir").value });
@@ -371,6 +376,26 @@ function setUpNote(text, kind = "info") {
 const updateProgressText = ({ step, done, total }) => ({
   download: `下載更新檔案 ${done} / ${total}`, host: "更新本機小程式…", write: "寫入擴充功能的檔案…",
 })[step] ?? "更新中…";
+
+// The wait for the reload after an update (see lib/update-wait.js). While it runs the page says one calm thing and keeps the
+// "connection lost" message and the self-check window away; a hard end brings the normal messages back.
+const reloadWait = createReloadWait({
+  probe: () => ({ detected: client.detected(), running: status.state === "running", notRunningAt, version: client.version() }),
+});
+const reloading = () => reloadWait.running();
+let doneBanner = null; // "已更新到 v…" for a few seconds after it came back
+let doneTimer = null;
+
+function renderBanner() {
+  const busy = reloading();
+  const shown = busy ? { text: UPDATING_TEXT, kind: "info" } : doneBanner;
+  $("update-banner").hidden = !shown;
+  if (!shown) return;
+  $("update-banner").dataset.kind = shown.kind;
+  $("update-banner").dataset.busy = String(busy);
+  setText($("update-banner-text"), shown.text);
+  setText($("update-banner-hint"), busy ? UPDATING_HINT : "");
+}
 
 // The 「更新到最新版」 button can be pressed right now (it is hidden until an update was found).
 const updateOffered = () => Boolean(updateInfo?.hasUpdate && updateInfo.canUpdateHere && client.detected() && status.state === "running") && !updateBusy;
@@ -405,6 +430,7 @@ function renderUpdate() {
     else if (updateInfo?.hasUpdate) note = { kind: "info", text: updateAdvice(updateInfo, connected) };
   }
   setNote("up-note", note.text, note.kind);
+  renderBanner();
   renderVersionNotes();
   if (connected && !autoChecked && !updateBusy) { // once per visit, quietly
     autoChecked = true;
@@ -437,20 +463,6 @@ async function checkUpdate({ quiet = false, inside = false } = {}) {
   }
 }
 
-// After the reload the extension is gone for a moment. It is back when its host has been seen restarting (or its version is the
-// new one) and runs again. A page that sees nothing happen for a while concludes that no reload happened.
-async function waitUntilBack(expected, before, maxMs = 45000, noRestartAfterMs = 8000) {
-  const started = Date.now();
-  while (Date.now() - started < maxMs) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!(client.detected() && status.state === "running")) continue;
-    const restarted = notRunningAt >= started;
-    if (restarted || (expected && expected !== before && client.version() === expected)) return { back: true, restarted: true };
-    if (Date.now() - started >= noRestartAfterMs) return { back: true, restarted: false };
-  }
-  return { back: false, restarted: false };
-}
-
 async function applyUpdate() {
   if (updateBusy || !updateInfo?.hasUpdate) return;
   updateBusy = true;
@@ -467,11 +479,16 @@ async function applyUpdate() {
       return;
     }
     setUpNote("更新完成，擴充功能正在重新載入…", "ok");
-    const { back } = await waitUntilBack(expected, before);
-    const now = client.version();
-    if (!back) upNote = { text: "已更新，但擴充功能或本機小程式還沒回應。請到 chrome://extensions 確認擴充功能已啟用，再重新整理本頁。", kind: "error" };
-    else if (expected && now !== expected) upNote = { text: `已重新載入，但擴充功能的版本仍是 v${now}（預期 v${expected}）。載入的可能不是更新的那個資料夾，請到 chrome://extensions 確認它的載入路徑。`, kind: "error" };
-    else upNote = { text: expected ? `已更新到 v${expected}。` : "已更新。", kind: "ok" };
+    const waiting = reloadWait.start({ expected, before });
+    render(); // (the calm banner takes over from "connection lost" for the whole wait)
+    const outcome = await waiting;
+    upNote = describeOutcome({ ...outcome, version: client.version() });
+    if (outcome.back) unhealthySince = Date.now(); // (the self-check counts from now, not from when the reload began)
+    if (upNote.kind === "ok") {
+      doneBanner = { text: upNote.text, kind: "ok" };
+      clearTimeout(doneTimer);
+      doneTimer = setTimeout(() => { doneBanner = null; renderBanner(); }, 8000);
+    }
     updateInfo = null;
     if (upNote.kind === "ok") { // compare again: files that still differ mean the loaded extension is not the folder that was written
       await checkUpdate({ quiet: true, inside: true });

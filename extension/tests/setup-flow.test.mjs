@@ -206,3 +206,18 @@ test("the self-check names a local program whose version differs from the extens
   assert.match(offered.hostVersion.fix, /「更新到最新版」/);
   assert.equal(byId(items({})).hostVersion, undefined, "same versions: no line");
 });
+
+test("while an update reloads the extension no window opens by itself, whatever the page has seen", () => {
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, unhealthyMs: 60000, updating: true }), "hidden");
+  assert.equal(decideView({ firstVisit: true, deployed: false, detected: false, unhealthyMs: 60000, updating: true }), "hidden");
+  assert.equal(decideView({ firstVisit: false, deployed: false, detected: false, unhealthyMs: 60000, updating: false }), "check");
+});
+
+test("a self-check that is open while the extension reloads says so calmly instead of 'connection lost'", () => {
+  const list = items({ detected: false, updating: true });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].status, "warn");
+  assert.match(list[0].title, /更新中，擴充功能正在重新載入/);
+  assert.doesNotMatch(JSON.stringify(list), /連線中斷/);
+  assert.match(items({ detected: false, updating: false })[0].title, /連線中斷/);
+});

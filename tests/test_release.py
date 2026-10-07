@@ -198,7 +198,6 @@ def test_bump_tells_the_person_what_to_run_next_and_runs_none_of_it(tmp_path, ca
         assert expected in out, expected
     assert git(repo, "tag", "--list") == "", "no tag was made"
     assert git(repo, "log", "--oneline").count("\n") == 1, "no commit was made"
-    assert "stale" not in out or True
     assert (repo / "extension/installers/install-mac.sh").read_bytes() == b"#!/bin/bash\nversion 1.2.3\n", "bump does not build"
 
 

@@ -3,12 +3,12 @@
 import { HOST_NAME } from "./lib/constants.js";
 import { classifyConnectError } from "./lib/platform.js";
 import { downloadInstaller } from "./lib/installer.js";
-import { checkLatest } from "./lib/updater.js";
 import { applyUpdate, collectUpdateInfo } from "./lib/update-pipeline.js";
-import { applyBadge, failedSummary, loadSummary, saveSummary, summarizeCheck } from "./lib/update-state.js";
+import { createCheckRunner, recordCheck, recordFailure } from "./lib/update-state.js";
 import { createController } from "./lib/queue-controller.js";
 import { OUTPUT_DIR_LOCKED_TEXT } from "./lib/queue.js";
 import { classifySender, isAllowed } from "./lib/messages.js";
+import { NOT_CONNECTED_TEXT, diagnosticsReply } from "./lib/diagnostics.js";
 import { injectBridge } from "./lib/inject.js";
 
 let port = null;
@@ -126,6 +126,10 @@ function onHostMessage(msg) {
   if (msg.type === "ready") {
     setStatus({ state: "running", ready: msg, detail: null });
     controllerReady.then((controller) => controller.onHostConnected(msg));
+    if (!checkedOnConnect) {
+      checkedOnConnect = true;
+      checks.trigger();
+    }
     return;
   }
   const waiter = typeof msg.reqId === "string" && msg.reqId.startsWith("bg:") ? waiting.get(msg.reqId) : null;
@@ -184,6 +188,16 @@ async function runDoctor(msg) {
   }
 }
 
+// 「複製診斷資訊」: the host's plain-text report (versions, the environment check, recent log lines), for the person to send on.
+async function runDiagnostics() {
+  if (!host.connected()) return { ok: false, error: NOT_CONNECTED_TEXT };
+  try {
+    return diagnosticsReply(await host.request({ type: "diagnostics" }, 60000));
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 // ---- "check for updates" and "update to the latest", for the web page and the side panel ----
 let updating = false;
 
@@ -197,8 +211,7 @@ async function currentUpdateInfo() {
 async function checkForUpdate() {
   try {
     const info = await currentUpdateInfo();
-    await saveSummary(summarizeCheck(info)).catch(() => {});
-    await applyBadge(info.hasUpdate).catch(() => {});
+    await recordCheck(info);
     return {
       ok: true,
       info: {
@@ -252,6 +265,7 @@ async function handle(msg) {
     case "settings_set": controller.setSettings(msg.settings); return { ok: true };
     case "deploy_installer": return deployInstaller();
     case "doctor": return runDoctor(msg);
+    case "diagnostics": return runDiagnostics();
     case "update_info": return checkForUpdate();
     case "update_apply": return runUpdateNow(msg);
     default: break;
@@ -285,24 +299,30 @@ chrome.runtime.onConnect.addListener((connection) => {
   controllerReady.then((controller) => connection.postMessage({ type: "queue_state", state: controller.getState() }));
 });
 
-// After an install, reload or update, give web pages that are already open a working bridge.
-chrome.runtime.onInstalled.addListener(() => { injectBridge(chrome); });
+// Web pages that are already open have no working bridge after an install, update, reload, the extension being enabled
+// again, or a browser start. Each of those starts this service worker, so it makes sure of the bridge every time it starts
+// (the "management" permission that would announce "enabled" is not declared; this needs none). It is harmless to repeat.
+injectBridge(chrome);
+chrome.runtime.onStartup.addListener(() => { injectBridge(chrome); });
 
 // Clicking the toolbar icon opens the side panel (there is no popup).
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
-// Look for a new release every 6 hours; a failed check keeps the previous badge.
+// Look for a new release every 6 hours, at browser start and once when the local program first connects after this
+// service worker started (the check at start could not compare its files). It is the same check as the manual one, so
+// the summary and the badge cover every part that differs; a failed check keeps the last result and the badge.
 const UPDATE_ALARM = "check-update";
 
 async function backgroundCheck() {
+  if (updating) return; // an update is writing the same files
   try {
-    const info = await checkLatest();
-    await saveSummary(summarizeCheck(info));
-    await applyBadge(info.hasUpdate);
+    await recordCheck(await currentUpdateInfo());
   } catch (error) {
-    await saveSummary(failedSummary(await loadSummary().catch(() => null), error.message));
+    await recordFailure(error.message);
   }
 }
+const checks = createCheckRunner(backgroundCheck);
+let checkedOnConnect = false;
 
 async function ensureUpdateAlarm() {
   if (!(await chrome.alarms.get(UPDATE_ALARM))) {
@@ -311,6 +331,7 @@ async function ensureUpdateAlarm() {
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === UPDATE_ALARM) backgroundCheck();
+  if (alarm.name === UPDATE_ALARM) checks.trigger();
 });
+chrome.runtime.onStartup.addListener(() => { checks.trigger(); });
 ensureUpdateAlarm().catch(() => {});

@@ -75,6 +75,14 @@
 .dr-summary { margin: 8px 0 0; font-size: 12.5px; font-weight: 700; }
 .dr-fixed { margin: 4px 0 0; font-size: 12.5px; color: var(--ok); overflow-wrap: anywhere; }
 
+/* 「複製診斷資訊」 under the environment check (side panel and web page) */
+.diag { display: grid; gap: 6px; justify-items: start; margin-top: 10px; }
+.diag-note, .diag-status { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.diag-status[data-kind="ok"] { color: var(--ok); }
+.diag-status[data-kind="error"] { color: var(--err); }
+.diag-status[hidden], .diag-text[hidden] { display: none; }
+.diag-text { width: 100%; box-sizing: border-box; font: 11.5px/1.4 var(--mono); color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; resize: vertical; }
+
 @media (prefers-reduced-motion: reduce) {
   .qrow[data-kind="fetching"] .qtitle { animation: none; }
 }
