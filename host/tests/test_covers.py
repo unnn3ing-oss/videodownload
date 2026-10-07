@@ -33,6 +33,24 @@ def test_save_cover_different_video_same_name_gets_suffix(tmp_path):
     assert names == ["颱風假放不放.jpg", "颱風假放不放_2.jpg", "颱風假放不放_3.jpg"]
 
 
+def test_save_cover_does_not_hand_out_a_name_another_video_still_has_registered(tmp_path):
+    first = save_cover(tmp_path, "v1", "颱風假放不放", JPEG)
+    first.unlink()  # the picture is gone, the registry still says it is v1's
+    other = save_cover(tmp_path, "v2", "颱風假放不放二", JPEG + b"2")
+    assert other.name != first.name
+    again = save_cover(tmp_path, "v1", "颱風假放不放", JPEG + b"1")
+    assert again.name == first.name
+    assert other.read_bytes() == JPEG + b"2" and again.read_bytes() == JPEG + b"1"
+
+
+def test_save_cover_does_not_overwrite_when_two_videos_are_registered_to_one_name(tmp_path):
+    (tmp_path / "共用.jpg").write_bytes(b"\xff\xd8\xff" + b"other video's cover")
+    (tmp_path / ".ytdl-covers.json").write_text(json.dumps({"v1": "共用.jpg", "v2": "共用.jpg"}), encoding="utf-8")
+    path = save_cover(tmp_path, "v1", "共用", JPEG)
+    assert path.name != "共用.jpg"
+    assert (tmp_path / "共用.jpg").read_bytes() == b"\xff\xd8\xff" + b"other video's cover"
+
+
 @pytest.mark.parametrize("data", [b"", b"<html>not an image</html>", b"\xff\xd8"])
 def test_save_cover_rejects_non_jpeg(tmp_path, data):
     with pytest.raises(CoverError) as exc:

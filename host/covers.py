@@ -72,15 +72,18 @@ def save_cover(directory: Path, video_id: str, title: str, data: bytes) -> Path:
     except OSError as exc:
         raise CoverError("bad_path", f"無法建立存放資料夾：{exc}") from exc
     try:
-        known = _registry(directory).get(video_id)
-        target = safe_output_path(directory, known) if known else None
+        registry = _registry(directory)
+        # names other videos are registered to stay theirs even when the picture was deleted meanwhile
+        claimed = {name.lower() for other, name in registry.items() if other != video_id}
+        known = registry.get(video_id)
+        target = safe_output_path(directory, known) if known and known.lower() not in claimed else None
         if target is None:
             base = cover_name(title, video_id)
             number = 1
             while True:
                 suffix = "" if number == 1 else f"_{number}"
                 target = safe_output_path(directory, f"{base}{suffix}.jpg")
-                if not target.exists():
+                if not target.exists() and target.name.lower() not in claimed:
                     break
                 number += 1
         tmp = target.with_name(target.name + ".tmp")

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 import host as host_mod
 from host import Host, locate_engine, main
 from protocol import read_message, write_message
+from ytdlp import VideoRef
 
 HERE = Path(__file__).parent
 HOST_PY = HERE.parent / "host.py"
@@ -312,3 +314,88 @@ def test_remove_message_not_found(tmp_path):
     assert events[-1]["type"] == "error" and events[-1]["code"] == "not_found"
     h.handle({"type": "remove", "reqId": 5, "itemId": 5})
     assert events[-1]["type"] == "error"
+
+
+class BrokenPipe:
+    """A native-messaging stdin that delivers `data`, waits for `ready()`, then fails like a closed pipe."""
+
+    def __init__(self, data: bytes, error: Exception, ready=lambda: True):
+        self._buf, self._error, self._ready = io.BytesIO(data), error, ready
+
+    def read(self, n):
+        chunk = self._buf.read(n)
+        if chunk:
+            return chunk
+        deadline = time.monotonic() + 10
+        while not self._ready() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise self._error
+
+
+@pytest.mark.parametrize("error", [OSError(22, "Invalid argument"), BrokenPipeError(), ValueError("I/O on closed file")])
+def test_pipe_error_on_read_stops_the_running_download_and_exits_cleanly(tmp_path, monkeypatch, error):
+    log = tmp_path / "started.log"
+    monkeypatch.setenv("YTDL_STUB_LOG", str(log))
+    monkeypatch.setenv("YTDL_STUB_DELAY", "30")  # yt-dlp is still running when the pipe breaks
+    monkeypatch.setenv("YTDL_HOME", str(make_home(tmp_path)))
+    out = io.BytesIO()
+    stdin = BrokenPipe(frames({"type": "set_config", "outputDir": str(tmp_path / "out")},
+                              {"type": "download", "quality": 720,
+                               "items": [{"url": URL, "id": "v1", "title": "範例影片"}]}).getvalue(),
+                       error, ready=log.exists)
+    started = time.monotonic()
+    assert main([], stdin=stdin, stdout=out) == 1
+    assert time.monotonic() - started < 10
+    done = [m for m in parse_all(out.getvalue()) if m["type"] == "done"]
+    assert len(done) == 1 and done[0]["summary"]["cancelled"] is True  # the job finished: yt-dlp was killed, not orphaned
+
+
+class BrokenOut(io.BytesIO):
+    """stdout that fails every write that carries `needle`."""
+
+    def __init__(self, needle: bytes):
+        super().__init__()
+        self._needle = needle
+
+    def write(self, data):
+        if self._needle in data:
+            raise BrokenPipeError(32, "Broken pipe")
+        return super().write(data)
+
+
+def test_too_large_reply_to_a_broken_pipe_does_not_kill_the_worker_thread(tmp_path, monkeypatch):
+    refs = [VideoRef(f"v{i}", "題" * 100, URL, None) for i in range(12000)]  # one reply far over Chrome's 1 MB
+    monkeypatch.setattr(host_mod, "resolve", lambda engine, urls, limit: refs)
+    monkeypatch.setenv("YTDL_HOME", str(make_home(tmp_path)))
+    died = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: died.append(args.exc_value))
+    stdin = frames({"type": "resolve", "reqId": 1, "urls": [URL]}, {"type": "ping", "reqId": 2})
+    assert main([], stdin=stdin, stdout=BrokenOut(b"too_large")) == 0  # the pipe stays readable until EOF
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread():
+            thread.join(10)
+    assert died == []  # the worker must not die writing its "too large" notice into the broken pipe
+
+
+def _boom(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("setup,message", [
+    (lambda mp: mp.setattr(host_mod.doctor, "diagnose", _boom), {"type": "doctor"}),
+    (lambda mp: (mp.setattr(host_mod, "_uses_macos_engine", lambda: False), mp.setattr(Host, "_version", _boom)),
+     {"type": "update_engine"}),
+    (lambda mp: mp.setattr(host_mod, "resolve", lambda engine, urls, limit: [object()]),
+     {"type": "resolve", "urls": [URL]}),
+    (lambda mp: mp.setattr(host_mod, "fetch_meta", lambda engine, url: 5), {"type": "meta", "url": URL}),
+])
+def test_background_handler_that_raises_still_answers_with_an_internal_error(tmp_path, monkeypatch, setup, message):
+    setup(monkeypatch)
+    h, events = new_host(tmp_path)
+    died = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: died.append(args.exc_value))
+    h.handle({**message, "reqId": 21})
+    h.wait(10)
+    assert died == []
+    assert len(events) == 1 and events[0]["type"] == "error" and events[0]["code"] == "internal"
+    assert events[0]["reqId"] == 21 and events[0]["message"].startswith("內部錯誤")

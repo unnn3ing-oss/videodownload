@@ -43,7 +43,8 @@ else:
             log.write(video_id() + "\n")
     print("[ytdl-progress]0|1024|NA|NA|NA", flush=True)  # the download has started
     time.sleep(float(os.environ.get("YTDL_STUB_DELAY", "0")))  # lets tests look at a running download
-    target = args[args.index("-o") + 1].replace("%%", "%")
-    Path(target).write_text("x", encoding="utf-8")
+    # like yt-dlp: the bare -o name goes into the -P home: folder
+    home = next(a[len("home:"):] for i, a in enumerate(args) if i and args[i - 1] == "-P" and a.startswith("home:"))
+    Path(home, args[args.index("-o") + 1].replace("%%", "%")).write_text("x", encoding="utf-8")
     print("[ytdl-progress]512|1024|NA|100|1", flush=True)
     print(f"[ytdl-done]{args[-1].split('v=')[-1]}|720|avc1.4d401f", flush=True)

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
-from quality import FORMAT_SORT, format_selector
+from quality import format_selector, format_sort
 
 PROGRESS_PREFIX = "[ytdl-progress]"
 DONE_PREFIX = "[ytdl-done]"
@@ -70,15 +70,18 @@ class ResolveError(Exception):
         self.message = message
 
 
-def build_download_args(engine: Engine, url: str, quality: int, target: Path) -> list[str]:
+def build_download_args(engine: Engine, url: str, quality: int, target: Path, temp_dir: Path) -> list[str]:
     progress = (f"download:{PROGRESS_PREFIX}%(progress.downloaded_bytes)s|%(progress.total_bytes)s"
                 "|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
     return engine.base_args() + [
         "--no-playlist",
         "-f", format_selector(quality),
-        "-S", FORMAT_SORT,
+        "-S", format_sort(quality),
         "--merge-output-format", "mp4",
-        "-o", str(target).replace("%", "%%"),
+        # -o must be a bare name: with an absolute one yt-dlp drops every -P and writes the .part beside the video
+        "-P", f"home:{target.parent}",
+        "-P", f"temp:{temp_dir}",
+        "-o", target.name.replace("%", "%%"),
         "--progress", "--newline",
         "--progress-template", progress,
         "--print", f"after_move:{DONE_PREFIX}%(id)s|%(height)s|%(vcodec)s",
@@ -125,22 +128,40 @@ _ERRORS = [  # order matters: first match wins
      "影片無法使用（已下架或不存在）"),
     ("login_required", ("sign in to confirm", "login required", "members-only"),
      "YouTube 要求登入或驗證；請改用住宅或公司網路，或確認是否為年齡限制／會員專屬影片"),
+    # The next three come before "network": their text is usually wrapped in "Unable to download webpage: ...".
+    ("rate_limited", ("http error 429", "too many requests"),
+     "YouTube 暫時限制了請求，請等一陣子再試，並調高「間隔」"),
+    ("forbidden", ("http error 403", "forbidden"),
+     "YouTube 拒絕了這次請求（403），請稍後再試；若一直發生，請改用其他網路並調高「間隔」"),
+    ("tls", ("certificate_verify_failed", "certificate verify failed", "self-signed certificate",
+             "self signed certificate", "unable to get local issuer certificate", "ssl:"),
+     "公司網路可能攔截了加密連線（憑證驗證失敗），請洽資訊人員"),
+    ("blocked_by_antivirus", ("winerror 225", "contains a virus",
+                              "operation did not complete successfully because the file contains"),
+     "檔案被防毒軟體擋下，請把 YT批量下載器 資料夾加入防毒例外"),
+    ("file_locked", ("winerror 32", "being used by another process", "permissionerror"),
+     "檔案被其他程式使用中，關閉後再試"),
     ("disk_full", ("no space left on device",), "磁碟空間不足"),
     ("network", ("unable to download webpage", "timed out", "temporary failure in name resolution",
-                 "network is unreachable", "connection reset", "getaddrinfo failed", "http error 429"),
+                 "network is unreachable", "connection reset", "getaddrinfo failed"),
      "網路連線失敗或逾時，請稍後再試"),
+    ("engine_outdated", ("js runtime", "javascript runtime"),
+     "下載引擎缺少 JavaScript 執行環境（Deno），請重新執行安裝檔"),
     ("engine_outdated", ("challenge solving failed", "signature solving failed", "unable to extract",
                          "requested format is not available"),
-     "下載引擎可能過舊，請按「更新引擎」後再試"),
+     "下載引擎可能過舊，請重新執行安裝檔（它會一併更新下載引擎）"),
 ]
 
 
 def classify_error(stderr: str) -> tuple[str, str]:
-    lowered = stderr.lower()
+    lines = [ln for ln in stderr.strip().splitlines() if ln.strip()]
+    errors = [ln for ln in lines if ln.lstrip().startswith("ERROR:")]
+    relevant = errors or lines  # warnings must not decide the class when yt-dlp named an error
+    lowered = "\n".join(relevant).lower()
     for code, needles, message in _ERRORS:
         if any(n in lowered for n in needles):
             return code, message
-    last = next((ln for ln in reversed(stderr.strip().splitlines()) if ln.strip()), "")
+    last = relevant[-1] if relevant else ""
     return "unknown", f"下載失敗（未知原因）：{last[:200]}"
 
 

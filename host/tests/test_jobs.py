@@ -14,23 +14,33 @@ def item(vid="v1", title="標題"):
     return {"url": URL.format(vid), "id": vid, "title": title}
 
 
+def paths_of(cmd):
+    """(home dir, temp dir, file name) the way yt-dlp reads them: -P home:/temp: and the -o template (% unescaped)."""
+    def given(kind):
+        return next((cmd[i + 1][len(kind) + 1:] for i, a in enumerate(cmd[:-1])
+                     if a == "-P" and cmd[i + 1].startswith(kind + ":")), None)
+
+    return given("home"), given("temp"), cmd[cmd.index("-o") + 1].replace("%%", "%")
+
+
 class Harness:
     """JobRunner wired to a fake yt-dlp that writes the -o target and prints a done line."""
 
-    def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None, delay=0):
+    def __init__(self, tmp_path, *, height=1080, codec="avc1.640028", fail=None, resolve_fn=None, delay=0, jitter=0.0):
         self.out = tmp_path / "out"
         self.events, self.calls = [], []
         self.height, self.codec, self.fail = height, codec, fail or {}
         self.runner = JobRunner(Engine(Path("yt-dlp")), self.events.append, stream=self.stream,
                                 resolve_fn=resolve_fn or (lambda e, u, limit=None: []),
-                                sleep=lambda s: None, delay=delay)
+                                sleep=lambda s: None, delay=delay, jitter=lambda: jitter)
 
     def stream(self, cmd, on_line, cancel):
         self.calls.append(cmd)
         vid = cmd[-1].split("v=")[-1]
         if vid in self.fail:
             return StreamResult(1, self.fail[vid], False)
-        Path(cmd[cmd.index("-o") + 1].replace("%%", "%")).write_text("x", encoding="utf-8")
+        home, _, name = paths_of(cmd)
+        Path(home, name).write_text("x", encoding="utf-8")
         on_line("[ytdl-progress]512|1024|NA|100|1")
         on_line(f"[ytdl-done]{vid}|{self.height}|{self.codec}")
         return StreamResult(0, "", False)
@@ -53,7 +63,7 @@ def test_success_names_file_by_title_and_records(tmp_path):
     done = h.of("item_done")[0]
     assert done["file"].endswith("標題.mp4") and done["height"] == 1080 and done["skipped"] is False
     assert h.of("progress")[0]["percent"] == 50.0
-    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False}
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False, "aborted": None}
     assert Archive(h.out).mapping() == {"v1": "標題.mp4"}
 
 
@@ -74,7 +84,7 @@ def test_failure_does_not_stop_batch(tmp_path):
     h = Harness(tmp_path, fail={"v1": "ERROR: Private video. Sign in"}).run([item("v1", "甲"), item("v2", "乙")])
     assert h.of("item_failed")[0]["code"] == "private"
     assert h.of("item_done")[0]["file"].endswith("乙.mp4")
-    assert h.summary == {"ok": 1, "skipped": 0, "failed": 1, "cancelled": False}
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 1, "cancelled": False, "aborted": None}
 
 
 def test_placeholder_titles_fail_without_download(tmp_path):
@@ -321,7 +331,7 @@ def test_remove_current_item_continues_with_next(tmp_path):
     h.runner.join(10)
     assert [e["itemId"] for e in h.of("item_removed")] == ["v1"]
     assert [Path(e["file"]).name for e in h.of("item_done")] == ["乙.mp4"]
-    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False}
+    assert h.summary == {"ok": 1, "skipped": 0, "failed": 0, "cancelled": False, "aborted": None}
 
 
 def test_remove_item_during_cooldown(tmp_path):
@@ -371,3 +381,370 @@ def test_removed_item_can_be_enqueued_again_in_the_same_job(tmp_path):
     h.runner.join(10)
     assert [e["itemId"] for e in h.of("item_removed")] == ["v1"]
     assert sorted(Path(e["file"]).name for e in h.of("item_done")) == ["乙.mp4", "甲.mp4"]
+
+
+def test_every_video_downloads_through_its_own_partial_dir(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "同名"), item("v2", "同名")])
+    (home1, temp1, name1), (home2, temp2, name2) = (paths_of(c) for c in h.calls)
+    assert home1 == home2 == str(h.out)
+    assert temp1 == str(h.out / ".ytdl-partial" / "v1") and temp2 == str(h.out / ".ytdl-partial" / "v2")
+    assert "/" not in name1 and "\\" not in name1  # an absolute -o would make yt-dlp ignore -P temp:
+    assert sorted([name1, name2]) == ["同名 [v2].mp4", "同名.mp4"]
+
+
+def test_other_videos_unfinished_download_is_never_resumed(tmp_path):
+    h = Harness(tmp_path)
+    seen = []
+    original = h.stream
+
+    def stream(cmd, on_line, cancel):
+        _, temp, name = paths_of(cmd)
+        part = Path(temp, name + ".part")
+        seen.append(part.exists())  # yt-dlp resumes whatever .part it finds under the name it is about to write
+        if cmd[-1].endswith("v1"):
+            part.parent.mkdir(parents=True, exist_ok=True)
+            part.write_text("first video's bytes", encoding="utf-8")
+            return StreamResult(1, "ERROR: Unable to download webpage: The read operation timed out", False)
+        return original(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+    h.run([item("v1", "同名"), item("v2", "同名")])
+    assert seen == [False, False] and h.summary["ok"] == 1
+
+
+def test_partial_dir_is_removed_after_success_and_the_parent_with_it(tmp_path):
+    h = Harness(tmp_path)
+    original = h.stream
+
+    def stream(cmd, on_line, cancel):
+        Path(paths_of(cmd)[1]).mkdir(parents=True)  # yt-dlp creates it while downloading
+        return original(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+    h.run([item()])
+    assert h.summary["ok"] == 1
+    assert not (h.out / ".ytdl-partial").exists() and (h.out / "標題.mp4").exists()
+
+
+def test_partial_dir_of_a_failed_video_is_kept_for_the_retry(tmp_path):
+    h = Harness(tmp_path)
+    original = h.stream
+
+    def stream(cmd, on_line, cancel):
+        _, temp, name = paths_of(cmd)
+        if cmd[-1].endswith("v1"):
+            Path(temp).mkdir(parents=True, exist_ok=True)
+            Path(temp, name + ".part").write_text("half", encoding="utf-8")
+            return StreamResult(1, "ERROR: Unable to download webpage: The read operation timed out", False)
+        Path(temp).mkdir(parents=True, exist_ok=True)
+        return original(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert (h.out / ".ytdl-partial" / "v1" / "甲.mp4.part").read_text(encoding="utf-8") == "half"
+    assert not (h.out / ".ytdl-partial" / "v2").exists()  # v2 finished: only its own dir goes away
+
+
+def test_percent_in_a_title_is_escaped_in_the_template_only(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "100% 成長")])
+    cmd = h.calls[0]
+    assert cmd[cmd.index("-o") + 1] == "100%% 成長.mp4"
+    assert (h.out / "100% 成長.mp4").exists() and h.of("item_done")[0]["file"].endswith("100% 成長.mp4")
+
+
+MERGE_FAILED = "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」"
+
+
+def unmerged_stream(h, *, write_final=None, done_line=True):
+    """yt-dlp with a broken ffmpeg: exit code 0, a done line, and the two streams left apart."""
+    def stream(cmd, on_line, cancel):
+        h.calls.append(cmd)
+        home, _, name = paths_of(cmd)
+        stem = Path(name).stem
+        Path(home, f"{stem}.f137.mp4").write_text("video only", encoding="utf-8")
+        Path(home, f"{stem}.f140.m4a").write_text("audio only", encoding="utf-8")
+        if write_final is not None:
+            Path(home, name).write_text(write_final, encoding="utf-8")
+        if done_line:
+            on_line(f"[ytdl-done]{cmd[-1].split('v=')[-1]}|1080|avc1.640028")
+        return StreamResult(0, "", False)
+
+    return stream
+
+
+def test_unmerged_streams_are_a_failure_not_a_success(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = unmerged_stream(h)
+    h.run([item()])
+    assert h.of("item_done") == []
+    failed = h.of("item_failed")
+    assert [(e["itemId"], e["code"], e["reason"]) for e in failed] == [("v1", "merge_failed", MERGE_FAILED)]
+    assert h.summary["ok"] == 0 and h.summary["failed"] == 1
+
+
+def test_unmerged_streams_are_not_recorded_in_the_archive(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = unmerged_stream(h)
+    h.run([item()])
+    assert Archive(h.out).mapping() == {}
+    h.runner._stream = h.stream  # ffmpeg fixed: the same video is downloaded again, not skipped
+    h.run([item()], job_id="j2")
+    assert h.of("item_done")[-1]["skipped"] is False and Archive(h.out).mapping() == {"v1": "標題.mp4"}
+
+
+def test_empty_final_file_is_a_failure(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = unmerged_stream(h, write_final="")
+    h.run([item()])
+    assert [e["code"] for e in h.of("item_failed")] == ["merge_failed"] and h.of("item_done") == []
+
+
+def test_exit_zero_without_the_done_line_is_a_failure(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = unmerged_stream(h, write_final="video", done_line=False)
+    h.run([item()])
+    assert [e["code"] for e in h.of("item_failed")] == ["merge_failed"] and Archive(h.out).mapping() == {}
+
+
+def test_merge_failure_does_not_stop_the_batch(tmp_path):
+    h = Harness(tmp_path)
+    good, broken = h.stream, unmerged_stream(h)
+
+    def stream(cmd, on_line, cancel):
+        return (broken if cmd[-1].endswith("v1") else good)(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert h.summary["ok"] == 1 and h.summary["failed"] == 1
+    assert [Path(e["file"]).name for e in h.of("item_done")] == ["乙.mp4"]
+
+
+def test_two_merge_failures_in_a_row_stop_the_job(tmp_path):
+    # a broken ffmpeg fails every video only after it was downloaded in full: stop before wasting the whole channel
+    h = Harness(tmp_path)
+    h.runner._stream = unmerged_stream(h)
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙")])
+    assert [e["itemId"] for e in h.of("item_failed")] == ["v1", "v2"]
+    assert h.summary["aborted"]["code"] == "merge_failed" and "檢查環境" in h.summary["aborted"]["message"]
+
+
+def test_a_good_video_between_merge_failures_keeps_the_job_going(tmp_path):
+    h = Harness(tmp_path)
+    good, broken = h.stream, unmerged_stream(h)
+
+    def stream(cmd, on_line, cancel):
+        return (good if cmd[-1].endswith("v2") else broken)(cmd, on_line, cancel)
+
+    h.runner._stream = stream
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙")])
+    assert h.summary["aborted"] is None and h.summary["ok"] == 1 and h.summary["failed"] == 2
+
+
+TIMEOUT = "ERROR: [youtube] x: Unable to download webpage: The read operation timed out"
+TOO_MANY = "ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests"
+DISK_FULL = "ERROR: unable to write data: [Errno 28] No space left on device"
+LOCKED = "ERROR: Unable to rename file: [WinError 32] The process cannot access the file because it is being used by another process"
+PRIVATE = "ERROR: [youtube] x: Private video. Sign in if you've been granted access to this video"
+
+
+def recording(h):
+    sleeps = []
+    h.runner._sleep = sleeps.append
+    return sleeps
+
+
+def waits(h):
+    return [(e["nextId"], e["seconds"]) for e in h.of("cooldown")]
+
+
+def test_failures_are_spaced_by_the_cooldown_too(tmp_path):
+    h = Harness(tmp_path, fail={"v1": PRIVATE})
+    sleeps = recording(h)
+    h.run([item("v1", "甲"), item("v2", "乙")], cooldown=3)
+    assert waits(h) == [("v2", 3)] and sum(sleeps) == 3 and h.summary["failed"] == 1 and h.summary["ok"] == 1
+
+
+def test_no_wait_before_items_that_never_touch_the_network(tmp_path):
+    h = Harness(tmp_path).run([item("v1", "甲")], cooldown=3)  # v1 is now in the archive
+    h.events.clear()
+    sleeps = recording(h)
+    h.run([item("v2", "乙"), item("p1", "[Private video]"), {"url": "https://evil.com/x", "id": None, "title": None},
+           {"url": URL.format("x"), "id": "../x", "title": "t"}, item("v1", "甲"), item("v3", "丙")],
+          job_id="j2", cooldown=3)
+    assert waits(h) == [("v3", 3)] and sum(sleeps) == 3  # v2 is the first attempt; only v3 follows one
+    assert [e["code"] for e in h.of("item_failed")] == ["private", "bad_url", "bad_id"]
+
+
+def test_resolving_a_bare_url_counts_as_a_network_attempt(tmp_path):
+    resolver = lambda e, urls, limit=None: [VideoRef("v9", "解析標題", URL.format("v9"))]
+    h = Harness(tmp_path, resolve_fn=resolver)
+    sleeps = recording(h)
+    h.run([item("v1", "甲"), {"url": URL.format("v9")}], cooldown=3)
+    assert waits(h) == [(URL.format("v9"), 3)] and sum(sleeps) == 3  # once, before the resolve (no id yet), not again
+    assert h.summary["ok"] == 2
+
+
+def test_cooldown_gets_between_zero_and_a_quarter_extra_never_less(tmp_path):
+    for jitter, expected in [(0.0, 8), (0.5, 9), (0.999, 8 * 1.24975)]:
+        h = Harness(tmp_path / str(jitter), jitter=jitter)
+        sleeps = recording(h)
+        h.run([item("v1", "甲"), item("v2", "乙")], cooldown=8)
+        assert waits(h) == [("v2", pytest.approx(expected))] and sum(sleeps) == pytest.approx(expected)
+
+
+def test_default_jitter_is_random_within_a_quarter(tmp_path):
+    h = Harness(tmp_path)
+    h.runner = JobRunner(h.runner.engine, h.events.append, stream=h.stream, sleep=lambda s: None, delay=0)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 12)], cooldown=10)
+    seconds = [e["seconds"] for e in h.of("cooldown")]
+    assert len(seconds) == 10 and all(10 <= s <= 12.5 for s in seconds) and len(set(seconds)) > 1
+
+
+def test_throttle_failures_double_the_wait_and_a_success_resets_it(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT, "v2": TOO_MANY})
+    recording(h)
+    h.run([item("v1", "一"), item("v2", "二"), item("v3", "三"), item("v4", "四")], cooldown=3)
+    # after one failure max(5, 3) * 1, after two max(5, 3) * 2; v3 succeeded, so v4 waits the plain cooldown again
+    assert waits(h) == [("v2", 5), ("v3", 10), ("v4", 3)]
+    assert h.summary["aborted"] is None and h.summary["ok"] == 2
+
+
+def test_throttle_wait_is_capped_and_never_below_the_configured_cooldown(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT, "v2": TIMEOUT, "v3": TIMEOUT})
+    recording(h)
+    h.run([item("v1", "一"), item("v2", "二"), item("v3", "三")], cooldown=100)
+    assert waits(h) == [("v2", 100), ("v3", 120)]  # 100 * 2 = 200 is capped to 120
+    h2 = Harness(tmp_path / "again", fail={"v1": TIMEOUT, "v2": TIMEOUT, "v3": TIMEOUT})
+    recording(h2)
+    h2.run([item("v1", "一"), item("v2", "二"), item("v3", "三")], cooldown=300)
+    assert waits(h2) == [("v2", 300), ("v3", 300)]  # the cap never undercuts what the person asked for
+
+
+def test_throttle_wait_with_zero_cooldown_is_still_at_least_five_seconds(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT})
+    recording(h)
+    h.run([item("v1", "一"), item("v2", "二")], cooldown=0)
+    assert waits(h) == [("v2", 5)]
+
+
+def test_three_throttle_failures_in_a_row_stop_the_job(tmp_path):
+    h = Harness(tmp_path, fail={f"v{i}": TIMEOUT for i in range(1, 6)})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 6)], cooldown=3)
+    assert len(h.calls) == 3
+    assert [e["itemId"] for e in h.of("item_failed")] == ["v1", "v2", "v3"]  # v4 and v5 were never tried: no event
+    aborted = h.summary["aborted"]
+    assert aborted["code"] == "network" and "網路" in aborted["message"]
+    assert h.summary["failed"] == 3 and h.summary["cancelled"] is False
+    assert h.of("done")[-1]["jobId"] == "j" and len(h.of("done")) == 1
+
+
+@pytest.mark.parametrize("stderr,code,needle", [
+    (TOO_MANY, "rate_limited", "YouTube"),
+    ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "forbidden", "403"),
+    ("ERROR: [youtube] x: Sign in to confirm you're not a bot", "login_required", "登入"),
+    ("ERROR: Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", "tls", "資訊人員"),
+])
+def test_every_throttle_class_counts_towards_the_stop(tmp_path, stderr, code, needle):
+    h = Harness(tmp_path, fail={f"v{i}": stderr for i in range(1, 5)})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 5)])
+    assert h.summary["aborted"]["code"] == code and needle in h.summary["aborted"]["message"]
+    assert len(h.calls) == 3
+
+
+def test_mixed_throttle_classes_stop_with_the_last_ones_code(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT, "v2": TOO_MANY, "v3": TOO_MANY, "v4": TIMEOUT})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 5)])
+    assert h.summary["aborted"]["code"] == "rate_limited" and len(h.calls) == 3
+
+
+def test_a_success_or_another_kind_of_failure_breaks_the_run(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT, "v2": TIMEOUT, "v4": TIMEOUT, "v5": TIMEOUT, "v6": PRIVATE,
+                                "v7": TIMEOUT, "v8": TIMEOUT})
+    recording(h)
+    h.run([item(f"v{i}", f"標題{i}") for i in range(1, 9)])
+    assert len(h.calls) == 8 and h.summary["aborted"] is None
+    assert h.summary["failed"] == 7 and h.summary["ok"] == 1
+
+
+def test_disk_full_stops_the_job_at_once(tmp_path):
+    h = Harness(tmp_path, fail={"v2": DISK_FULL})
+    recording(h)
+    h.run([item("v1", "甲"), item("v2", "乙"), item("v3", "丙")])
+    assert [e["itemId"] for e in h.of("item_failed")] == ["v2"] and h.of("item_failed")[0]["code"] == "disk_full"
+    assert len(h.calls) == 2
+    aborted = h.summary["aborted"]
+    assert aborted["code"] == "disk_full" and "磁碟" in aborted["message"]
+    assert h.summary["ok"] == 1 and h.summary["failed"] == 1
+
+
+def test_file_locked_is_not_fatal(tmp_path):
+    h = Harness(tmp_path, fail={"v1": LOCKED})
+    recording(h)
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert h.of("item_failed")[0]["code"] == "file_locked"
+    assert h.summary["aborted"] is None and h.summary["ok"] == 1
+
+
+def test_unusable_output_folder_stops_the_job_without_touching_any_item(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    h = Harness(tmp_path)
+    h.out = blocker / "out"  # a folder cannot be created below a file
+    h.run([item("v1", "甲"), item("v2", "乙")])
+    assert h.calls == [] and h.of("item_failed") == [] and h.of("item_done") == []
+    aborted = h.summary["aborted"]
+    assert aborted["code"] == "bad_path" and "資料夾" in aborted["message"]
+    assert h.summary["failed"] == 0 and h.runner.running is False
+
+
+def test_normal_finish_reports_no_abort_and_a_cancel_is_not_an_abort(tmp_path):
+    assert Harness(tmp_path).run([item()]).summary["aborted"] is None
+    h = Harness(tmp_path / "c")
+    h.runner._sleep = lambda seconds: h.runner.cancel()
+    h.run([item("v1", "甲"), item("v2", "乙")], cooldown=5)
+    assert h.summary["cancelled"] is True and h.summary["aborted"] is None
+
+
+def test_cancel_during_a_backoff_wait_stops_promptly(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT, "v2": TIMEOUT})
+    steps = []
+
+    def sleeper(seconds):
+        steps.append(seconds)
+        if len(steps) == 2:
+            h.runner.cancel()
+
+    h.runner._sleep = sleeper
+    h.run([item("v1", "一"), item("v2", "二"), item("v3", "三")], cooldown=3)
+    assert len(steps) == 2 and all(step <= 1 for step in steps)  # the 5 s wait is sliced; cancel ends it after two
+    assert len(h.calls) == 1 and h.summary["cancelled"] is True
+
+
+def test_remove_current_item_during_a_backoff_wait(tmp_path):
+    h = Harness(tmp_path, fail={"v1": TIMEOUT})
+    removed = []
+
+    def sleeper(seconds):
+        if not removed:
+            removed.append(h.runner.remove("v2"))
+
+    h.runner._sleep = sleeper
+    h.run([item("v1", "一"), item("v2", "二"), item("v3", "三")], cooldown=3)
+    assert removed == ["current"] and [e["itemId"] for e in h.of("item_removed")] == ["v2"]
+    assert [Path(e["file"]).name for e in h.of("item_done")] == ["三.mp4"]
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_running_flag_is_cleared_even_when_the_done_event_cannot_be_sent(tmp_path):
+    h = Harness(tmp_path)
+
+    def emit(event):
+        if event["type"] == "done":
+            raise BrokenPipeError(32, "Broken pipe")
+
+    h.runner._emit = emit
+    h.run([item()])
+    assert h.runner.running is False

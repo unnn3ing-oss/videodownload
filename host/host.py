@@ -63,8 +63,14 @@ class Host:
     def _error(self, msg: dict, code: str, message: str) -> None:
         self._reply(msg, {"type": "error", "code": code, "message": message})
 
-    def _background(self, fn: Callable[[], None]) -> None:
-        thread = threading.Thread(target=fn, daemon=True)
+    def _background(self, msg: dict, fn: Callable[[], None]) -> None:
+        def guarded() -> None:
+            try:
+                fn()
+            except Exception as exc:  # a thread that dies silently leaves the extension waiting for its answer
+                self._error(msg, "internal", f"內部錯誤：{exc}")
+
+        thread = threading.Thread(target=guarded, daemon=True)
         self._threads.append(thread)
         thread.start()
 
@@ -144,7 +150,7 @@ class Host:
             self._reply(msg, {"type": "resolved", "items": [
                 {"id": r.id, "title": r.title, "url": r.url, "duration": r.duration} for r in refs]})
 
-        self._background(work)
+        self._background(msg, work)
 
     def _on_meta(self, msg: dict) -> None:
         url = msg.get("url")
@@ -166,7 +172,7 @@ class Host:
                 return
             self._reply(msg, {"type": "meta", **meta})
 
-        self._background(work)
+        self._background(msg, work)
 
     def _on_download(self, msg: dict) -> None:
         items = msg.get("items")
@@ -282,7 +288,7 @@ class Host:
                 return
             self._reply(msg, {"type": "update_staged", "count": count})
 
-        self._background(work)
+        self._background(msg, work)
 
     def _on_update_commit(self, msg: dict) -> None:
         if self._busy(msg):
@@ -334,7 +340,7 @@ class Host:
             folder = recorded_extension_folder(self.home)
             self._reply(msg, {"type": "update_ext_applied", "count": count, "folder": str(folder)})
 
-        self._background(work)
+        self._background(msg, work)
 
     def _on_update_ext_rollback(self, msg: dict) -> None:
         try:
@@ -355,7 +361,7 @@ class Host:
             checks = doctor.diagnose(self.home, ext_id=ext_id, output_dir=output)
             self._reply(msg, {"type": "doctor", "checks": [c.to_dict() for c in checks], "fixed": fixed})
 
-        self._background(work)
+        self._background(msg, work)
 
     def _on_update_engine(self, msg: dict) -> None:
         # On a Mac the engine is the unpacked build, which cannot update itself (`-U`): it is installed again instead,
@@ -379,7 +385,7 @@ class Host:
                 return
             self._reply(msg, {"type": "engine_updated", "ytdlpVersion": self._version()})
 
-        self._background(work)
+        self._background(msg, work)
 
 
 def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> int:
@@ -397,32 +403,33 @@ def main(argv=None, stdin: BinaryIO | None = None, stdout: BinaryIO | None = Non
     def emit(message: dict) -> None:
         with lock:
             try:
-                write_message(stdout, message)
-            except ProtocolError:
-                write_message(stdout, {"type": "error", "code": "too_large",
-                                       "message": "回應太大，無法傳送"})
-            except (OSError, ValueError):
+                try:
+                    write_message(stdout, message)
+                except ProtocolError:
+                    write_message(stdout, {"type": "error", "code": "too_large",
+                                           "message": "回應太大，無法傳送"})
+            except (OSError, ValueError):  # nobody is listening any more
                 if host:
                     host.runner.cancel()
 
     real_stdout, sys.stdout = sys.stdout, sys.stderr  # stray prints must not hit the protocol stream
     try:
         host = Host(home, emit)
-        emit(host.ready_message())
-        while True:
-            try:
-                msg = read_message(stdin)
-            except BadMessage as exc:
-                emit({"type": "error", "code": "bad_json", "message": str(exc)})
-                continue
-            except ProtocolError:
-                host.shutdown()
-                return 1
-            if msg is None:
-                break
-            host.handle(msg)
-        host.shutdown()
-        return 0
+        try:
+            emit(host.ready_message())
+            while True:
+                try:
+                    msg = read_message(stdin)
+                except BadMessage as exc:
+                    emit({"type": "error", "code": "bad_json", "message": str(exc)})
+                    continue
+                except (ProtocolError, OSError, ValueError):  # broken framing, or the pipe itself is gone
+                    return 1
+                if msg is None:
+                    return 0
+                host.handle(msg)
+        finally:
+            host.shutdown()  # never leave yt-dlp running with nobody to report to
     finally:
         sys.stdout = real_stdout
 

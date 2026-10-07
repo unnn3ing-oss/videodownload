@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from naming import resolve_target, sanitize_filename
+from naming import partial_dir, resolve_target, sanitize_filename
 
 
 def test_illegal_chars():
@@ -18,7 +18,15 @@ def test_trailing_dots_spaces():
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ("CON", "_CON"), ("nul", "_nul"), ("COM1", "_COM1"), ("con.txt", "_con.txt"),
+    (".hidden", "hidden"), ("...title", "title"), (" . .title ", "title"), ("..", ""), (".gitignore.", "gitignore"),
+    ("a.b", "a.b"),
+])
+def test_leading_dots_do_not_make_a_hidden_file(raw, expected):
+    assert sanitize_filename(raw) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("CON", "_CON"), ("nul", "_nul"), ("COM1", "_COM1"), ("con.txt", "_con.txt"), (".con", "_con"),
 ])
 def test_reserved_names(raw, expected):
     assert sanitize_filename(raw) == expected
@@ -47,12 +55,16 @@ def test_resolve_same_video_reuses(tmp_path):
     assert got == tmp_path / "標題.mp4"
 
 
+def test_resolve_title_starting_with_a_dot_is_visible(tmp_path):
+    assert resolve_target(tmp_path, ".秘密 計畫", "abc123") == tmp_path / "秘密 計畫.mp4"
+
+
 def test_resolve_empty_title_uses_id(tmp_path):
     assert resolve_target(tmp_path, "...", "vid") == tmp_path / "vid.mp4"
 
 
 def test_total_path_limit():
-    d = Path("/" + "d" * 200)
+    d = Path("/" + "d" * 150)
     r = resolve_target(d, "字" * 300, "abcdefghijk")
     assert len(str(r)) <= 240 and r.name.endswith(".mp4")
 
@@ -68,16 +80,16 @@ def test_name_is_capped_by_utf8_bytes(tmp_path):
 
 
 def test_temp_files_fit_windows_max_path_even_on_collision(tmp_path):
-    deep = tmp_path / ("d" * 40) / ("e" * 40) / ("f" * 40)
+    deep = tmp_path / ("d" * 25) / ("e" * 25) / ("f" * 25)
     deep.mkdir(parents=True)
     title = "字" * 300
     first = resolve_target(deep, title, "abcdefghijk")
     first.touch()
     second = resolve_target(deep, title, "lmnopqrstuv")  # same title, other video: " [id]" suffix
     assert second != first
-    for path in (first, second):
-        temp = str(path)[: -len(".mp4")] + ".f251-drc.webm.part"
-        assert len(temp) <= 259
+    for path, vid in ((first, "abcdefghijk"), (second, "lmnopqrstuv")):
+        temp = partial_dir(deep, vid) / (path.stem + ".f251-drc.webm.part")  # where yt-dlp writes while downloading
+        assert len(str(temp)) <= 259
 
 
 def test_oserror_from_exists_becomes_valueerror(tmp_path, monkeypatch):

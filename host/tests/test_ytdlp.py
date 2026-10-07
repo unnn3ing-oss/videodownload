@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from quality import FORMAT_SORT, format_selector
+from quality import format_selector, format_sort
 from ytdlp import (DoneInfo, Engine, Progress, ResolveError, StreamResult, VideoRef,
                    build_download_args, classify_error, normalize_url, parse_done_line,
                    parse_progress_line, resolve, run_capture, stream_download)
@@ -14,25 +14,37 @@ from ytdlp import (DoneInfo, Engine, Progress, ResolveError, StreamResult, Video
 
 def test_build_args():
     a = build_download_args(Engine(Path("yt-dlp"), Path("/ff"), Path("/dn/deno")),
-                            "https://youtu.be/x", 1080, Path("/o/t.mp4"))
+                            "https://youtu.be/x", 1080, Path("/o/t.mp4"), Path("/o/.ytdl-partial/x"))
     assert a[0] == "yt-dlp" and "--ignore-config" in a and "--no-playlist" in a
     assert a[a.index("-f") + 1] == format_selector(1080)
-    assert a[a.index("-S") + 1] == FORMAT_SORT
+    assert a[a.index("-S") + 1] == format_sort(1080)
     assert a[a.index("--merge-output-format") + 1] == "mp4"
-    assert a[a.index("-o") + 1] == "/o/t.mp4"
+    assert [a[i + 1] for i, x in enumerate(a) if x == "-P"] == [f"home:{Path('/o')}", f"temp:{Path('/o/.ytdl-partial/x')}"]
+    assert a[a.index("-o") + 1] == "t.mp4"
     assert a[a.index("--js-runtimes") + 1] == "deno:/dn/deno"
     assert a[a.index("--ffmpeg-location") + 1] == "/ff"
     assert a[-2:] == ["--", "https://youtu.be/x"]
 
 
 def test_build_args_without_optional_parts():
-    a = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 720, Path("/o/t.mp4"))
+    a = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 720, Path("/o/t.mp4"), Path("/o/.p/x"))
     assert "--ffmpeg-location" not in a and "--js-runtimes" not in a
 
 
 def test_target_percent_is_escaped():
-    a = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 720, Path("/o/100%.mp4"))
-    assert a[a.index("-o") + 1] == "/o/100%%.mp4"
+    a = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 720, Path("/o/100%.mp4"), Path("/o/.p/x"))
+    assert a[a.index("-o") + 1] == "100%%.mp4"
+
+
+def test_real_yt_dlp_keeps_partial_files_in_the_per_video_dir_and_finishes_in_the_output_dir(tmp_path):
+    yt_dlp = pytest.importorskip("yt_dlp")
+    out = tmp_path / "輸出 100%"
+    args = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 1080, out / "T 100%.mp4",
+                               out / ".ytdl-partial" / "x")
+    ydl = yt_dlp.YoutubeDL({**yt_dlp.parse_options(args[1:]).ydl_opts, "quiet": True})
+    info = {"id": "x", "title": "T", "ext": "mp4"}
+    assert ydl.prepare_filename(info) == str(out / "T 100%.mp4")  # an absolute -o would have made -P a no-op
+    assert ydl.prepare_filename(info, "temp") == str(out / ".ytdl-partial" / "x" / "T 100%.mp4")
 
 
 def test_parse_progress():
@@ -60,10 +72,59 @@ def test_parse_done():
     ("ERROR: Unable to extract initial data", "engine_outdated"),
     ("OSError: [Errno 28] No space left on device", "disk_full"),
     ("something odd happened", "unknown"),
+    ("ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests", "rate_limited"),
+    ("ERROR: Too many requests", "rate_limited"),
+    ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "forbidden"),
+    ("ERROR: [youtube] x: Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+     "self-signed certificate in certificate chain (_ssl.c:1006)", "tls"),
+    ("ERROR: [youtube] x: Unable to download API page: [SSL: WRONG_VERSION_NUMBER] wrong version number", "tls"),
+    ("ERROR: Unable to download webpage: self-signed certificate in certificate chain", "tls"),
+    ("ERROR: unable to open for writing: [WinError 225] Operation did not complete successfully because "
+     "the file contains a virus or potentially unwanted software", "blocked_by_antivirus"),
+    ("ERROR: Unable to rename file: [WinError 32] The process cannot access the file because it is being used "
+     "by another process: 'a.part' -> 'a'", "file_locked"),
+    ("ERROR: unable to open for writing: PermissionError(13, 'Permission denied')", "file_locked"),
+    ("ERROR: [youtube] x: No supported JavaScript runtime could be found", "engine_outdated"),
 ])
 def test_classify(stderr, code):
     got, message = classify_error(stderr)
     assert got == code and message
+
+
+def test_classify_user_messages_are_actionable_chinese():
+    assert classify_error("ERROR: HTTP Error 429: Too Many Requests")[1] == \
+        "YouTube 暫時限制了請求，請等一陣子再試，並調高「間隔」"
+    assert classify_error("ERROR: [SSL: CERTIFICATE_VERIFY_FAILED] x")[1] == \
+        "公司網路可能攔截了加密連線（憑證驗證失敗），請洽資訊人員"
+    assert classify_error("ERROR: [WinError 225] the file contains a virus")[1] == \
+        "檔案被防毒軟體擋下，請把 YT批量下載器 資料夾加入防毒例外"
+    assert classify_error("ERROR: [WinError 32] being used by another process")[1] == \
+        "檔案被其他程式使用中，關閉後再試"
+
+
+def test_classify_engine_hint_never_points_at_a_button():
+    message = classify_error("ERROR: Unable to extract initial data")[1]
+    assert message == "下載引擎可能過舊，請重新執行安裝檔（它會一併更新下載引擎）"
+    assert "按" not in message
+    deno = classify_error("ERROR: No supported JavaScript runtime could be found")[1]
+    assert "Deno" in deno and "按" not in deno
+
+
+def test_classify_looks_only_at_error_lines_when_there_are_any():
+    stderr = ("WARNING: [youtube] Sign in to confirm you're not a bot\n"
+              "ERROR: [youtube] x: Unable to download webpage: The read operation timed out")
+    assert classify_error(stderr)[0] == "network"
+
+
+def test_classify_falls_back_to_the_whole_text_without_error_lines():
+    assert classify_error("Traceback (most recent call last):\nOSError: [Errno 28] No space left on device")[0] \
+        == "disk_full"
+
+
+def test_classify_unknown_message_quotes_the_last_error_line():
+    stderr = "ERROR: first problem\nERROR: second problem\nWARNING: trailing noise"
+    code, message = classify_error(stderr)
+    assert code == "unknown" and "second problem" in message and "noise" not in message
 
 
 ROOT = "https://www.youtube.com"
