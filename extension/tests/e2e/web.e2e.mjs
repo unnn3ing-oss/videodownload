@@ -70,7 +70,7 @@ async function withoutExtension() {
     // Step 2 says what the installer does.
     await page.click("#step-next");
     assert.deepEqual(await shown(), ["2"]);
-    assert.match(await page.textContent('[data-pane="2"]'), /選擇要把插件放在哪個資料夾/);
+    assert.match(await page.textContent('[data-pane="2"]'), /選擇要把擴充功能放在哪個資料夾/);
     assert.match(await page.textContent('[data-pane="2"]'), /重新執行安裝檔就會自動檢查並修復/);
     assert.equal(await page.isDisabled("#step-prev"), false);
     await page.click("#step-prev");
