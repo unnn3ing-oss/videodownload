@@ -57,6 +57,22 @@ const duration = (seconds) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 };
 
+// The box under a row (the web page only): 【title】, an empty line, the tags. It follows the text while the person has not
+// touched it; once they edited it, their words stay.
+export function syncTextBox(box, info, show) {
+  box.hidden = !show || info.textState === "none";
+  if (box.hidden) return;
+  if (info.textState === "ready") {
+    if (box.value === (box._auto ?? "")) box.value = info.text;
+    box._auto = info.text;
+    box.placeholder = "";
+  } else {
+    box.placeholder = info.textState === "failed"
+      ? `無法取得說明欄：${info.textError}（按「複製內文」會再試一次）`
+      : "正在讀取影片說明欄…";
+  }
+}
+
 function makeRow(item, handlers) {
   const row = el("li", "qrow");
   const cover = button("qcover", "下載封面圖片", null);
@@ -97,11 +113,16 @@ function makeRow(item, handlers) {
   remove.addEventListener("click", () => handlers.remove(item.uid));
   acts.append(copy, retry, remove);
 
-  row.append(cover, main, acts);
+  const text = document.createElement("textarea");
+  text.className = "qtext";
+  text.rows = 4;
+  text.spellcheck = false;
+  text.hidden = true;
+  row.append(cover, main, acts, text);
   return row;
 }
 
-function updateRow(row, state, item, index, now) {
+function updateRow(row, state, item, index, now, showText = false) {
   const info = describeItem(state, item, now);
   row.dataset.kind = info.kind;
   row.dataset.uid = String(item.uid);
@@ -136,10 +157,14 @@ function updateRow(row, state, item, index, now) {
   q(".qcover").disabled = !item.id;
   q(".qcopy").disabled = !item.id;
   q(".qretry").hidden = !(item.status === "failed" && item.id);
+  const box = q(".qtext");
+  syncTextBox(box, info, showText);
+  box.setAttribute("aria-label", named ? "貼文內容" : `貼文內容：${item.title}`);
 }
 
 // Keeps the rows that already exist (keyed by uid) so hover states and loading images survive progress updates.
-export function renderQueue(list, state, now, handlers) {
+// `options.showText`: draw the text box (標題與標籤) under every row.
+export function renderQueue(list, state, now, handlers, options = {}) {
   const rows = (list._rows ??= new Map());
   const keep = new Set();
   state.items.forEach((item, index) => {
@@ -149,7 +174,7 @@ export function renderQueue(list, state, now, handlers) {
       row = makeRow(item, handlers);
       rows.set(item.uid, row);
     }
-    updateRow(row, state, item, index, now);
+    updateRow(row, state, item, index, now, Boolean(options.showText));
     if (list.children[index] !== row) list.insertBefore(row, list.children[index] ?? null);
   });
   for (const [uid, row] of rows) {
@@ -283,6 +308,11 @@ export function flash(target, state, hint) {
 // Copy 【title】 + hashtags. The clipboard write starts inside the click, with the text still on its way,
 // so the browser keeps treating it as a user action even when the host needs a few seconds to answer.
 export function copyRowText(send, uid, target) {
+  const box = target.closest?.(".qrow")?.querySelector(".qtext");
+  if (box && !box.hidden && box.value.trim()) { // the text in the box, as the person left it
+    navigator.clipboard.writeText(box.value).then(() => flash(target, "ok", "已複製"), (error) => flash(target, "err", error.message || "複製失敗"));
+    return;
+  }
   flash(target, "busy", "擷取中…");
   const answer = send({ type: "queue_copy_text", uid }).then((result) => {
     if (!result?.ok) throw new Error(result?.error ?? "複製失敗");

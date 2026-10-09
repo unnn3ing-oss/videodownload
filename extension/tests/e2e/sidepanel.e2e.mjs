@@ -190,7 +190,7 @@ try {
   // read the clipboard by pasting into a scratch textarea (readText would need a permission prompt)
   await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.body.append(t); t.focus(); });
   await page.keyboard.press("Control+V");
-  assert.equal(await page.inputValue("#paste-probe"), "【範例影片】\n#標籤一 #標籤二 #標籤三");
+  assert.equal(await page.inputValue("#paste-probe"), "【範例影片】\n\n#標籤一 #標籤二 #標籤三");
   await page.evaluate(() => document.getElementById("paste-probe").remove());
 
   step("9. The cover");

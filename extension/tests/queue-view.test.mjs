@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, syncTextBox, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -122,4 +122,37 @@ test("clearList sends the request at once when nothing would be lost, and waits 
   assert.equal(sent.length, 1, "a no sends nothing");
   await clearList(send, failed, () => true);
   assert.equal(sent.length, 2);
+});
+
+// ---- the text box under a row ----
+const box = () => ({ value: "", hidden: true, placeholder: "" });
+const ready = (text) => ({ text, textState: "ready", textError: null });
+
+test("syncTextBox is hidden unless the page wants it and the row has a video", () => {
+  const b = box();
+  syncTextBox(b, ready("【甲】"), false);
+  assert.equal(b.hidden, true, "the side panel does not show it");
+  syncTextBox(b, { text: null, textState: "none", textError: null }, true);
+  assert.equal(b.hidden, true, "no video yet");
+  syncTextBox(b, ready("【甲】\n\n#a #b #c"), true);
+  assert.deepEqual([b.hidden, b.value], [false, "【甲】\n\n#a #b #c"]);
+});
+
+test("syncTextBox says what it waits for or why it failed instead of an empty box", () => {
+  const b = box();
+  syncTextBox(b, { text: null, textState: "loading", textError: null }, true);
+  assert.deepEqual([b.hidden, b.value, b.placeholder], [false, "", "正在讀取影片說明欄…"]);
+  syncTextBox(b, { text: null, textState: "failed", textError: "逾時" }, true);
+  assert.match(b.placeholder, /無法取得說明欄：逾時/);
+  assert.match(b.placeholder, /複製內文/);
+});
+
+test("syncTextBox follows the text, but never overwrites what the person typed into the box", () => {
+  const b = box();
+  syncTextBox(b, ready("【甲】\n\n#a"), true);
+  syncTextBox(b, ready("【甲】\n\n#a #b"), true);
+  assert.equal(b.value, "【甲】\n\n#a #b", "an untouched box follows the new text");
+  b.value += "\n我加的一行";
+  syncTextBox(b, ready("【甲】\n\n#a #b #c"), true);
+  assert.equal(b.value, "【甲】\n\n#a #b\n我加的一行", "an edited box is left alone");
 });

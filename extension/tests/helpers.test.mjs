@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildCopyText, extractHashtags } from "../lib/copytext.js";
+import { EXCLUDED_TAGS, buildCopyText, cleanTitle, extractHashtags, pickTags } from "../lib/copytext.js";
 import { coverBaseName, coverName } from "../lib/covername.js";
 import { COVER_VARIANTS, MAX_COVER_BYTES, findCover } from "../lib/cover.js";
 import { versionAtLeast } from "../lib/version.js";
@@ -31,13 +31,13 @@ test("extractHashtags also accepts a tag right after a U+0085 line break", () =>
 });
 
 test("buildCopyText formats title and hashtags", () => {
-  assert.equal(buildCopyText("影片標題文字", ["一", "二", "三"]), "【影片標題文字】\n#一 #二 #三");
+  assert.equal(buildCopyText("影片標題文字", ["一", "二", "三"]), "【影片標題文字】\n\n#一 #二 #三");
   assert.equal(buildCopyText("只有標題", []), "【只有標題】");
-  assert.equal(buildCopyText("兩個", ["甲", "乙"]), "【兩個】\n#甲 #乙");
+  assert.equal(buildCopyText("兩個", ["甲", "乙"]), "【兩個】\n\n#甲 #乙");
 });
 
 test("buildCopyText keeps the title on one line and never interprets markup", () => {
-  assert.equal(buildCopyText("第一行\n  第二行\r\n第三行", ["x"]), "【第一行 第二行 第三行】\n#x");
+  assert.equal(buildCopyText("第一行\n  第二行\r\n第三行", ["x"]), "【第一行 第二行 第三行】\n\n#x");
   assert.equal(buildCopyText('<img src=x onerror="1">', []), '【<img src=x onerror="1">】');
   assert.equal(buildCopyText("  前後空白  ", []), "【前後空白】");
   assert.equal(buildCopyText("甲\u0085乙\u2028丙\u2029丁", []), "【甲 乙 丙 丁】", "NEL and the unicode line separators are line breaks too");
@@ -142,4 +142,34 @@ test("the cover size limit is the same in the extension and in the host", () => 
   assert.ok(match, "host/covers.py defines MAX_COVER_BYTES in MiB");
   assert.equal(Number(match[1]) * 1024 * 1024, MAX_COVER_BYTES);
   assert.ok(Math.ceil(MAX_COVER_BYTES / 3) * 4 < 8 * 1024 * 1024, "its base64 fits one 8 MiB native message");
+});
+
+test("cleanTitle drops the channel name that follows the last ｜ (or |) of a title", () => {
+  assert.equal(cleanTitle("部署321天 航艦林肯號返抵母港 軍眷迎接｜TVBS新聞 @TVBSNEWS01"), "部署321天 航艦林肯號返抵母港 軍眷迎接");
+  assert.equal(cleanTitle("甲｜乙｜TVBS新聞 @TVBSNEWS01"), "甲｜乙", "only the channel part goes, a ｜ inside the title stays");
+  assert.equal(cleanTitle("標題 | TVBS新聞"), "標題");
+  assert.equal(cleanTitle("標題｜某某頻道 @someone"), "標題", "any @handle marks the channel part");
+  assert.equal(cleanTitle("標題 @TVBSNEWS01"), "標題");
+  assert.equal(cleanTitle("只是分隔｜不是頻道名"), "只是分隔｜不是頻道名", "a ｜ that is not followed by a channel name stays");
+  assert.equal(cleanTitle("｜TVBS新聞"), "｜TVBS新聞", "never leaves an empty title");
+  assert.equal(cleanTitle(null), "");
+});
+
+test("buildCopyText uses the cleaned title and leaves one empty line before the hashtags", () => {
+  assert.equal(buildCopyText("部署321天 航艦林肯號返抵母港 軍眷迎接｜TVBS新聞 @TVBSNEWS01", ["航艦", "美軍", "林肯號"]),
+    "【部署321天 航艦林肯號返抵母港 軍眷迎接】\n\n#航艦 #美軍 #林肯號");
+});
+
+test("pickTags leaves out the channel's fixed tags and keeps the first three of the rest", () => {
+  assert.deepEqual(EXCLUDED_TAGS, ["TVBS新聞", "TVBS直播", "TVBS新聞網"]);
+  assert.deepEqual(pickTags(["TVBS新聞", "航艦", "TVBS直播", "美軍", "TVBS新聞網", "林肯號", "第四"]), ["航艦", "美軍", "林肯號"]);
+  assert.deepEqual(pickTags(["tvbs新聞", "航艦"]), ["航艦"], "case does not matter");
+  assert.deepEqual(pickTags(["TVBS新聞", "TVBS直播"]), []);
+  assert.deepEqual(pickTags(["a", "b", "c", "d"], 2), ["a", "b"]);
+  assert.deepEqual(pickTags(null), []);
+});
+
+test("extractHashtags without a limit argument returns enough tags for pickTags to choose from", () => {
+  const description = "內文 #TVBS新聞 #TVBS直播 #TVBS新聞網 #航艦 #美軍 #林肯號 #第四";
+  assert.deepEqual(pickTags(extractHashtags(description, 12)), ["航艦", "美軍", "林肯號"]);
 });

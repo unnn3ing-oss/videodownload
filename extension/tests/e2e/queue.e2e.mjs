@@ -127,7 +127,7 @@ try {
   // 5. Copy text: title plus the first three hashtags, fetched from the host once.
   const vA = row(state, "vA");
   assert.deepEqual(await send({ type: "queue_copy_text", uid: vA.uid }),
-    { ok: true, text: "【影片 vA】\n#標籤一 #標籤二 #標籤三", tagCount: 3 });
+    { ok: true, text: "【影片 vA】\n\n#標籤一 #標籤二 #標籤三", tagCount: 3 });
 
   // 6. Covers: saved next to the videos using the largest size that exists; none found is reported.
   assert.deepEqual(await send({ type: "queue_download_cover", uid: vA.uid }),

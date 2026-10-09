@@ -4,6 +4,7 @@ import { isYouTubeUrl } from "./urls.js";
 import { formatEta, formatSpeed, formatWait, parseBoundedInt } from "./format.js";
 import { SETTING_RANGES } from "./constants.js";
 import { classifyTabUrl } from "./page.js";
+import { buildCopyText, pickTags } from "./copytext.js";
 
 export const MAX_ITEMS = 500;
 export const DEFAULT_SETTINGS = { quality: 1080, cooldownSec: 10, limit: 50, autoCover: true };
@@ -29,8 +30,10 @@ function cleanSettings(patch, base = DEFAULT_SETTINGS) {
   return next;
 }
 
+const TAGS_VERSION = 2; // 2: every hashtag of the description (up to KEEP_TAGS) is kept; the three for the text are picked when it is shown
+
 const blankItem = (uid, fields) => ({
-  uid, id: null, url: "", title: "", duration: null, tags: null, status: "waiting", dupOf: null,
+  uid, id: null, url: "", title: "", duration: null, tags: null, tagsV: null, textError: null, status: "waiting", dupOf: null,
   percent: null, speed: null, eta: null, file: null, height: null, error: null, sent: false, cover: null,
   outDir: null, // the folder its video was written to (the output folder of the job it finished in)
   limitHit: null, // set on the last row of a channel or playlist that came back as long as the limit: it probably goes on
@@ -117,6 +120,9 @@ export function createState(saved = null) {
     const limitHit = Number.isInteger(raw.limitHit) && raw.limitHit > 0 ? raw.limitHit : null;
     const outDir = typeof raw.outDir === "string" && raw.outDir ? raw.outDir : null;
     let item = { ...blankItem(raw.uid, raw), sent: false, cover: cleanCover(raw.cover), limitHit, outDir }; // a restart ends the host's job
+    // tags kept by an older version were cut at three, channel tags included: they are read again
+    if (item.tagsV !== TAGS_VERSION || !Array.isArray(item.tags)) item = { ...item, tags: null, tagsV: null };
+    item = { ...item, textError: null }; // a failed read is tried again after a restart
     if (item.status === "downloading") item = { ...item, status: "waiting", percent: null, speed: null, eta: null };
     if (item.status === "fetching") item = { ...item, title: item.title || item.url }; // resolved again once the host is there
     items.push(item);
@@ -179,7 +185,8 @@ export function retryItem(state, uid) {
 export const setSettings = (state, patch) => ({ ...state, settings: cleanSettings(patch, state.settings) });
 export const setCover = (state, uid, cover) => (state.items.some((i) => i.uid === uid)
   ? { ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, cover } : i)) } : state);
-export const setTags = (state, uid, tags) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, tags } : i)) });
+export const setTags = (state, uid, tags) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, tags, tagsV: TAGS_VERSION, textError: null } : i)) });
+export const setTagsError = (state, uid, message) => ({ ...state, items: state.items.map((i) => (i.uid === uid ? { ...i, textError: String(message || "無法取得影片說明") } : i)) });
 // `outdated`: the host is there but too old for this version of the extension (it needs updating first).
 export const setHostConnected = (state, connected, outdated = false) => ({
   ...state, hostConnected: Boolean(connected), hostOutdated: Boolean(connected) && Boolean(outdated),
@@ -260,10 +267,19 @@ export function applyHostEvent(state, event, now) {
   }
 }
 
+// 【title】 and the first three tags that are not the channel's own: text for the box under the row. `textState`:
+// "ready" (text is set), "loading" (the description has not been read yet), "failed" (textError says why), "none" (no video yet).
+function textOf(state, item) {
+  if (!item.id || item.status === "fetching") return { text: null, textState: "none", textError: null };
+  const source = item.tags ? item : state.items.find((i) => i.id === item.id && i.tags) ?? item; // a repeated video shares its twin's tags
+  if (source.tags) return { text: buildCopyText(item.title, pickTags(source.tags)), textState: "ready", textError: null };
+  return item.textError ? { text: null, textState: "failed", textError: item.textError } : { text: null, textState: "loading", textError: null };
+}
+
 export function describeItem(state, item, now) {
   const same = sameTitleRows(state).get(item.uid) ?? 0;
   const hint = [same ? `標題與第 ${same} 支相同（不同影片）` : "", item.limitHit ? `已達上限 ${item.limitHit} 支，頻道或播放清單可能還有更多；要更多請調高「最多展開」` : ""];
-  const base = { kind: item.status, label: "", sub: "", percent: 0, dupIndex: null, hint: hint.filter(Boolean).join(" · ") };
+  const base = { kind: item.status, label: "", sub: "", percent: 0, dupIndex: null, hint: hint.filter(Boolean).join(" · "), ...textOf(state, item) };
   if (item.dupOf) {
     const dupIndex = state.items.findIndex((i) => i.uid === item.dupOf) + 1;
     return { ...base, kind: "duplicate", label: "重複下載", sub: `與第 ${dupIndex} 筆相同，已暫停`, dupIndex };

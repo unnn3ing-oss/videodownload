@@ -50,12 +50,13 @@ function setup(hostOptions, extra = {}) {
     now: () => clock.t,
     initial: extra.initial ?? null,
     retryDelayMs: 0,
+    ...(extra.controller ?? {}),
   });
   return { host, ctl, saved, notified, downloaded, clock };
 }
 
-async function withVideos(ids, hostOptions) {
-  const env = setup(hostOptions);
+async function withVideos(ids, hostOptions, extra) {
+  const env = setup(hostOptions, extra);
   for (const id of ids) await env.ctl.add(url(id));
   await env.ctl.idle();
   return env;
@@ -472,12 +473,12 @@ test("a host disconnect ends the run, puts interrupted rows back and allows star
 test("copyText asks the host for the description once and keeps the hashtags", async () => {
   const { host, ctl } = await withVideos(["a"]);
   const first = await ctl.copyText(rows(ctl)[0].uid);
-  assert.deepEqual(first, { ok: true, text: "【影片 a】\n#標籤一 #標籤二 #標籤三", tagCount: 3 });
+  assert.deepEqual(first, { ok: true, text: "【影片 a】\n\n#標籤一 #標籤二 #標籤三", tagCount: 3 });
   assert.deepEqual(host.of("meta").map((m) => m.url), [url("a")]);
   const second = await ctl.copyText(rows(ctl)[0].uid);
   assert.deepEqual(second, first);
   assert.equal(host.of("meta").length, 1);
-  assert.deepEqual(rows(ctl)[0].tags, ["標籤一", "標籤二", "標籤三"]);
+  assert.deepEqual(rows(ctl)[0].tags, ["標籤一", "標籤二", "標籤三", "標籤四"], "every tag is kept; three are picked when the text is made");
 });
 
 test("copyText with no hashtags copies just the title, and needs the host otherwise", async () => {
@@ -890,4 +891,76 @@ test("after clearAll the same videos can be added and downloaded again", async (
   assert.equal(byId(ctl, "a").status, "waiting");
   await ctl.start();
   assert.deepEqual(host.of("download").at(-1).items.map((i) => i.id), ["a"]);
+});
+
+// ---- 說明欄文字：每支影片自動抓，一支一支慢慢來 ----
+const prefetch = (extra = {}) => ({ controller: { prefetchTags: true, tagGapMs: 4000, pause: async () => {}, ...extra } });
+
+test("with prefetch on, every video's description is read by itself, one after another, and its tags are kept", async () => {
+  const waits = [];
+  const { host, ctl } = await withVideos(["a", "b", "c"], undefined, prefetch({ pause: async (ms) => { waits.push(ms); } }));
+  assert.deepEqual(host.of("meta").map((m) => m.url), [url("a"), url("b"), url("c")]);
+  assert.deepEqual(rows(ctl).map((r) => r.tags), Array(3).fill(["標籤一", "標籤二", "標籤三", "標籤四"]));
+  assert.equal(waits.length, 2, "a pause between two reads, none after the last");
+  assert.ok(waits.every((ms) => ms >= 4000 && ms <= 6000), `paced with a little jitter: ${waits}`);
+});
+
+test("prefetch is off unless asked for (the other tests and the old behaviour ask the host only on demand)", async () => {
+  const { host } = await withVideos(["a"]);
+  assert.equal(host.of("meta").length, 0);
+});
+
+async function addAll(env, ids) {
+  for (const id of ids) await env.ctl.add(url(id));
+  await env.ctl.idle();
+}
+
+test("three failed reads in a row stop the reading; the rows say why, and the copy button still tries again", async () => {
+  const env = setup(undefined, prefetch());
+  env.host.replies.meta = { type: "error", code: "network", message: "網路連線失敗或逾時，請稍後再試" };
+  await addAll(env, ["a", "b", "c", "d", "e"]);
+  assert.equal(env.host.of("meta").length, 3, "stops after three failures in a row");
+  assert.deepEqual(rows(env.ctl).map((r) => r.textError), ["網路連線失敗或逾時，請稍後再試", "網路連線失敗或逾時，請稍後再試", "網路連線失敗或逾時，請稍後再試", null, null]);
+  env.host.replies.meta = { type: "meta", id: "a", title: "影片 a", description: "說明 #標籤一" };
+  const result = await env.ctl.copyText(rows(env.ctl)[0].uid);
+  assert.equal(result.ok, true);
+  assert.deepEqual([rows(env.ctl)[0].tags, rows(env.ctl)[0].textError], [["標籤一"], null]);
+});
+
+test("a success between failures starts the count again", async () => {
+  const env = setup(undefined, prefetch());
+  let n = 0;
+  env.host.replies.meta = () => (++n % 3 === 0 ? { type: "meta", description: "#好" } : { type: "error", code: "x", message: "壞" });
+  await addAll(env, ["a", "b", "c", "d", "e", "f", "g"]);
+  assert.equal(env.host.of("meta").length, 7, "never three failures in a row");
+});
+
+test("nothing is read while the host is away; it starts when the host comes back", async () => {
+  const env = setup({ isConnected: false }, prefetch());
+  await addAll(env, ["a"]);
+  assert.equal(env.host.of("meta").length, 0);
+  env.host.isConnected = true;
+  await env.ctl.onHostConnected({});
+  await env.ctl.idle();
+  assert.equal(env.host.of("meta").length, 1);
+  assert.deepEqual(rows(env.ctl)[0].tags, ["標籤一", "標籤二", "標籤三", "標籤四"]);
+});
+
+test("a repeated video is read once, and reading rows that already have their tags is skipped after a restart", async () => {
+  const env = setup(undefined, prefetch());
+  await addAll(env, ["a", "a"]);
+  assert.equal(env.host.of("meta").length, 1);
+  const saved = JSON.parse(JSON.stringify(env.ctl.getState()));
+  const again = setup(undefined, { ...prefetch(), initial: saved });
+  await again.ctl.onHostConnected({});
+  await again.ctl.idle();
+  assert.equal(again.host.of("meta").length, 0);
+});
+
+test("the reading waits while the host has stopped the job on purpose", async () => {
+  const env = setup(undefined, prefetch());
+  await addAll(env, ["a"]);
+  env.ctl.onHostEvent({ type: "done", jobId: "j", summary: { aborted: { code: "network", message: "x" } } });
+  await addAll(env, ["b"]);
+  assert.equal(env.host.of("meta").length, 1, "only the first video was read");
 });

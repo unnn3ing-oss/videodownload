@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
   OUTPUT_DIR_LOCKED_TEXT, cooldownText, createState, describeItem, hostLost, markRunning, outputDirLocked, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
-  setCover, setSettings, setTags, summarize, canClearAll, clearAll,
+  setCover, setSettings, setTags, setTagsError, summarize, canClearAll, clearAll,
 } from "../lib/queue.js";
 
 const url = (id) => `https://www.youtube.com/watch?v=${id}`;
@@ -644,4 +644,49 @@ test("clearAll empties the list and keeps the settings; it does nothing while so
   assert.equal(cleared.settings.cooldownSec, settings.cooldownSec);
   assert.equal(cleared.hostConnected, true);
   assert.equal(cleared.aborted, null);
+});
+
+// ---- 每支影片的文字（【標題】＋三個標籤）----
+test("describeItem gives the text of a video: cleaned title, an empty line, the first three tags that are not the channel's own", () => {
+  let state = stateWith(ref("a", "部署321天 航艦林肯號返抵母港 軍眷迎接｜TVBS新聞 @TVBSNEWS01"));
+  const uid = state.items[0].uid;
+  assert.deepEqual([describeItem(state, state.items[0], 0).text, describeItem(state, state.items[0], 0).textState], [null, "loading"]);
+  state = setTags(state, uid, ["TVBS新聞", "TVBS直播", "TVBS新聞網", "航艦", "美軍", "林肯號", "第四"]);
+  const info = describeItem(state, state.items[0], 0);
+  assert.equal(info.text, "【部署321天 航艦林肯號返抵母港 軍眷迎接】\n\n#航艦 #美軍 #林肯號");
+  assert.equal(info.textState, "ready");
+  const none = setTags(state, uid, []);
+  assert.equal(describeItem(none, none.items[0], 0).text, "【部署321天 航艦林肯號返抵母港 軍眷迎接】", "no tags: just the title");
+});
+
+test("a row that failed to get its tags says so, and a later success clears that", () => {
+  let state = stateWith(ref("a"));
+  const uid = state.items[0].uid;
+  state = setTagsError(state, uid, "逾時");
+  let info = describeItem(state, state.items[0], 0);
+  assert.deepEqual([info.textState, info.textError], ["failed", "逾時"]);
+  state = setTags(state, uid, ["x"]);
+  info = describeItem(state, state.items[0], 0);
+  assert.deepEqual([info.textState, info.textError], ["ready", null]);
+});
+
+test("a row still being read has no text yet, and a held-back duplicate shows the text of the row it repeats", () => {
+  const added = addPlaceholder(setHostConnected(createState(), true), url("f"));
+  assert.equal(describeItem(added.state, added.state.items[0], 0).textState, "none");
+  let state = stateWith(ref("a"));
+  const first = state.items[0].uid;
+  const again = addPlaceholder(state, url("a"));
+  state = applyResolved(again.state, again.uid, [ref("a")]);
+  state = setTags(state, first, ["甲"]);
+  const dup = state.items.find((i) => i.dupOf);
+  assert.equal(describeItem(state, dup, 0).text, "【影片 a】\n\n#甲");
+});
+
+test("tags saved by an older version are dropped on load: they were cut at three before the channel's own tags were left out", () => {
+  let state = setTags(stateWith(ref("a")), 1, ["TVBS新聞", "航艦", "美軍"]);
+  const reloaded = createState(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(reloaded.items[0].tags, ["TVBS新聞", "航艦", "美軍"], "this version's own tags are kept");
+  const old = JSON.parse(JSON.stringify(state));
+  delete old.items[0].tagsV;
+  assert.equal(createState(old).items[0].tags, null);
 });

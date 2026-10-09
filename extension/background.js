@@ -120,6 +120,7 @@ const controllerReady = chrome.storage.local.get("queue").catch(() => ({})).then
   fetchFn: (url, options) => fetch(url, options),
   downloads: chrome.downloads,
   initial: queue ?? null,
+  prefetchTags: true, // every video's description is read by itself, so the web page can show its text
 }));
 
 function onHostMessage(msg) {

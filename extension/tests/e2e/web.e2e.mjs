@@ -371,12 +371,16 @@ async function withExtension() {
     await web.locator(".qrow", { hasText: "影片 v4" }).locator(".qx").click();
     await panel.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
 
-    // B6. Copy text and cover behave the same as in the panel.
+    // B6. The web page shows 【title】 and the tags in a box under every video (the panel does not); copy text and cover
+    // behave the same as in the panel.
+    await web.waitForFunction(() => [...document.querySelectorAll("#queue-list .qrow")].every((r) => r.querySelector(".qtext")?.value.includes("#標籤一")), null, { timeout: 30000 });
+    assert.equal(await web.locator(".qrow", { hasText: "範例影片" }).locator(".qtext").inputValue(), "【範例影片】\n\n#標籤一 #標籤二 #標籤三");
+    assert.equal(await panel.locator(".qtext:visible").count(), 0, "the side panel has no text boxes");
     await web.locator(".qrow", { hasText: "範例影片" }).locator(".qcopy").click();
     await web.waitForFunction(() => document.querySelector(".qcopy[data-state='ok']"));
     await web.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.body.append(t); t.focus(); });
     await web.keyboard.press("Control+V");
-    assert.equal(await web.inputValue("#paste-probe"), "【範例影片】\n#標籤一 #標籤二 #標籤三");
+    assert.equal(await web.inputValue("#paste-probe"), "【範例影片】\n\n#標籤一 #標籤二 #標籤三");
     await web.evaluate(() => document.getElementById("paste-probe").remove());
     await web.locator(".qrow", { hasText: "範例影片" }).locator(".qcover").click();
     await web.waitForFunction(() => document.querySelector(".qcover[data-state='ok']"));

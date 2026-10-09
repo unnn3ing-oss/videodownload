@@ -2,9 +2,9 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  canClearAll, clearAll, markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
+  canClearAll, clearAll, setTagsError, markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
-import { buildCopyText, extractHashtags } from "./copytext.js";
+import { KEEP_TAGS, MAX_TAGS, buildCopyText, extractHashtags, pickTags } from "./copytext.js";
 import { coverBaseName, coverName } from "./covername.js";
 import { findCover } from "./cover.js";
 import { toBase64 } from "./base64.js";
@@ -16,7 +16,9 @@ const TIMEOUT = { remove: 15000, resolve: 180000, meta: 90000, save_cover: 30000
 const fail = (error) => ({ ok: false, error });
 
 // deps.host: { connected(), version(), request(message, timeoutMs) -> Promise<event>, send(message) }
-export function createController({ host, save, notify, fetchFn = fetch, downloads, now = Date.now, initial = null, retryDelayMs = 400 }) {
+// prefetchTags: read every video's description by itself (one at a time, `tagGapMs` apart) so its text is ready under the row.
+export function createController({ host, save, notify, fetchFn = fetch, downloads, now = Date.now, initial = null, retryDelayMs = 400,
+  prefetchTags = false, tagGapMs = 4000, pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   let state = createState(initial);
   const sentIds = new Set(); // video ids the host already has in its current job
   const resolving = new Set(); // uids with a resolve request in flight
@@ -51,6 +53,54 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   };
   const find = (uid) => state.items.find((i) => i.uid === uid);
 
+  // The description of one video, as its hashtags. Shared by the copy button and the reading that runs by itself.
+  async function loadTags(uid) {
+    const item = find(uid);
+    if (!item || !item.id) return fail("找不到這支影片");
+    if (!host.connected()) return fail("請先連線本機小程式");
+    if (!hostUsable()) return fail("請先更新本機小程式");
+    let event;
+    try {
+      event = await host.request({ type: "meta", url: item.url }, TIMEOUT.meta);
+    } catch (error) {
+      return fail(error.message);
+    }
+    if (event.type !== "meta") return fail(event.message ?? "無法取得影片說明");
+    const tags = extractHashtags(event.description, KEEP_TAGS);
+    commit(setTags(state, uid, tags));
+    return { ok: true, tags };
+  }
+
+  // One video at a time with a pause between (every read is a yt-dlp call to YouTube). Three failures in a row end the run:
+  // the rows keep their reason and the copy button tries a row again. Rows that repeat a video are not read twice.
+  let tagWorker = false;
+  const nextUnread = () => state.items.find((i) => i.id && !i.dupOf && !i.tags && !i.textError && i.status !== "fetching");
+  function pumpTags() {
+    if (!prefetchTags || tagWorker) return;
+    tagWorker = true;
+    track((async () => {
+      let failures = 0;
+      try {
+        for (;;) {
+          if (!hostUsable() || state.aborted) return;
+          const item = nextUnread();
+          if (!item) return;
+          const result = await loadTags(item.uid);
+          if (result.ok) {
+            failures = 0;
+          } else {
+            if (!host.connected()) return; // (not a failure of the video: the host went away)
+            commit(setTagsError(state, item.uid, result.error));
+            if (++failures >= 3) return;
+          }
+          if (nextUnread()) await pause(tagGapMs + Math.round(Math.random() * tagGapMs * 0.25));
+        }
+      } finally {
+        tagWorker = false;
+      }
+    })());
+  }
+
   function resolveOne(uid, url) {
     resolving.add(uid);
     return track((async () => {
@@ -67,6 +117,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       }
       pumpResolves();
       syncRun();
+      pumpTags();
     })());
   }
 
@@ -295,6 +346,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     onHostConnected() {
       commit(setHostConnected(state, true, hostOutdated()));
       pumpResolves();
+      pumpTags();
       return idle();
     },
 
@@ -321,6 +373,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
         const finished = state.items.find((i) => i.id === event.itemId && !i.dupOf && i.status === "done");
         if (finished) queueCover(finished.uid);
       }
+      if (event.type === "started" || event.type === "done") pumpTags(); // (it waits while the host stopped the job on purpose)
       if (event.type === "done") {
         sentIds.clear();
         // a job the host stopped on purpose (failures in a row, disk full) would only stop again: the person restarts it
@@ -336,19 +389,14 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     async copyText(uid) {
       const item = find(uid);
       if (!item || !item.id) return fail("找不到這支影片");
-      if (item.tags) return { ok: true, text: buildCopyText(item.title, item.tags), tagCount: item.tags.length };
-      if (!host.connected()) return fail("請先連線本機小程式");
-      if (!hostUsable()) return fail("請先更新本機小程式");
-      let event;
-      try {
-        event = await host.request({ type: "meta", url: item.url }, TIMEOUT.meta);
-      } catch (error) {
-        return fail(error.message);
+      let tags = item.tags;
+      if (!tags) {
+        const loaded = await loadTags(uid);
+        if (!loaded.ok) return loaded;
+        tags = loaded.tags;
       }
-      if (event.type !== "meta") return fail(event.message ?? "無法取得影片說明");
-      const tags = extractHashtags(event.description);
-      commit(setTags(state, uid, tags));
-      return { ok: true, text: buildCopyText(find(uid)?.title ?? item.title, tags), tagCount: tags.length };
+      const picked = pickTags(tags, MAX_TAGS);
+      return { ok: true, text: buildCopyText(find(uid)?.title ?? item.title, picked), tagCount: picked.length };
     },
 
     downloadCover: saveCover,
