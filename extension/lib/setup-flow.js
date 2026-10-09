@@ -36,7 +36,7 @@ export const FOLDER_HINTS = [
 
 // ---------------- the steps, and whether it works ----------------
 
-export const STEP_LABELS = ["下載安裝檔", "執行安裝檔", "載入插件", "完成"];
+export const STEP_LABELS = ["下載安裝檔", "執行安裝檔", "載入擴充功能", "完成"];
 
 const hostInstalled = (status) => status.state === "running" || status.state === "forbidden" || (status.state === "stopped" && Boolean(status.detail));
 
@@ -107,7 +107,7 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   if (!detected) {
     return [everDetected
       ? item("extension", "error", "與擴充功能的連線中斷", "", "到 chrome://extensions 確認它已啟用；恢復後這裡會自動連上，也可以重新整理本頁")
-      : item("extension", "error", "還沒偵測到擴充功能", "", "照步驟 1～3：下載並執行安裝檔、載入插件（這個網頁需要電腦版 Chrome）")];
+      : item("extension", "error", "還沒偵測到擴充功能", "", "照步驟 1～3：下載並執行安裝檔、載入擴充功能（這個網頁需要電腦版 Chrome）")];
   }
   const list = [item("extension", "ok", `擴充功能${extensionVersion ? ` v${extensionVersion}` : "已偵測到"}`)];
   if (versionNotice({ extensionVersion, pageVersion })) {

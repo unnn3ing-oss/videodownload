@@ -52,7 +52,7 @@ const running = { state: "running", ready: { hostVersion: "0.2.3", ytdlpVersion:
 const stopped = { state: "stopped", ready: null, detail: null };
 
 test("the four steps, in the order the person does them", () => {
-  assert.deepEqual(STEP_LABELS, ["下載安裝檔", "執行安裝檔", "載入插件", "完成"]);
+  assert.deepEqual(STEP_LABELS, ["下載安裝檔", "執行安裝檔", "載入擴充功能", "完成"]);
 });
 
 test("wizardSteps follows the person through the steps and says which one to show", () => {

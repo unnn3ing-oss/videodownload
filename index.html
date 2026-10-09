@@ -124,7 +124,7 @@
 
   <dialog id="setup-dialog" class="setup-dialog" aria-labelledby="setup-title">
     <div class="sd-head">
-      <h2 id="setup-title">部署到 Chrome 插件</h2>
+      <div class="sd-title"><h2 id="setup-title">安裝 YT批量下載器</h2><p class="sd-sub">只要做一次、約 3 分鐘。裝好後這個畫面會自動消失。</p></div>
       <button id="tab-check" class="btn small" type="button">自我檢查</button>
       <button id="setup-close" class="btn small" type="button" aria-label="關閉">✕</button>
     </div>
@@ -134,13 +134,19 @@
         <ol id="steps" class="stepper" aria-label="步驟">
           <li class="sp" data-step="1" data-s="now"><button class="sp-btn" type="button" aria-label="步驟 1：下載安裝檔"><span class="sp-dot" aria-hidden="true"></span><span class="sp-label">下載安裝檔</span></button></li>
           <li class="sp" data-step="2" data-s="todo"><button class="sp-btn" type="button" aria-label="步驟 2：執行安裝檔"><span class="sp-dot" aria-hidden="true"></span><span class="sp-label">執行安裝檔</span></button></li>
-          <li class="sp" data-step="3" data-s="todo"><button class="sp-btn" type="button" aria-label="步驟 3：載入插件"><span class="sp-dot" aria-hidden="true"></span><span class="sp-label">載入插件</span></button></li>
+          <li class="sp" data-step="3" data-s="todo"><button class="sp-btn" type="button" aria-label="步驟 3：載入擴充功能"><span class="sp-dot" aria-hidden="true"></span><span class="sp-label">載入擴充功能</span></button></li>
           <li class="sp" data-step="4" data-s="todo"><button class="sp-btn" type="button" aria-label="步驟 4：完成"><span class="sp-dot" aria-hidden="true"></span><span class="sp-label">完成</span></button></li>
         </ol>
 
         <section class="pane" data-pane="1" aria-labelledby="pane-title-1">
           <h3 id="pane-title-1">步驟 1 / 4　下載安裝檔</h3>
-          <p>只需要一個安裝檔：它會安裝下載要用的元件、放好插件的資料夾、測試能不能用，再打開 Chrome 的擴充功能頁。你只要在電腦上授權它執行一次。</p>
+          <div class="pane-art" aria-hidden="true"><svg viewBox="0 0 240 110" focusable="false">
+            <rect class="a-card" x="8" y="8" width="224" height="94" rx="12"/>
+            <g class="a-file"><path class="a-fill" d="M82 20h36l16 16v40a6 6 0 0 1-6 6H82a6 6 0 0 1-6-6V26a6 6 0 0 1 6-6z"/><path class="a-line" d="M118 20v16h16"/><rect class="a-bar" x="86" y="50" width="38" height="4" rx="2"/><rect class="a-bar" x="86" y="60" width="26" height="4" rx="2"/></g>
+            <g class="a-arrow"><path class="a-stroke" d="M164 30v26M152 46l12 12 12-12"/></g>
+            <rect class="a-tray" x="144" y="72" width="40" height="6" rx="3"/>
+          </svg></div>
+          <p>只需要一個安裝檔：它會安裝下載要用的元件、放好擴充功能的資料夾、測試能不能用，再打開 Chrome 的擴充功能頁。你只要在電腦上授權它執行一次。</p>
           <div id="mac-install" class="pane-box" data-os="mac">
             <p><b>Mac（建議）</b>：複製下面這一行，貼到「終端機」（按 Cmd+空白鍵，輸入「終端機」）再按 Enter。不用下載、不會跳出 macOS 的安全性提示。</p>
             <div class="name-row"><code id="mac-command"></code><button id="copy-mac-command" class="btn primary" type="button">複製安裝指令</button></div>
@@ -154,11 +160,19 @@
 
         <section class="pane" data-pane="2" aria-labelledby="pane-title-2" hidden>
           <h3 id="pane-title-2">步驟 2 / 4　執行安裝檔（授權一次）</h3>
+          <div class="pane-art" aria-hidden="true"><svg viewBox="0 0 240 110" focusable="false">
+            <rect class="a-card" x="8" y="8" width="224" height="94" rx="12"/>
+            <circle class="a-dot" cx="22" cy="20" r="3"/><circle class="a-dot" cx="32" cy="20" r="3"/><circle class="a-dot" cx="42" cy="20" r="3"/>
+            <g class="a-row r1"><circle class="a-ring" cx="30" cy="42" r="7"/><path class="a-tick" d="M26.5 42l2.5 2.6 4.5-5"/><rect class="a-bar" x="46" y="39" width="110" height="6" rx="3"/></g>
+            <g class="a-row r2"><circle class="a-ring" cx="30" cy="60" r="7"/><path class="a-tick" d="M26.5 60l2.5 2.6 4.5-5"/><rect class="a-bar" x="46" y="57" width="86" height="6" rx="3"/></g>
+            <g class="a-row r3"><circle class="a-ring" cx="30" cy="78" r="7"/><path class="a-tick" d="M26.5 78l2.5 2.6 4.5-5"/><rect class="a-bar" x="46" y="75" width="128" height="6" rx="3"/></g>
+            <rect class="a-track" x="20" y="90" width="200" height="5" rx="2.5"/><rect class="a-progress" x="20" y="90" width="200" height="5" rx="2.5"/>
+          </svg></div>
           <p data-os="win"><b>Windows</b>：到「下載」資料夾雙擊 <code>install-windows.cmd</code>。若出現 SmartScreen「Windows 已保護您的電腦」，按「其他資訊」→「仍要執行」。</p>
           <p data-os="mac"><b>Mac</b>：在終端機貼上剛才複製的指令。若用的是下載的安裝檔：解壓縮後對 <code>install-mac.command</code> 按右鍵 →「打開」。</p>
           <p>接著安裝檔會自己做完：</p>
           <ol class="pane-list">
-            <li>跳出視窗，讓你選擇要把插件放在哪個資料夾（會在裡面建立一個「YT批量下載器」資料夾；不選就放在使用者資料夾）。</li>
+            <li>跳出視窗，讓你選擇要把擴充功能放在哪個資料夾（會在裡面建立一個「YT批量下載器」資料夾；不選就放在使用者資料夾）。</li>
             <li>下載並檢查需要的元件，測試本機小程式能不能被 Chrome 啟動。</li>
             <li>最後打開 Chrome 的「擴充功能」頁和那個資料夾，並列出每一項的檢查結果。</li>
           </ol>
@@ -166,14 +180,23 @@
         </section>
 
         <section class="pane" data-pane="3" aria-labelledby="pane-title-3" hidden>
-          <h3 id="pane-title-3">步驟 3 / 4　載入插件</h3>
-          <p>安裝檔已經替你打開 Chrome 的「擴充功能」頁和插件資料夾。在頁面右上角打開「開發人員模式」，按「載入未封裝項目」，選資料夾：</p>
+          <h3 id="pane-title-3">步驟 3 / 4　載入擴充功能</h3>
+          <div class="pane-art" aria-hidden="true"><svg viewBox="0 0 240 110" focusable="false">
+            <rect class="a-card" x="8" y="8" width="224" height="94" rx="12"/>
+            <text class="a-text" x="20" y="29">chrome://extensions</text>
+            <rect class="a-track" x="136" y="18" width="30" height="14" rx="7"/><rect class="a-on" x="136" y="18" width="30" height="14" rx="7"/><circle class="a-knob" cx="143" cy="25" r="5"/>
+            <text class="a-text" x="172" y="28">開發人員模式</text>
+            <rect class="a-btn" x="20" y="46" width="92" height="20" rx="10"/><text class="a-btn-t" x="66" y="59.5" text-anchor="middle">載入未封裝項目</text>
+            <g class="a-folder"><path class="a-fill" d="M138 54h14l4 5h26a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4h-44a4 4 0 0 1-4-4V58a4 4 0 0 1 4-4z"/><text class="a-btn-t" x="160" y="76" text-anchor="middle" style="fill:var(--ink)">YT批量下載器</text></g>
+            <path class="a-cursor" d="M96 70l0 18 5-4 3.5 7.5 3-1.4-3.5-7.3 6.5-.6z"/>
+          </svg></div>
+          <p>安裝檔已經替你打開 Chrome 的「擴充功能」頁和擴充功能資料夾。在頁面右上角打開「開發人員模式」，按「載入未封裝項目」，選資料夾：</p>
           <div class="name-row"><code id="default-folder"></code><button id="copy-folder" class="btn" type="button">複製名稱</button></div>
           <p id="copy-note-1" class="pane-note" data-kind="error" role="status" aria-live="polite" hidden></p>
           <p id="ext-found" class="pane-ok" hidden>✓ 已偵測到擴充功能<span id="ext-version"></span></p>
           <details class="manual">
-            <summary>沒有用安裝檔放插件？自己部署</summary>
-            <p>先在電腦上建一個放插件的資料夾（名稱同上），按下面的按鈕選它，網頁會把最新版插件的檔案寫進去；也可以改下載 ZIP 自己解壓縮。再到 <code>chrome://extensions</code>（可以按按鈕複製）載入未封裝項目。<b>本機小程式仍要用安裝檔安裝。</b></p>
+            <summary>沒有用安裝檔放擴充功能？自己部署</summary>
+            <p>先在電腦上建一個放擴充功能的資料夾（名稱同上），按下面的按鈕選它，網頁會把最新版擴充功能的檔案寫進去；也可以改下載 ZIP 自己解壓縮。再到 <code>chrome://extensions</code>（可以按按鈕複製）載入未封裝項目。<b>本機小程式仍要用安裝檔安裝。</b></p>
             <p id="folder-hint" class="pane-note"></p>
             <p id="folder-hint-2" class="pane-note"></p>
             <div class="pane-actions">
@@ -189,7 +212,12 @@
 
         <section class="pane" data-pane="4" aria-labelledby="pane-title-4" hidden>
           <h3 id="pane-title-4">步驟 4 / 4　完成</h3>
-          <p>插件載入後會自動連線，不用重新整理。確認一切正常，這個視窗會自動關閉。沒有反應時再按「啟動」。</p>
+          <div class="pane-art" aria-hidden="true"><svg viewBox="0 0 240 110" focusable="false">
+            <circle class="a-halo" cx="120" cy="55" r="34"/>
+            <circle class="a-ok-c" cx="120" cy="55" r="26"/>
+            <path class="a-check" d="M108 56l8 8 16-17"/>
+          </svg></div>
+          <p>擴充功能載入後會自動連線，不用重新整理。確認一切正常，這個視窗會自動關閉。沒有反應時再按「啟動」。</p>
           <div class="pane-actions"><button id="start" class="btn" type="button">啟動</button></div>
           <p id="connect-status" class="pane-ok" role="status" aria-live="polite"></p>
         </section>
