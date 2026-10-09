@@ -16,7 +16,7 @@ import selfupdate  # noqa: E402
 
 
 def forbidden_http_get(url: str, timeout: float = 30.0) -> bytes:
-    raise selfupdate.UpdateError("update_download_failed", f"測試中小程式不應自己下載：{url}")
+    raise selfupdate.UpdateError("update_download_failed", f"測試中下載助手不應自己下載：{url}")
 
 
 selfupdate.http_get = forbidden_http_get

@@ -40,14 +40,26 @@ HOST_NAME = doctor.HOST_NAME
 EXTENSION_FOLDER = "YT批量下載器"  # must equal FOLDER_NAME in extension/lib/setup-flow.js (a test enforces it)
 
 _GH = "https://github.com"
+DENO_VERSION = "v2.9.5"  # a fixed release: what is downloaded does not change under us, and PINS below says what it must be
 URL = {  # (yt-dlp's own addresses are in winengine.py and macos_engine.py, next to the code that unpacks it)
-    "deno_win": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip",
-    "deno_mac_arm": f"{_GH}/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip",
-    "deno_mac_x64": f"{_GH}/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip",
+    "deno_win": f"{_GH}/denoland/deno/releases/download/{DENO_VERSION}/deno-x86_64-pc-windows-msvc.zip",
+    "deno_mac_arm": f"{_GH}/denoland/deno/releases/download/{DENO_VERSION}/deno-aarch64-apple-darwin.zip",
+    "deno_mac_x64": f"{_GH}/denoland/deno/releases/download/{DENO_VERSION}/deno-x86_64-apple-darwin.zip",
     "ffmpeg_win": f"{_GH}/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+    # BtbN only keeps a rolling "latest", so its archive is checked against the list published next to it (not a pinned value).
+    "ffmpeg_win_sums": f"{_GH}/BtbN/FFmpeg-Builds/releases/latest/download/checksums.sha256",
     # Built for each chip (so Apple Silicon needs no Rosetta); a fixed release, so what is downloaded does not change under us.
     "ffmpeg_mac_arm": f"{_GH}/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz",
     "ffmpeg_mac_x64": f"{_GH}/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64.gz",
+}
+# SHA-256 of each pinned download (keys are URL's). A file that does not match is never unpacked or run. Changing a version
+# means changing the address and the value together (tools/canary_urls.py keeps the addresses alive; RELEASING.md says how).
+PINS = {
+    "deno_win": "171efab55ac6b9881fd53ee4c20f8bf3bb1340ffc618483746909014db12216a",
+    "deno_mac_arm": "b796aadd131f6930560c1ee040cf0d6f53933fbb987464e9ff46bd7ea4830615",
+    "deno_mac_x64": "c1b8b89a81e91b2a8b3f96def3195d08cfe3a105651da7908d53061f7140510d",
+    "ffmpeg_mac_arm": "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa",
+    "ffmpeg_mac_x64": "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106",
 }
 
 Run = Callable[[list], tuple]
@@ -185,6 +197,35 @@ def _works(path: Path, arg: str, run: Run) -> bool:
     return path.exists() and run([str(path), arg])[0] == 0
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _listed_checksum(sums_text: str, name: str) -> str:
+    """The SHA-256 that a "<hex>  <name>" list gives for `name`."""
+    for line in sums_text.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[1].strip().lstrip("*") == name and re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            return parts[0].lower()
+    raise SetupError(f"ffmpeg 官方的校驗碼清單裡找不到 {name}，無法確認檔案是否完整，所以不安裝")
+
+
+def verify_download(path: Path, expected: str, label: str) -> None:
+    """Nothing downloaded is unpacked before it matches the value it must have.
+    (Only the installer's own test run, which serves stand-in files and sets YTDL_SKIP_NETWORK=1, is excused.)"""
+    if os.environ.get("YTDL_SKIP_NETWORK") == "1":
+        return
+    actual = _sha256_file(Path(path))
+    if actual != expected.lower():
+        Path(path).unlink(missing_ok=True)
+        raise SetupError(f"{label} 的校驗碼和預期不同，已丟棄、不會安裝。\n    預期：{expected}\n    實際：{actual}\n"
+                         "    可能是下載不完整或被中途改過；請確認網路（公司網路若會改寫下載內容，請洽 IT）後重新執行安裝檔。")
+
+
 def _extract_member(zip_path: Path, wanted: str, dest: Path) -> None:
     """The one file called `wanted` (anywhere in the archive) goes to `dest`; nothing else is written."""
     try:
@@ -282,9 +323,11 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
             say("    已可使用，略過")
         else:
             deno.unlink(missing_ok=True)
-            url = URL["deno_win"] if win else URL["deno_mac_arm"] if chip == "arm64" else URL["deno_mac_x64"]
+            key = "deno_win" if win else "deno_mac_arm" if chip == "arm64" else "deno_mac_x64"
+            url = URL[key]
             archive = work / "deno.zip"
             fetch_file(url, archive)
+            verify_download(archive, PINS[key], "Deno")
             _extract_member(archive, _exe("deno", platform), deno)
             _must_run(deno, "--version", "Deno", run)
             say("    已安裝")
@@ -301,10 +344,13 @@ def ensure_tools(home: Path, platform: str, *, run: Run = run_capture, fetch_fil
             if win:
                 archive = work / "ffmpeg.zip"
                 fetch_file(URL["ffmpeg_win"], archive)
+                verify_download(archive, _listed_checksum(fetch_text(URL["ffmpeg_win_sums"]), "ffmpeg-master-latest-win64-gpl.zip"), "ffmpeg")
                 _extract_member(archive, "ffmpeg.exe", ffmpeg)
             else:
                 archive = work / "ffmpeg.gz"
-                fetch_file(URL["ffmpeg_mac_arm"] if chip == "arm64" else URL["ffmpeg_mac_x64"], archive)
+                key = "ffmpeg_mac_arm" if chip == "arm64" else "ffmpeg_mac_x64"
+                fetch_file(URL[key], archive)
+                verify_download(archive, PINS[key], "ffmpeg")
                 _extract_gz(archive, ffmpeg)
             _must_run(ffmpeg, "-version", "ffmpeg", run,
                       "Apple Silicon 若出現 bad CPU type，先在終端機執行 softwareupdate --install-rosetta，再重新執行安裝檔。" if mac else "")
@@ -351,7 +397,7 @@ def register(home: Path, platform: str, ext_id: str, *, python: str | None = Non
         launcher.chmod(0o755)
         manifest = Path(manifest_path) if manifest_path else doctor.default_manifest(platform)
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    data = {"name": HOST_NAME, "description": "YouTube 批量下載器本機小程式", "path": str(launcher), "type": "stdio",
+    data = {"name": HOST_NAME, "description": "YouTube 批量下載器下載助手", "path": str(launcher), "type": "stdio",
             "allowed_origins": [f"chrome-extension://{ext_id}/"]}
     manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if platform.startswith("win"):
@@ -435,7 +481,7 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
         proc = subprocess.Popen([str(launcher)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors)
     except OSError as exc:
         errors.close()
-        raise SetupError(f"小程式的啟動檔無法執行：{exc}") from exc
+        raise SetupError(f"下載助手的啟動檔無法執行：{exc}") from exc
     result: dict = {}
 
     def read() -> None:
@@ -463,13 +509,13 @@ def selftest(launcher: Path, *, timeout: float = 90) -> dict:
                 except subprocess.TimeoutExpired:
                     pass
             if proc.poll() is None:
-                raise SetupError(f"小程式啟動後 {int(timeout)} 秒沒有回應")
+                raise SetupError(f"下載助手啟動後 {int(timeout)} 秒沒有回應")
             errors.seek(0)
             err = errors.read().decode("utf-8", errors="replace").strip()[-300:]
-            raise SetupError(f"小程式一啟動就結束了（結束碼 {proc.returncode}）{('：' + err) if err else ''}")
+            raise SetupError(f"下載助手一啟動就結束了（結束碼 {proc.returncode}）{('：' + err) if err else ''}")
         message = result["message"]
         if message.get("type") != "ready":
-            raise SetupError(f"小程式第一則訊息不是預期的 ready：{message}")
+            raise SetupError(f"下載助手第一則訊息不是預期的 ready：{message}")
         return message
     finally:
         try:
@@ -596,7 +642,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         recorded = recorded_extension_folder(home) if parent is None else None
         if no_deploy:
             step("擴充功能的資料夾維持不動")
-            say("    不更動本機小程式與擴充功能的檔案，只檢查並修復其他項目" + (f"：{recorded}" if recorded else ""))
+            say("    不更動下載助手與擴充功能的檔案，只檢查並修復其他項目" + (f"：{recorded}" if recorded else ""))
         else:
             step("放好擴充功能的資料夾")
             if recorded is not None:
@@ -614,7 +660,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         if not no_deploy:
             selfupdate.clear_pending(home)  # a marker left by an older update must not undo files this run just laid down
 
-        step("測試本機小程式能不能被 Chrome 啟動")
+        step("測試下載助手能不能被 Chrome 啟動")
         ready = steps["selftest"](home, platform)
         say(f"    OK（yt-dlp {ready.get('ytdlpVersion') or '?'}）")
 
@@ -630,7 +676,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
         return 1
     if no_deploy:  # nothing was laid down: the record keeps its folder, and says which version really is installed
         write_record(home, extension_folder=read_record(home).get("extensionFolder"), version=installed_version(home) or version)
-        say("\n安裝完成！（本機小程式與擴充功能的檔案沒有更動）")
+        say("\n安裝完成！（下載助手與擴充功能的檔案沒有更動）")
         say("回到 Chrome，網頁版會自動連線；沒有反應時按「啟動」。")
         say("之後如果遇到任何問題，重新執行這個安裝檔就會自動檢查並修復。")
         return 0
@@ -648,7 +694,7 @@ def _run_setup(home: Path, platform: str, ext_id: str, parent: Path | None, pack
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="安裝（或修復）本機小程式與擴充功能資料夾")
+    parser = argparse.ArgumentParser(description="安裝（或修復）下載助手與擴充功能資料夾")
     parser.add_argument("--home", default=os.environ.get("YTDL_HOME") or str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--ext-id", required=True)
     parser.add_argument("--extension-zip")

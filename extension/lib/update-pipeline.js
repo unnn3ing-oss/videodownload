@@ -4,7 +4,7 @@
 import { UpdateError, assertSameKey, checkLatest, downloadAll } from "./updater.js";
 import { toBase64 } from "./base64.js";
 
-const hostError = (event) => (event?.type === "error" ? new UpdateError(event.message ?? "本機小程式回報錯誤") : null);
+const hostError = (event) => (event?.type === "error" ? new UpdateError(event.message ?? "下載助手回報錯誤") : null);
 
 export async function collectUpdateInfo({ check = checkLatest, hostRequest = null, fetchFn = fetch, version, key }) {
   const latest = await check();
@@ -70,7 +70,7 @@ export async function applyUpdate({ info, hostRequest, fetchFn = fetch, key, onP
     if (hostCommitted) {
       const back = await hostRequest({ type: "update_rollback" }).catch((e) => ({ type: "error", message: e.message }));
       if (back.type === "error") {
-        throw new UpdateError(`${error.message}。本機小程式已經更新、擴充功能還沒有；請再按一次「更新到最新版」，或重新執行安裝檔。`, error.code);
+        throw new UpdateError(`${error.message}。下載助手已經更新、擴充功能還沒有；請再按一次「更新到最新版」，或重新執行安裝檔。`, error.code);
       }
     }
     throw error;

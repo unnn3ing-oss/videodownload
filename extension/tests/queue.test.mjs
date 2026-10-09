@@ -515,7 +515,7 @@ test("describeItem tells fetching apart from waiting for the host", () => {
   const connected = setHostConnected(addPlaceholder(createState(), url("a")).state, true);
   assert.deepEqual([describeItem(connected, connected.items[0], 0).kind, describeItem(connected, connected.items[0], 0).label], ["fetching", "抓取影片資訊中…"]);
   const offline = setHostConnected(connected, false);
-  assert.deepEqual([describeItem(offline, offline.items[0], 0).kind, describeItem(offline, offline.items[0], 0).label], ["waiting-host", "等待連線本機小程式"]);
+  assert.deepEqual([describeItem(offline, offline.items[0], 0).kind, describeItem(offline, offline.items[0], 0).label], ["waiting-host", "等待連線下載助手"]);
 });
 
 test("setTags stores hashtags on the row", () => {

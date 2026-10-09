@@ -49,7 +49,7 @@ try {
   await page.waitForFunction(() => /不是 YouTube 網址/.test(document.getElementById("add-note").textContent));
   await add("https://youtu.be/v1");
   await page.waitForSelector('.qrow[data-kind="waiting-host"]');
-  assert.match(await page.textContent("#queue-list"), /等待連線本機小程式/);
+  assert.match(await page.textContent("#queue-list"), /等待連線下載助手/);
   assert.equal(await page.isDisabled("#start-all"), true);
   assert.equal(await page.inputValue("#add-url"), "", "the box is emptied after adding");
   await page.waitForSelector("#mac-line:not([hidden])");

@@ -4,7 +4,7 @@
 
 | 測試 | 位置 | 涵蓋 | 怎麼跑 |
 | --- | --- | --- | --- |
-| Python：本機小程式 | `host/tests/` | 通訊協定、yt-dlp 參數與錯誤分類、工作佇列、安裝程式（`installer.py`）、Mac／Windows 引擎安裝、自我更新、診斷（doctor）、紀錄檔 | `python3 -m pytest -q` |
+| Python：下載助手 | `host/tests/` | 通訊協定、yt-dlp 參數與錯誤分類、工作佇列、安裝程式（`installer.py`）、Mac／Windows 引擎安裝、自我更新、診斷（doctor）、紀錄檔 | `python3 -m pytest -q` |
 | Python：建置與安裝檔 | `tests/test_build.py` | 內嵌 host 與擴充功能的安裝檔、已提交的安裝檔與最新程式碼一致、Mac 安裝檔用假的 curl 實跑（含 `curl \| bash` 方式）、Windows 安裝檔的 PowerShell 語法（需要 `pwsh`，沒有就跳過） | 同上 |
 | Python：發版與外部檢查工具 | `tests/test_release.py`、`tests/test_canary.py` | `tools/release.py`（用暫存的假 repo）、`tools/canary_*.py` 與 `tools/win_registry_smoke.py` 的純邏輯（不連網） | 同上 |
 | Node：擴充功能純邏輯 | `extension/tests/*.test.mjs` | 佇列、訊息來源檢查、更新規則與流程、安裝檔下載、連線提示、manifest；**`extension-id.test.mjs` 釘死擴充功能識別碼** | `node --test extension/tests/*.test.mjs`（或 `npm run test:node`） |
@@ -13,7 +13,7 @@
 六個 e2e suite：
 
 - `queue`：背景程式的清單（增加、解析、重複、依序下載與冷卻、下載中增減、複製內文、封面、誰能呼叫清單）。
-- `oldhost`：連到舊版本機小程式時，兩個畫面的提示、停用「開始」、複製內文的說明。
+- `oldhost`：連到舊版下載助手時，兩個畫面的提示、停用「開始」、複製內文的說明。
 - `sidepanel`：側邊面板頁面＋背景程式＋真的 host（假的引擎）。
 - `web`：網頁版（`index.html`＋`web/`，以 route 模擬 GitHub Pages）：沒有擴充功能時的部署、有擴充功能時自動偵測與連線。
 - `update`：側邊面板的自我更新流程，對假的 GitHub。
@@ -80,7 +80,7 @@ e2e 以 `--headless=new` 啟動 Chromium（擴充功能需要新版無頭模式�
 
 CI 的 runner 是乾淨、能直連網際網路的虛擬機，沒有下面這些：
 
-- **真實的 Chrome 與 Chrome Web Store 以外的「載入未封裝項目」流程**：在真的 Chrome 裡載入資料夾、按下「重新載入」、Chrome 對本機小程式的啟動方式與權限提示。（e2e 用的是 Chromium，且啟動旗標不同。）
+- **真實的 Chrome 與 Chrome Web Store 以外的「載入未封裝項目」流程**：在真的 Chrome 裡載入資料夾、按下「重新載入」、Chrome 對下載助手的啟動方式與權限提示。（e2e 用的是 Chromium，且啟動旗標不同。）
 - **防毒軟體與 Windows Defender／SmartScreen**：對 `yt-dlp.exe`、`deno.exe`、`ffmpeg.exe` 的攔截、隔離、第一次啟動的掃描延遲。
 - **公司網路**：代理伺服器、憑證攔截（TLS 檢查）、被擋的 GitHub／YouTube 網域；Windows 上 curl 的憑證撤銷檢查。
 - **macOS 的 Gatekeeper 與隔離屬性**（quarantine）：下載的程式被標記「來自網際網路」之後能不能執行；Apple Silicon 上的 Rosetta；macOS 內建 bash 3.2 與 BSD 工具的差異。

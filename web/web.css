@@ -176,6 +176,7 @@ input:disabled { opacity: .6; cursor: not-allowed; }
 .a-text { font: 8.5px var(--font); fill: var(--muted); }
 .a-btn { fill: var(--accent); }
 .a-btn-t { font: 700 8.5px var(--font); fill: #fff; }
+.a-btn-t.a-ink { fill: var(--ink); }
 .a-cursor { fill: var(--ink); stroke: var(--surface); stroke-width: 1; }
 .a-halo { fill: var(--ok-soft); }
 .a-ok-c { fill: var(--ok); }

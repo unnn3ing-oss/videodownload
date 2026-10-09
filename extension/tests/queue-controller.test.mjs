@@ -156,9 +156,9 @@ test("start gives up with the host's message when it stays busy", async () => {
 
 test("start explains why it cannot run", async () => {
   const offline = await withVideos(["a"], { isConnected: false });
-  assert.deepEqual(await offline.ctl.start(), { ok: false, error: "請先連線本機小程式" });
+  assert.deepEqual(await offline.ctl.start(), { ok: false, error: "請先連線下載助手" });
   const old = await withVideos(["a"], { ver: "0.1.0" });
-  assert.deepEqual(await old.ctl.start(), { ok: false, error: "請先更新本機小程式" });
+  assert.deepEqual(await old.ctl.start(), { ok: false, error: "請先更新下載助手" });
   assert.deepEqual(old.host.requests.filter((m) => m.type === "download"), []);
   const empty = setup();
   assert.deepEqual(await empty.ctl.start(), { ok: false, error: "沒有可下載的影片" });
@@ -487,7 +487,7 @@ test("copyText with no hashtags copies just the title, and needs the host otherw
   assert.deepEqual(await none.ctl.copyText(rows(none.ctl)[0].uid), { ok: true, text: "【影片 a】", tagCount: 0 });
   const offline = await withVideos(["a"]);
   offline.host.isConnected = false;
-  assert.deepEqual(await offline.ctl.copyText(rows(offline.ctl)[0].uid), { ok: false, error: "請先連線本機小程式" });
+  assert.deepEqual(await offline.ctl.copyText(rows(offline.ctl)[0].uid), { ok: false, error: "請先連線下載助手" });
   const failing = await withVideos(["a"]);
   failing.host.replies.meta = { type: "error", code: "network", message: "網路連線失敗或逾時，請稍後再試" };
   assert.deepEqual(await failing.ctl.copyText(rows(failing.ctl)[0].uid), { ok: false, error: "網路連線失敗或逾時，請稍後再試" });
@@ -519,7 +519,7 @@ test("a host that was updated while the page was open is no longer flagged", asy
 
 test("copyText says the host must be updated instead of showing the host's unknown-message error", async () => {
   const old = await withVideos(["a"], { ver: "0.1.0" });
-  assert.deepEqual(await old.ctl.copyText(rows(old.ctl)[0].uid), { ok: false, error: "請先更新本機小程式" });
+  assert.deepEqual(await old.ctl.copyText(rows(old.ctl)[0].uid), { ok: false, error: "請先更新下載助手" });
   assert.deepEqual(old.host.of("meta"), [], "the old host is never sent a message it does not know");
 });
 

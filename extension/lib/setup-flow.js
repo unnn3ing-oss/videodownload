@@ -57,8 +57,8 @@ export function wizardSteps({ detected, passedInstaller = false, status, deploye
 export function connectSummary({ detected, deployed, status }) {
   if (deployed) return { ok: true, text: "一切正常，已經連線" };
   if (!detected) return { ok: false, text: "還沒偵測到擴充功能（步驟 1～3）" };
-  if (status.state === "running") return { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" };
-  return { ok: false, text: "還沒連上本機小程式（步驟 2）" };
+  if (status.state === "running") return { ok: false, text: "下載助手已連線，但還有地方需要處理：按右上角的「自我檢查」" };
+  return { ok: false, text: "還沒連上下載助手（步驟 2）" };
 }
 
 // Everything a download needs is there: the extension (not older than this page), a current host that runs, and its parts.
@@ -79,15 +79,15 @@ const buttonExtra = (updateAvailable, note = "") => (updateAvailable ? `；也�
 function hostItem({ status, hostOutdated, gaveUp, updateAvailable }) {
   if (status.state === "running") {
     return hostOutdated
-      ? item("host", "error", "本機小程式版本太舊，現在無法下載", "", `${REINSTALL}${buttonExtra(updateAvailable)}`)
-      : item("host", "ok", `本機小程式已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
+      ? item("host", "error", "下載助手版本太舊，現在無法下載", "", `${REINSTALL}${buttonExtra(updateAvailable)}`)
+      : item("host", "ok", `下載助手已連線${status.ready?.hostVersion ? `（v${status.ready.hostVersion}）` : ""}`);
   }
-  if (status.state === "not_installed") return item("host", "error", "尚未安裝本機小程式", "", "執行安裝檔（步驟 1、2）：Mac 貼一行指令，Windows 下載後雙擊");
+  if (status.state === "not_installed") return item("host", "error", "尚未安裝下載助手", "", "執行安裝檔（步驟 1、2）：Mac 貼一行指令，Windows 下載後雙擊");
   if (status.state === "forbidden") {
-    return item("host", "error", "Chrome 拒絕連線本機小程式（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 1、2）");
+    return item("host", "error", "Chrome 拒絕連線下載助手（擴充功能識別碼與安裝檔不符）", "", "重新下載安裝檔並再執行一次（步驟 1、2）");
   }
-  if (gaveUp) return item("host", "error", "本機小程式啟動後馬上又關閉了", status.detail ?? "", REINSTALL);
-  return item("host", "warn", "正在連線本機小程式…", status.detail ?? "", "等幾秒；一直連不上就" + REINSTALL);
+  if (gaveUp) return item("host", "error", "下載助手啟動後馬上又關閉了", status.detail ?? "", REINSTALL);
+  return item("host", "warn", "正在連線下載助手…", status.detail ?? "", "等幾秒；一直連不上就" + REINSTALL);
 }
 
 function partItems(ready) {
@@ -117,7 +117,7 @@ export function selfCheckItems({ detected, everDetected, extensionVersion, pageV
   list.push(hostItem({ status, hostOutdated, gaveUp, updateAvailable }));
   const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
   if (hostVersionNotice({ extensionVersion, hostVersion })) {
-    list.push(item("hostVersion", "error", `本機小程式 v${hostVersion} 和擴充功能 v${extensionVersion} 版本不一致`, "",
+    list.push(item("hostVersion", "error", `下載助手 v${hostVersion} 和擴充功能 v${extensionVersion} 版本不一致`, "",
       `${REINSTALL_ACTION}${buttonExtra(updateAvailable)}`));
   }
   if (status.state === "running") {

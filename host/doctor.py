@@ -179,7 +179,7 @@ def _registry_value() -> str | None:
 
 def _check_native(path: Path, ext_id: str | None, platform: str) -> Check:
     if not path.exists():
-        return Check("native", "error", "Chrome 尚未登錄本機小程式", str(path), _REINSTALL)
+        return Check("native", "error", "Chrome 尚未登錄下載助手", str(path), _REINSTALL)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -199,7 +199,7 @@ def _check_native(path: Path, ext_id: str | None, platform: str) -> Check:
             return Check("native", "error", "Windows 登錄表裡沒有 Chrome 的登錄項目", "", _REINSTALL)
         if os.path.normcase(str(value)) != os.path.normcase(str(path)):
             return Check("native", "error", "Windows 登錄表指向別的登錄檔", f"{value}", _REINSTALL)
-    return Check("native", "ok", "Chrome 已登錄本機小程式", str(path))
+    return Check("native", "ok", "Chrome 已登錄下載助手", str(path))
 
 
 def _check_extension_folder(home: Path) -> Check | None:
@@ -236,7 +236,7 @@ def diagnose(home: Path, *, ext_id: str | None = None, native_manifest: Path | N
     output = Path(output_dir) if output_dir else ConfigStore(home / "config.json").output_dir
     checks = [
         _check_python(),
-        Check("files", "ok", f"本機小程式 {VERSION}", str(home / "host")),
+        Check("files", "ok", f"下載助手 {VERSION}", str(home / "host")),
         _check_engine(home, platform, run),
         _check_tool(home, "ffmpeg", "ffmpeg", ["-version"], "合併影片與聲音需要", platform, run),
         _check_tool(home, "deno", "Deno", ["--version"], "YouTube 解題需要", platform, run),
@@ -300,7 +300,7 @@ def repair(home: Path, *, platform: str = sys.platform, run: Run = run_capture, 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="檢查本機小程式的環境")
+    parser = argparse.ArgumentParser(description="檢查下載助手的環境")
     parser.add_argument("--home", default=os.environ.get("YTDL_HOME") or str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--ext-id")
     parser.add_argument("--native-manifest")

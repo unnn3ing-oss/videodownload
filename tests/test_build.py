@@ -250,7 +250,7 @@ def test_mac_installer_happy_path(tmp_path):
     assert (ext / "background.js").is_file() and not (ext / "installers").exists() and not (ext / "tests").exists()
     record = json.loads((home / "Library/Application Support/YTDownloader/install.json").read_text(encoding="utf-8"))
     assert record["extensionFolder"] == str(ext)
-    assert "測試本機小程式能不能被 Chrome 啟動" in proc.stdout and "OK（yt-dlp 2099.01.01）" in proc.stdout
+    assert "測試下載助手能不能被 Chrome 啟動" in proc.stdout and "OK（yt-dlp 2099.01.01）" in proc.stdout
     assert "載入未封裝項目" in proc.stdout and str(ext) in proc.stdout
 
 
@@ -287,7 +287,7 @@ def test_mac_installer_ends_with_a_report_of_every_part(tmp_path):
     proc, _ = run_mac_installer(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     report = proc.stdout.split("檢查安裝結果")[1]
-    for part in ("Python 3", "下載引擎 yt-dlp 2099.01.01", "ffmpeg 可以執行", "Deno 可以執行", "Chrome 已登錄本機小程式"):
+    for part in ("Python 3", "下載引擎 yt-dlp 2099.01.01", "ffmpeg 可以執行", "Deno 可以執行", "Chrome 已登錄下載助手"):
         assert "✔" in next(line for line in report.splitlines() if part in line), part
     assert "安裝完成" in proc.stdout and "重新執行這個安裝檔就會自動檢查並修復" in proc.stdout
 
@@ -464,3 +464,13 @@ def test_the_windows_bootstrap_reads_the_version_the_way_installer_py_does_and_c
         assert (installer._VERSION_LINE.search(text).group(1) if installer._VERSION_LINE.search(text) else None) == expected
     assert "[version]" in windows, "numbers, not text (as 0.10.0 against 0.9.0)"
     assert re.search(r"\\d\+\\\.\\d\+\\\.\\d\+", windows), "only x.y.z counts as a version"
+
+
+def test_the_windows_installer_checks_the_python_download_before_unpacking_it():
+    script = build.render_windows()
+    digest = build.DEPS["SHA256_PYTHON_WIN"]
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    assert script.count(digest) >= 2 and "@@" not in script
+    download = script.index("Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.8/")
+    check = script.index("Get-FileHash -Algorithm SHA256", download)
+    assert check < script.index("Expand-Archive -Force -Path $zip", download), "the check must come before the unpacking"

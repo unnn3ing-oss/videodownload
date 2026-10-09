@@ -73,9 +73,9 @@ test("the last step says in a line where the connection stands", () => {
   const say = (overrides) => connectSummary({ detected: true, deployed: false, status: running, ...overrides });
   assert.deepEqual(say({ deployed: true }), { ok: true, text: "一切正常，已經連線" });
   assert.deepEqual(say({ detected: false }), { ok: false, text: "還沒偵測到擴充功能（步驟 1～3）" });
-  assert.deepEqual(say({}), { ok: false, text: "小程式已連線，但還有地方需要處理：按右上角的「自我檢查」" });
-  assert.deepEqual(say({ status: { state: "not_installed", ready: null, detail: "x" } }), { ok: false, text: "還沒連上本機小程式（步驟 2）" });
-  assert.deepEqual(say({ status: stopped }), { ok: false, text: "還沒連上本機小程式（步驟 2）" });
+  assert.deepEqual(say({}), { ok: false, text: "下載助手已連線，但還有地方需要處理：按右上角的「自我檢查」" });
+  assert.deepEqual(say({ status: { state: "not_installed", ready: null, detail: "x" } }), { ok: false, text: "還沒連上下載助手（步驟 2）" });
+  assert.deepEqual(say({ status: stopped }), { ok: false, text: "還沒連上下載助手（步驟 2）" });
 });
 
 // ---------------- does it work? ----------------

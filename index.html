@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://i.ytimg.com; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'; object-src 'none'">
   <title>YouTube 批量下載器</title>
-  <meta name="description" content="用 Chrome 擴充功能搭配本機小程式，把公司頻道的公開影片批量下載到自己的電腦。">
+  <meta name="description" content="用 Chrome 擴充功能搭配下載助手，把公司頻道的公開影片批量下載到自己的電腦。">
   <link rel="icon" href="extension/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="extension/lib/queue-view.css">
   <link rel="stylesheet" href="web/web.css">
@@ -14,7 +15,7 @@
     <aside class="side">
       <div class="brand">
         <div class="mk"><svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 7v11m0 0-5-5m5 5 5-5M9 23h14" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div><b>YouTube 批量下載器</b><span>網頁版 · 搭配本機小程式</span></div>
+        <div><b>YouTube 批量下載器</b><span>網頁版 · 搭配下載助手</span></div>
       </div>
 
       <section class="setup-chip" aria-label="設定狀態">
@@ -51,7 +52,7 @@
 
       <section aria-labelledby="doctor-title">
         <h2 id="doctor-title">環境檢查</h2>
-        <p class="st-note">小程式連不上或下載有問題時，先按這裡看哪一項有狀況。還是不行，重新執行安裝檔（設定流程的步驟 1、2）就會自動檢查並修復。</p>
+        <p class="st-note">下載助手連不上或下載有問題時，先按這裡看哪一項有狀況。還是不行，重新執行安裝檔（設定流程的步驟 1、2）就會自動檢查並修復。</p>
         <div class="field"><button id="doctor-check" class="btn small" type="button" disabled>檢查環境</button></div>
         <ul id="doctor-list" class="dr-list"></ul>
         <p id="doctor-summary" class="dr-summary" role="status" aria-live="polite"></p>
@@ -173,7 +174,7 @@
           <p>接著安裝檔會自己做完：</p>
           <ol class="pane-list">
             <li>跳出視窗，讓你選擇要把擴充功能放在哪個資料夾（會在裡面建立一個「YT批量下載器」資料夾；不選就放在使用者資料夾）。</li>
-            <li>下載並檢查需要的元件，測試本機小程式能不能被 Chrome 啟動。</li>
+            <li>下載並檢查需要的元件，測試下載助手能不能被 Chrome 啟動。</li>
             <li>最後打開 Chrome 的「擴充功能」頁和那個資料夾，並列出每一項的檢查結果。</li>
           </ol>
           <p class="pane-note">之後遇到任何問題，重新執行安裝檔就會自動檢查並修復；它會沿用同一個資料夾，不會再問。</p>
@@ -187,7 +188,7 @@
             <rect class="a-track" x="136" y="18" width="30" height="14" rx="7"/><rect class="a-on" x="136" y="18" width="30" height="14" rx="7"/><circle class="a-knob" cx="143" cy="25" r="5"/>
             <text class="a-text" x="172" y="28">開發人員模式</text>
             <rect class="a-btn" x="20" y="46" width="92" height="20" rx="10"/><text class="a-btn-t" x="66" y="59.5" text-anchor="middle">載入未封裝項目</text>
-            <g class="a-folder"><path class="a-fill" d="M138 54h14l4 5h26a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4h-44a4 4 0 0 1-4-4V58a4 4 0 0 1 4-4z"/><text class="a-btn-t" x="160" y="76" text-anchor="middle" style="fill:var(--ink)">YT批量下載器</text></g>
+            <g class="a-folder"><path class="a-fill" d="M138 54h14l4 5h26a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4h-44a4 4 0 0 1-4-4V58a4 4 0 0 1 4-4z"/><text class="a-btn-t a-ink" x="160" y="76" text-anchor="middle">YT批量下載器</text></g>
             <path class="a-cursor" d="M96 70l0 18 5-4 3.5 7.5 3-1.4-3.5-7.3 6.5-.6z"/>
           </svg></div>
           <p>安裝檔已經替你打開 Chrome 的「擴充功能」頁和擴充功能資料夾。在頁面右上角打開「開發人員模式」，按「載入未封裝項目」，選資料夾：</p>
@@ -196,7 +197,7 @@
           <p id="ext-found" class="pane-ok" hidden>✓ 已偵測到擴充功能<span id="ext-version"></span></p>
           <details class="manual">
             <summary>沒有用安裝檔放擴充功能？自己部署</summary>
-            <p>先在電腦上建一個放擴充功能的資料夾（名稱同上），按下面的按鈕選它，網頁會把最新版擴充功能的檔案寫進去；也可以改下載 ZIP 自己解壓縮。再到 <code>chrome://extensions</code>（可以按按鈕複製）載入未封裝項目。<b>本機小程式仍要用安裝檔安裝。</b></p>
+            <p>先在電腦上建一個放擴充功能的資料夾（名稱同上），按下面的按鈕選它，網頁會把最新版擴充功能的檔案寫進去；也可以改下載 ZIP 自己解壓縮。再到 <code>chrome://extensions</code>（可以按按鈕複製）載入未封裝項目。<b>下載助手仍要用安裝檔安裝。</b></p>
             <p id="folder-hint" class="pane-note"></p>
             <p id="folder-hint-2" class="pane-note"></p>
             <div class="pane-actions">

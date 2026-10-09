@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 
 const PILL_TEXT = { not_installed: "尚未部署", stopped: "尚未啟動", running: "已啟動", forbidden: "連線被拒" };
 const SETUP_HINT = {
-  not_installed: "找不到本機小程式。請先完成步驟 1：下載安裝檔並執行一次。",
+  not_installed: "找不到下載助手。請先完成步驟 1：下載安裝檔並執行一次。",
   stopped: "準備好了就按「啟動」。第一次使用請先完成步驟 1；按了沒反應的話，重新執行安裝檔會自動檢查並修復。",
   forbidden: "Chrome 拒絕連線（擴充功能識別碼與安裝檔不符）。請重新下載部署並再執行一次安裝檔。",
 };
@@ -171,7 +171,7 @@ const pendingUpdate = () => hasUpdate() || Boolean(lastSummary?.hasUpdate);
 
 function updateReason() {
   if (!hasUpdate()) return null;
-  if (status.state !== "running") return "請先按「啟動」才能更新本機小程式";
+  if (status.state !== "running") return "請先按「啟動」才能更新下載助手";
   if (queue?.running) return "下載進行中，完成後再更新";
   return null;
 }
@@ -190,7 +190,7 @@ function renderVersionBanner() {
 function renderUpdate() {
   const manifest = chrome.runtime.getManifest();
   const hostVersion = status.state === "running" ? status.ready?.hostVersion : null;
-  $("ver-current").textContent = `擴充功能 ${manifest.version}${hostVersion ? ` · 本機小程式 ${hostVersion}` : ""}`;
+  $("ver-current").textContent = `擴充功能 ${manifest.version}${hostVersion ? ` · 下載助手 ${hostVersion}` : ""}`;
 
   const latest = $("ver-latest");
   const noteEl = $("update-note");
@@ -332,7 +332,7 @@ async function hostUpdateRequest(message) {
 
 const PROGRESS_TEXT = {
   download: ({ done, total }) => `下載更新檔案 ${done} / ${total}`,
-  host: () => "更新本機小程式…",
+  host: () => "更新下載助手…",
   write: ({ done, total }) => `寫入擴充功能檔案 ${done} / ${total}`,
 };
 

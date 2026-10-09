@@ -70,3 +70,47 @@ test("the web page's tab icon is the very same drawing as the extension's", () =
   assert.match(page, /<link rel="icon" href="extension\/icons\/icon\.svg"/, "one source for both");
   assert.ok(existsSync(new URL("../icons/icon.svg", import.meta.url)));
 });
+
+// ---- content security policy: only our own scripts run; the only outside addresses are the ones the code really uses ----
+import { readdirSync } from "node:fs";
+
+const csp = (text) => Object.fromEntries(String(text).split(";").map((part) => part.trim().split(/\s+/)).filter((p) => p[0]).map(([name, ...values]) => [name, values]));
+
+test("the extension pages carry a strict content security policy", () => {
+  const policy = csp(manifest.content_security_policy?.extension_pages);
+  assert.deepEqual(policy["default-src"], ["'none'"]);
+  assert.deepEqual(policy["script-src"], ["'self'"]);
+  assert.deepEqual(policy["object-src"], ["'none'"]);
+  assert.deepEqual(policy["connect-src"].sort(), ["'self'", "https://api.github.com", "https://i.ytimg.com", "https://raw.githubusercontent.com"]);
+  for (const [name, values] of Object.entries(policy)) {
+    assert.ok(!values.some((v) => /unsafe|\*|^https?:$/.test(v)), `${name} must not allow ${values}`);
+  }
+});
+
+test("the web page carries the same kind of policy, and no inline script or style needs it to be loosened", () => {
+  const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+  const tag = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/);
+  assert.ok(tag, "index.html needs a Content-Security-Policy meta tag");
+  const policy = csp(tag[1]);
+  assert.deepEqual(policy["script-src"], ["'self'"]);
+  // (the page itself fetches the extension's files from GitHub when it puts them in a folder or builds the ZIP)
+  assert.deepEqual(policy["connect-src"].sort(), ["'self'", "https://api.github.com", "https://raw.githubusercontent.com"]);
+  assert.deepEqual(policy["default-src"], ["'none'"]);
+  for (const page of [html, readFileSync(new URL("../sidepanel.html", import.meta.url), "utf8")]) {
+    assert.ok(!/<script(?![^>]*\bsrc=)/i.test(page), "no inline <script>");
+    assert.ok(!/<style[\s>]/i.test(page) && !/\sstyle=/i.test(page), "no inline style");
+    assert.ok(!/\son[a-z]+\s*=/i.test(page), "no inline event handler");
+  }
+});
+
+test("the code reaches no outside address the policies do not list", () => {
+  const allowed = ["https://api.github.com", "https://raw.githubusercontent.com", "https://i.ytimg.com"];
+  const files = [...readdirSync(new URL("../lib/", import.meta.url)).filter((f) => f.endsWith(".js")).map((f) => `../lib/${f}`),
+                 "../background.js", "../sidepanel.js", "../../web/app.js", "../../web/bridge-client.js"];
+  for (const file of files) {
+    const text = readFileSync(new URL(file, import.meta.url), "utf8");
+    for (const [, origin] of text.matchAll(/(?:fetch\(|\.src\s*=|new Image|url:)\s*[`"'](https?:\/\/[^/`"'$]+)/g)) {
+      assert.ok(allowed.includes(origin), `${file} reaches ${origin}`);
+    }
+  }
+});

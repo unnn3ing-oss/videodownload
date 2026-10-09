@@ -57,13 +57,13 @@ const host = {
   version: () => status.ready?.hostVersion ?? null,
   outputDir: () => status.ready?.outputDir ?? null,
   send(message) {
-    if (!port) throw new Error("尚未連線本機小程式");
+    if (!port) throw new Error("尚未連線下載助手");
     port.postMessage(message);
   },
   request(message, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
       if (!port) {
-        reject(new Error("尚未連線本機小程式"));
+        reject(new Error("尚未連線下載助手"));
         return;
       }
       const reqId = `bg:${++requestSeq}`;
@@ -153,7 +153,7 @@ function connect() {
     const message = chrome.runtime.lastError?.message;
     const kind = classifyConnectError(message);
     port = null;
-    failWaiting(new Error("與本機小程式的連線中斷"));
+    failWaiting(new Error("與下載助手的連線中斷"));
     controllerReady.then((controller) => controller.onHostDisconnected());
     const state = kind === "not_installed" ? "not_installed" : kind === "forbidden" ? "forbidden" : "stopped";
     setStatus({ state, ready: null, detail: message ?? null });
@@ -163,7 +163,7 @@ function connect() {
 const deployInstaller = () => downloadInstaller({ runtime: chrome.runtime, downloads: chrome.downloads });
 
 async function setOutputDir(path) {
-  if (!host.connected()) return { ok: false, error: "請先連線本機小程式" };
+  if (!host.connected()) return { ok: false, error: "請先連線下載助手" };
   // a job writes everything (videos and covers) into the folder it started with: a change waits for the next job
   if ((await controllerReady).outputDirLocked()) return { ok: false, error: OUTPUT_DIR_LOCKED_TEXT };
   try {
@@ -179,7 +179,7 @@ async function setOutputDir(path) {
 
 // "Check the environment": the host looks at what is installed and what runs; with fix it first repairs what is safe to repair.
 async function runDoctor(msg) {
-  if (!host.connected()) return { ok: false, error: "尚未連線本機小程式。連不上的時候，重新執行安裝檔就會自動檢查並修復。" };
+  if (!host.connected()) return { ok: false, error: "尚未連線下載助手。連不上的時候，重新執行安裝檔就會自動檢查並修復。" };
   try {
     const event = await host.request({ type: "doctor", extensionId: chrome.runtime.id, fix: msg.fix === true }, 120000);
     if (event.type !== "doctor") return { ok: false, error: event.message ?? "檢查失敗" };
@@ -228,7 +228,7 @@ async function checkForUpdate() {
 
 async function runUpdateNow(msg) {
   if (updating) return { ok: false, error: "正在更新中" };
-  if (!host.connected()) return { ok: false, error: "請先讓本機小程式連線（按「啟動」），再更新" };
+  if (!host.connected()) return { ok: false, error: "請先讓下載助手連線（按「啟動」），再更新" };
   updating = true;
   const progress = (p) => { const m = { type: "update_progress", ...p }; chrome.runtime.sendMessage(m).catch(() => {}); postToWeb(m); };
   try {

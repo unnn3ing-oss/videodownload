@@ -288,7 +288,7 @@ export function describeItem(state, item, now) {
     case "fetching":
       return state.hostConnected
         ? { ...base, kind: "fetching", label: "抓取影片資訊中…" }
-        : { ...base, kind: "waiting-host", label: "等待連線本機小程式" };
+        : { ...base, kind: "waiting-host", label: "等待連線下載助手" };
     case "waiting": {
       const length = item.duration ? formatEta(item.duration) : "";
       const cooling = state.cooldown && state.cooldown.nextId === item.id && now < state.cooldown.until;

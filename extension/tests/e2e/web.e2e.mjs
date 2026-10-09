@@ -454,7 +454,7 @@ async function withExtension() {
     assert.equal(await web.locator("#sd-foot").isVisible(), false, "the self-check has no back/next");
     await shot("web-0-self-check");
     const stuck = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
-    assert.ok(stuck.some((r) => r.status === "error" && /本機小程式/.test(r.text)), "the host is named as the problem");
+    assert.ok(stuck.some((r) => r.status === "error" && /下載助手/.test(r.text)), "the host is named as the problem");
     assert.ok(stuck.some((r) => r.status === "ok" && /擴充功能/.test(r.text)), "and the extension is shown as fine");
     await web.click("#setup-close"); // the person closes it; it stays closed
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -482,7 +482,7 @@ async function withExtension() {
     fs.writeFileSync(wrapper, goodWrapper);
     await web.click("#open-setup"); // the button beside the sidebar title brings the steps back, at the last one: that one starts the host
     assert.deepEqual(await web.$$eval(".pane", (panes) => panes.filter((pane) => !pane.hidden).map((pane) => pane.dataset.pane)), ["4"]);
-    assert.match(await web.textContent("#connect-status"), /還沒連上本機小程式/, "the last step says where the connection stands");
+    assert.match(await web.textContent("#connect-status"), /還沒連上下載助手/, "the last step says where the connection stands");
     await web.click("#start");
     await web.waitForSelector("#conn-note", { state: "hidden", timeout: 20000 });
     await untilStep(4, "done");
@@ -502,7 +502,7 @@ async function withExtension() {
     await untilDialog(true, 40000);
     assert.equal(await web.locator("#view-check").isVisible(), true);
     const trouble = await web.$$eval("#check-list li", (items) => items.map((li) => ({ status: li.dataset.status, text: li.textContent })));
-    assert.ok(trouble.some((r) => r.status !== "ok" && /本機小程式/.test(r.text)), "the host is the line that is not green (still trying, or given up)");
+    assert.ok(trouble.some((r) => r.status !== "ok" && /下載助手/.test(r.text)), "the host is the line that is not green (still trying, or given up)");
     fs.writeFileSync(wrapper, goodWrapper);
     await web.click("#check-again");
     await untilDialog(false, 30000);
