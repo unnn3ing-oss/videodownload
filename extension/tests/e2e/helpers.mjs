@@ -18,6 +18,17 @@ export function extensionId(keyB64) {
   return [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join("");
 }
 
+// The panel and the background worker both check for an update, and the pop-up would cover the page; suites that are
+// not about updating must not depend on what the real GitHub holds. (A page route would not reach the worker.)
+// Chromium honours only one --host-resolver-rules, so the suite's own rules (the fake ytimg) are merged with this one.
+function resolverArgs(args, noGithub) {
+  if (!noGithub) return args;
+  const prefix = "--host-resolver-rules=";
+  const own = args.filter((a) => a.startsWith(prefix)).map((a) => a.slice(prefix.length));
+  const rules = [...own, "MAP api.github.com 127.0.0.1:9", "MAP raw.githubusercontent.com 127.0.0.1:9"].join(", ");
+  return [...args.filter((a) => !a.startsWith(prefix)), `${prefix}${rules}`];
+}
+
 // Exit codes of the callers: 0 = OK, 1 = assertion failed, 2 = UNVERIFIED (browser/extension could not be launched).
 export async function launchExtension({ viewport = { width: 400, height: 860 }, args = [], noGithub = false } = {}) {
   const work = fs.mkdtempSync(path.join(process.env.E2E_TMP ?? os.tmpdir(), "ytdl-e2e-"));
@@ -30,11 +41,8 @@ export async function launchExtension({ viewport = { width: 400, height: 860 }, 
       viewport,
       // Chromium turns a non-ASCII file name given to chrome.downloads into "Invalid filename" unless the locale is UTF-8
       env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" },
-      args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, ...args],
+      args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, ...resolverArgs(args, noGithub)],
     });
-    // The panel checks for an update when it opens, and its pop-up would cover the page; suites that are not about
-    // updating must not depend on what the real GitHub holds at that moment.
-    if (noGithub) await context.route((url) => url.hostname === "api.github.com" || url.hostname === "raw.githubusercontent.com", (route) => route.abort());
     let [worker] = context.serviceWorkers();
     worker ??= await context.waitForEvent("serviceworker", { timeout: 20000 });
     assert.equal(new URL(worker.url()).hostname, extId, "pinned extension id must match the manifest key");
