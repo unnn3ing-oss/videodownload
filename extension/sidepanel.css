@@ -145,6 +145,7 @@ textarea:focus-visible, input:focus-visible { outline: none; border-color: var(-
   color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
   transition: transform .06s, background-color .15s, border-color .15s, opacity .15s;
 }
+a.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box; text-decoration: none; }
 .btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }

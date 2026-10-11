@@ -114,3 +114,12 @@ test("the code reaches no outside address the policies do not list", () => {
     }
   }
 });
+
+test("the side panel's 「在新分頁開啟網頁版」 link goes to the web page, in a new tab, without handing it window.opener", () => {
+  const html = readFileSync(new URL("../sidepanel.html", import.meta.url), "utf8");
+  const tag = html.match(/<a id="open-web"[^>]*>/)?.[0] ?? "";
+  assert.ok(tag, "the link exists");
+  assert.ok(tag.includes(`href="${WEB_ORIGIN}${WEB_PATH}"`), "it points at the same address the extension trusts");
+  assert.ok(tag.includes('target="_blank"'));
+  assert.match(tag, /rel="noopener/);
+});

@@ -47,6 +47,14 @@ try {
   await page.fill("#add-url", "http://evil.com/x");
   await page.click("#add-btn");
   await page.waitForFunction(() => /不是 YouTube 網址/.test(document.getElementById("add-note").textContent));
+  // the link to the web version sits above everything and opens a new tab
+  const [popup] = await Promise.all([
+    page.context().waitForEvent("page", { timeout: 10000 }),
+    page.click("#open-web"),
+  ]);
+  assert.ok(popup, "a new tab opened (its address is checked by the unit test; the sandbox has no network)");
+  assert.equal(await page.evaluate(() => document.querySelector(".app").firstElementChild.id), "open-web", "it is the first thing in the panel");
+  await popup.close().catch(() => {});
   // an empty list shows a sample row with the hints; it does nothing and gives way to the first real row
   assert.equal(await page.isVisible("#queue-demo .qdemo"), true, "the sample row shows while the list is empty");
   assert.match(await page.textContent("#queue-demo .qdl-t"), /點按下載封面/);
