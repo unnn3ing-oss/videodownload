@@ -29,7 +29,7 @@ try {
   if (process.env.E2E_SCHEME) await page.emulateMedia({ colorScheme: process.env.E2E_SCHEME });
   await page.goto(`chrome-extension://${extId}/sidepanel.html`);
   const state = (s) => page.waitForFunction((x) => document.getElementById("status").dataset.state === x, s);
-  const rowByTitle = (text) => page.locator(".qrow", { hasText: text });
+  const rowByTitle = (text) => page.locator("#queue-list .qrow", { hasText: text });
   const queueState = () => page.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state);
   const add = async (url) => { await page.fill("#add-url", url); await page.click("#add-btn"); };
 
@@ -47,8 +47,22 @@ try {
   await page.fill("#add-url", "http://evil.com/x");
   await page.click("#add-btn");
   await page.waitForFunction(() => /不是 YouTube 網址/.test(document.getElementById("add-note").textContent));
+  // an empty list shows a sample row with the hints; it does nothing and gives way to the first real row
+  assert.equal(await page.isVisible("#queue-demo .qdemo"), true, "the sample row shows while the list is empty");
+  assert.match(await page.textContent("#queue-demo .qdl-t"), /點按下載封面/);
+  assert.equal(await page.getAttribute('#queue-demo .qcopy', "data-tip"), "複製影片內文");
+  assert.equal(await page.evaluate(() => document.querySelector("#queue-demo .qdemo").inert), true, "nothing in the sample row can be pressed");
+  const bubble = await page.evaluate(() => getComputedStyle(document.querySelector("#queue-demo .qcopy"), "::after").opacity);
+  assert.equal(bubble, "1", "the sample row's bubble is always shown");
+  const colours = await page.evaluate(() => {
+    const bg = (sel) => getComputedStyle(document.querySelector(sel)).backgroundColor;
+    return [bg("#queue-demo .qcopy"), bg("#queue-demo .qx")];
+  });
+  assert.deepEqual(colours, ["rgb(31, 157, 98)", "rgb(217, 58, 71)"], "複製內文 is green, 從清單移除 is red");
+  await shot("1-sample-row");
   await add("https://youtu.be/v1");
   await page.waitForSelector('.qrow[data-kind="waiting-host"]');
+  assert.equal(await page.isVisible("#queue-demo"), false, "the sample row is gone once a video is in the list");
   assert.match(await page.textContent("#queue-list"), /等待連線下載助手/);
   assert.equal(await page.isDisabled("#start-all"), true);
   assert.equal(await page.inputValue("#add-url"), "", "the box is emptied after adding");
@@ -75,8 +89,8 @@ try {
   assert.equal(await page.isVisible("#setup"), false, "onboarding collapses once running");
   await page.waitForSelector('.qrow[data-kind="waiting"]');
   assert.match(await page.textContent("#queue-list"), /範例影片/);
-  assert.match(await page.getAttribute(".qrow .qthumb", "src"), /\/vi\/v1\/mqdefault\.jpg$/);
-  await page.waitForFunction(() => { const i = document.querySelector(".qrow .qthumb"); return i && i.complete && i.naturalWidth > 0; });
+  assert.match(await page.getAttribute("#queue-list .qrow .qthumb", "src"), /\/vi\/v1\/mqdefault\.jpg$/);
+  await page.waitForFunction(() => { const i = document.querySelector("#queue-list .qrow .qthumb"); return i && i.complete && i.naturalWidth > 0; });
   await page.click("#settings > summary");
   await page.fill("#outdir", outDir);
   await page.click("#save-outdir");
@@ -175,7 +189,7 @@ try {
   assert.match(await page.textContent("#start-all"), /全部完成/);
   await page.waitForSelector("#clear-all:not([hidden])", { timeout: 10000 }); // everything is finished: the list can be cleared
   // the cover of each finished video was saved by itself (v1 has one; the others are reported as having none)
-  await page.waitForFunction(() => /封面已存/.test(document.querySelector(".qrow .qsub")?.textContent ?? ""));
+  await page.waitForFunction(() => /封面已存/.test(document.querySelector("#queue-list .qrow .qsub")?.textContent ?? ""));
   assert.match(await rowByTitle("範例影片").first().locator(".qsub").textContent(), /720p · 封面已存/);
   assert.match(fs.readFileSync(path.join(outDir, "範例影片.jpg")).toString("latin1"), /v1:hq720/, "saved before anything was clicked");
   assert.match(await rowByTitle("影片 v2").first().locator(".qsub").textContent(), /封面失敗：找不到封面圖片/);
@@ -186,7 +200,7 @@ try {
   step("8. Copy text puts 【title】 and the first ");
   // 8. Copy text puts 【title】 and the first three hashtags on the clipboard.
   await rowByTitle("範例影片").first().locator(".qcopy").click();
-  await page.waitForFunction(() => document.querySelector(".qrow .qcopy[data-state='ok']"));
+  await page.waitForFunction(() => document.querySelector("#queue-list .qrow .qcopy[data-state='ok']"));
   // read the clipboard by pasting into a scratch textarea (readText would need a permission prompt)
   await page.evaluate(() => { const t = document.createElement("textarea"); t.id = "paste-probe"; document.body.append(t); t.focus(); });
   await page.keyboard.press("Control+V");
@@ -204,12 +218,12 @@ try {
   assert.equal(await symbolOpacity(), "0", "and shows no symbol");
   await cover.hover();
   await page.waitForFunction(() => {
-    const row = [...document.querySelectorAll(".qrow")].find((r) => r.textContent.includes("範例影片"));
+    const row = [...document.querySelectorAll("#queue-list .qrow")].find((r) => r.textContent.includes("範例影片"));
     return getComputedStyle(row.querySelector(".qdl")).opacity === "1" && /grayscale/.test(getComputedStyle(row.querySelector(".qthumb")).filter);
   }, null, { timeout: 3000 });
   assert.match(await thumbFilter(), /grayscale/, "grey with the pointer over it");
   await cover.click();
-  await page.waitForFunction(() => document.querySelector(".qrow .qcover[data-state='ok']"));
+  await page.waitForFunction(() => document.querySelector("#queue-list .qrow .qcover[data-state='ok']"));
   const saved = fs.readFileSync(path.join(outDir, "範例影片.jpg"));
   assert.deepEqual([...saved.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   assert.match(saved.toString("latin1"), /v1:hq720/);
@@ -217,12 +231,12 @@ try {
   step("10. The X removes a row (the duplicate h");
   // 10. The X removes a row (the duplicate here).
   await page.locator('.qrow[data-kind="duplicate"] .qx').click();
-  await page.waitForFunction(() => document.querySelectorAll(".qrow").length === 3);
+  await page.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
   assert.equal((await queueState()).items.length, 3);
 
   step("11. Screen readers");
   // 11. Every row's buttons say which video they belong to, messages are announced, the bar is a progress bar.
-  const labels = await page.$$eval(".qrow", (rows) => rows.map((row) => ({
+  const labels = await page.$$eval("#queue-list .qrow", (rows) => rows.map((row) => ({
     copy: row.querySelector(".qcopy").getAttribute("aria-label"),
     remove: row.querySelector(".qx").getAttribute("aria-label"),
     cover: row.querySelector(".qcover").getAttribute("aria-label"),
@@ -231,7 +245,7 @@ try {
   assert.equal(labels.length, 3);
   for (const kind of ["copy", "remove", "cover", "retry"]) assert.equal(new Set(labels.map((l) => l[kind])).size, 3, `${kind} buttons are told apart`);
   assert.deepEqual(labels[0], { copy: "複製內文：範例影片", remove: "從清單移除：範例影片", cover: "下載封面圖片：範例影片", retry: "重試：範例影片" });
-  const first = page.locator(".qrow").first();
+  const first = page.locator("#queue-list .qrow").first();
   const bar = await first.locator(".qbar").evaluate((n) => ({
     role: n.getAttribute("role"), min: n.getAttribute("aria-valuemin"), max: n.getAttribute("aria-valuemax"),
     now: n.getAttribute("aria-valuenow"), text: n.getAttribute("aria-valuetext"), label: n.getAttribute("aria-label"),
@@ -244,7 +258,7 @@ try {
   assert.deepEqual(await message.evaluate((n) => [n.getAttribute("role"), n.getAttribute("aria-live"), getComputedStyle(n).display !== "none"]), ["status", "polite", true],
     "the message line is a live region that is in the page (not display:none) before it has anything to say");
   await first.locator(".qcopy").click();
-  await page.waitForFunction(() => document.querySelector(".qrow .qflash")?.textContent === "已複製");
+  await page.waitForFunction(() => document.querySelector("#queue-list .qrow .qflash")?.textContent === "已複製");
 
   assert.equal(await page.evaluate(() => {
     const pill = document.getElementById("status").getBoundingClientRect();

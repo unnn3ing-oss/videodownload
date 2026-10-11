@@ -6,12 +6,13 @@ import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
-import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
+import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
 
 const $ = (id) => document.getElementById(id);
+$("queue-demo").append(makeDemoRow());
 
 const PILL_TEXT = { not_installed: "尚未部署", stopped: "尚未啟動", running: "已啟動", forbidden: "連線被拒" };
 const SETUP_HINT = {
@@ -120,6 +121,7 @@ function renderQueueView() {
     cover: (uid, button) => downloadRowCover(send, uid, button),
   });
   $("queue-empty").hidden = queue.items.length > 0;
+  $("queue-demo").hidden = queue.items.length > 0; // the sample row gives way to the first real one
   $("queue-stats").textContent = queue.items.length ? `共 ${info.total} 支 · 完成 ${info.done}` : "";
   const cooling = cooldownText(queue, now);
   $("cooldown-chip").hidden = !cooling;

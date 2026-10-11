@@ -43,8 +43,8 @@ try {
     await view.waitForSelector("#host-note:not([hidden])");
     assert.match(await view.textContent("#host-note"), /下載助手.*太舊.*重新執行安裝檔/, `${name}: says the host is too old and to run the installer again`);
     assert.equal(await view.isDisabled("#start-all"), true, `${name}: start is off`);
-    await view.locator(".qcopy").first().click();
-    await view.waitForFunction(() => /請先更新下載助手/.test(document.querySelector(".qflash")?.textContent ?? ""));
+    await view.locator("#queue-list .qcopy").first().click();
+    await view.waitForFunction(() => /請先更新下載助手/.test(document.querySelector("#queue-list .qflash")?.textContent ?? ""));
   }
   // Screen readers announce a live region again whenever its text is rewritten: more rows (more pushes) must not do that.
   await panel.fill("#add-url", "https://www.youtube.com/watch?v=v2");

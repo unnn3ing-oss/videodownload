@@ -47,6 +47,13 @@ function button(className, label, iconName) {
   return node;
 }
 
+// A speech bubble (drawn by CSS from data-tip) instead of the slow native tooltip; the aria-label still names the button.
+function tipped(node, tip) {
+  node.removeAttribute("title");
+  node.dataset.tip = tip;
+  return node;
+}
+
 const thumbUrl = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const duration = (seconds) => {
   if (!Number.isFinite(seconds)) return "";
@@ -84,7 +91,7 @@ function makeRow(item, handlers) {
   thumb.decoding = "async";
   thumb.addEventListener("error", () => { thumb.hidden = true; });
   const dl = el("span", "qdl");
-  dl.append(icon("download"));
+  dl.append(icon("download"), el("span", "qdl-t", "點按下載封面"));
   cover.append(placeholder, thumb, el("span", "qdur"), dl);
   cover.addEventListener("click", () => handlers.cover(item.uid, cover));
 
@@ -105,11 +112,11 @@ function makeRow(item, handlers) {
   main.append(head, bar, line, hint, flashLine);
 
   const acts = el("div", "qacts");
-  const copy = button("qcopy", "複製內文", "copy");
+  const copy = tipped(button("qcopy", "複製內文", "copy"), "複製影片內文");
   copy.addEventListener("click", () => handlers.copy(item.uid, copy));
-  const retry = button("qretry", "重試", "retry");
+  const retry = tipped(button("qretry", "重試", "retry"), "重試");
   retry.addEventListener("click", () => handlers.retry(item.uid));
-  const remove = button("qx", "從清單移除", "x");
+  const remove = tipped(button("qx", "從清單移除", "x"), "從清單移除");
   remove.addEventListener("click", () => handlers.remove(item.uid));
   acts.append(copy, retry, remove);
 
@@ -119,6 +126,28 @@ function makeRow(item, handlers) {
   text.spellcheck = false;
   text.hidden = true;
   row.append(cover, main, acts, text);
+  return row;
+}
+
+// The sample row shown in an empty list (side panel): looks like a real row and carries the hints, but does nothing.
+// The caller shows it only while the list has no rows, so the first added video simply replaces it.
+export function makeDemoRow() {
+  const noop = () => {};
+  const row = makeRow({ uid: 0 }, { cover: noop, copy: noop, retry: noop, remove: noop });
+  const q = (selector) => row.querySelector(selector);
+  row.classList.add("qdemo");
+  row.dataset.kind = "demo";
+  row.style.setProperty("--h", "215");
+  q(".qno").textContent = "1";
+  q(".qtitle").textContent = "範例影片標題";
+  q(".qbar").hidden = true;
+  q(".qpill").textContent = "範例";
+  q(".qsub").textContent = "加入網址後會換成你的影片";
+  q(".qthumb").hidden = true;
+  q(".qglyph").textContent = "▶";
+  q(".qretry").hidden = true;
+  row.inert = true; // nothing in it can be pressed or tabbed to
+  row.setAttribute("aria-hidden", "true");
   return row;
 }
 
