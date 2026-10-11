@@ -49,7 +49,7 @@ try {
   // Screen readers announce a live region again whenever its text is rewritten: more rows (more pushes) must not do that.
   await panel.fill("#add-url", "https://www.youtube.com/watch?v=v2");
   await panel.click("#add-btn");
-  for (const view of [panel, web]) await view.waitForFunction(() => document.querySelectorAll(".qrow").length === 2);
+  for (const view of [panel, web]) await view.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 2);
   await new Promise((resolve) => setTimeout(resolve, 1500));
   for (const [name, view] of [["panel", panel], ["web", web]]) {
     assert.equal(await view.evaluate(() => window.__noteRewrites), 0, `${name}: the note (already shown) was not rewritten`);
