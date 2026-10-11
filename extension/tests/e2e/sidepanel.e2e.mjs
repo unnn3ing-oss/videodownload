@@ -10,7 +10,7 @@ import { startFakeYtimg } from "./fake-ytimg.mjs";
 const ytimg = await startFakeYtimg({ covers: {
   v1: ["hq720", "mqdefault"], v2: ["mqdefault"], xss1: ["mqdefault"],
 } });
-const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 }, args: [...ytimg.args(), ...HOVER_ARGS] });
+const { context, extId, work, userData } = await launchExtension({ viewport: { width: 400, height: 860 }, args: [...ytimg.args(), ...HOVER_ARGS], noGithub: true });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });

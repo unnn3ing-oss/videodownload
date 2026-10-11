@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PAGES_URL, launchExtension, registerNativeHost, root, servePages } from "./helpers.mjs";
 
-const { context, extId, work, userData } = await launchExtension({ viewport: { width: 1200, height: 900 } });
+const { context, extId, work, userData } = await launchExtension({ viewport: { width: 1200, height: 900 }, noGithub: true });
 try {
   const wrapper = path.join(work, "host.sh");
   fs.writeFileSync(wrapper, `#!/bin/sh\nexec python3 "${path.join(root, "extension/tests/e2e/old_host.py")}"\n`);

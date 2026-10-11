@@ -19,7 +19,7 @@ export function extensionId(keyB64) {
 }
 
 // Exit codes of the callers: 0 = OK, 1 = assertion failed, 2 = UNVERIFIED (browser/extension could not be launched).
-export async function launchExtension({ viewport = { width: 400, height: 860 }, args = [] } = {}) {
+export async function launchExtension({ viewport = { width: 400, height: 860 }, args = [], noGithub = false } = {}) {
   const work = fs.mkdtempSync(path.join(process.env.E2E_TMP ?? os.tmpdir(), "ytdl-e2e-"));
   const userData = path.join(work, "profile");
   const extId = extensionId(manifest.key);
@@ -32,6 +32,9 @@ export async function launchExtension({ viewport = { width: 400, height: 860 }, 
       env: { ...process.env, LANG: "C.UTF-8", LC_ALL: "C.UTF-8" },
       args: ["--headless=new", "--no-sandbox", `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, ...args],
     });
+    // The panel checks for an update when it opens, and its pop-up would cover the page; suites that are not about
+    // updating must not depend on what the real GitHub holds at that moment.
+    if (noGithub) await context.route((url) => url.hostname === "api.github.com" || url.hostname === "raw.githubusercontent.com", (route) => route.abort());
     let [worker] = context.serviceWorkers();
     worker ??= await context.waitForEvent("serviceworker", { timeout: 20000 });
     assert.equal(new URL(worker.url()).hostname, extId, "pinned extension id must match the manifest key");

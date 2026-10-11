@@ -8,7 +8,7 @@ import { launchExtension, registerNativeHost, root } from "./helpers.mjs";
 import { startFakeYtimg } from "./fake-ytimg.mjs";
 
 const ytimg = await startFakeYtimg({ covers: { vA: ["hq720"], vF: ["hq720"] } });
-const { context, extId, work, userData } = await launchExtension({ args: ytimg.args() });
+const { context, extId, work, userData } = await launchExtension({ args: ytimg.args(), noGithub: true });
 const home = path.join(work, "home");
 const outDir = path.join(work, "out");
 fs.mkdirSync(path.join(home, "bin"), { recursive: true });
