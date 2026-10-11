@@ -36,6 +36,7 @@ let updateWorking = null; // "check" | "apply" while one is in progress
 let updateProgress = null; // { text, kind } of the last update attempt
 let lastSummary = null; // what was stored by the last check (also by the background alarm)
 let folderSaved = false;
+let updateDialogDismissed = false; // 「稍後再說」: not offered again until the panel is opened the next time
 
 const send = (message) => chrome.runtime.sendMessage(message);
 
@@ -232,6 +233,32 @@ function renderUpdate() {
   progressEl.dataset.kind = shown?.kind ?? "info";
 }
 
+// The pop-up: shown as soon as an update is known (not while videos are downloading: it would cover the stop button).
+function renderUpdateDialog() {
+  const dialog = $("update-dialog");
+  const show = pendingUpdate() && !updateDialogDismissed && !queue?.running;
+  if (!show) {
+    if (dialog.open && updateWorking === null) dialog.close();
+    return;
+  }
+  const manifest = chrome.runtime.getManifest();
+  $("ud-what").textContent = partsText(lastSummary) || (hasUpdate() ? "有新版本" : "");
+  $("ud-versions").textContent = [`目前 ${manifest.version}`, lastSummary?.message ? `最新：${lastSummary.message}` : ""].filter(Boolean).join("\n");
+  const go = $("ud-go");
+  const reason = updateReason();
+  go.disabled = updateWorking !== null || reason !== null;
+  go.textContent = updateWorking === "apply" ? "更新中…" : updateWorking === "check" ? "檢查中…"
+    : !hasUpdate() ? "檢查更新"
+      : updateInfo?.extChanged.length > 0 && !folderSaved ? PANEL_UPDATE_BUTTON.pickFolder : "立即更新";
+  const shown = updateWorking === "apply" ? updateProgress : (reason ? { text: reason, kind: "info" } : updateProgress);
+  const progress = $("ud-progress");
+  progress.hidden = !shown;
+  progress.textContent = shown?.text ?? "";
+  progress.dataset.kind = shown?.kind ?? "info";
+  $("ud-later").disabled = updateWorking === "apply";
+  if (!dialog.open) dialog.showModal();
+}
+
 function render() {
   renderStatus();
   renderQueueView();
@@ -239,6 +266,7 @@ function render() {
   renderTabCard();
   renderUpdate();
   renderVersionBanner();
+  renderUpdateDialog();
 }
 
 // ---------- adding videos ----------
@@ -465,9 +493,19 @@ $("update").addEventListener("click", () => {
 
 $("update-check").addEventListener("click", runCheck);
 $("update-apply").addEventListener("click", applyUpdate);
+$("ud-go").addEventListener("click", () => (hasUpdate() ? applyUpdate() : runCheck()));
+$("ud-later").addEventListener("click", () => { updateDialogDismissed = true; $("update-dialog").close(); });
+$("update-dialog").addEventListener("cancel", () => { updateDialogDismissed = true; }); // Esc
 $("update-badge").addEventListener("click", () => {
   $("settings").open = true;
   $("update-title").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+
+// The background check found something while the panel was already open.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.updateInfo) return;
+  lastSummary = changes.updateInfo.newValue ?? null;
+  render();
 });
 
 for (const event of [chrome.tabs.onActivated, chrome.windows.onFocusChanged]) event.addListener(refreshCurrentTab);

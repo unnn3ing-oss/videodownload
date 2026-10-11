@@ -146,6 +146,16 @@
       </div>
     </details>
   </div>
+  <dialog id="update-dialog" class="update-dialog" aria-labelledby="ud-title">
+    <h2 id="ud-title">有新版本可以更新</h2>
+    <p id="ud-what" class="ud-what"></p>
+    <p id="ud-versions" class="ud-versions"></p>
+    <p id="ud-progress" class="update-progress" role="status" aria-live="polite" hidden></p>
+    <div class="ud-actions">
+      <button id="ud-later" class="btn" type="button">稍後再說</button>
+      <button id="ud-go" class="btn primary" type="button">立即更新</button>
+    </div>
+  </dialog>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

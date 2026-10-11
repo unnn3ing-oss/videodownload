@@ -1,2 +1,2 @@
 """Host version; must equal extension/manifest.json "version" (a test enforces it)."""
-VERSION = "0.5.3"
+VERSION = "0.5.4"

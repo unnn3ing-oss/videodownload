@@ -221,3 +221,12 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .update-note, .update-progress { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
 .update-note[data-kind="error"], .update-progress[data-kind="error"] { color: var(--err); }
 .update-note[data-kind="ok"] { color: var(--ok); }
+
+/* The pop-up that offers an update the moment one is found */
+.update-dialog { width: min(360px, calc(100% - 32px)); box-sizing: border-box; padding: 18px 16px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px rgb(10 16 30 / 35%); }
+.update-dialog::backdrop { background: rgb(10 16 30 / 55%); backdrop-filter: blur(3px); }
+.update-dialog h2 { margin: 0 0 8px; font-size: 16px; }
+.ud-what { margin: 0 0 4px; font-size: 14px; font-weight: 700; }
+.ud-versions { white-space: pre-line; margin: 0 0 10px; font: 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.ud-versions:empty, .ud-what:empty { display: none; }
+.ud-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

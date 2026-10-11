@@ -93,6 +93,15 @@ try {
 
   // 1. Host not started: the check works, the badge appears, applying needs the host.
   await page.click("#update-check");
+  // the pop-up offers it by itself, says what is new, and cannot be pressed yet because the local program is not running
+  await page.waitForSelector("#update-dialog[open]");
+  assert.match(await text("ud-what"), /擴充功能有新版本/);
+  assert.match(await text("ud-versions"), /目前 .*\n?.*最新：release: v9\.9\.9/s);
+  assert.equal(await page.isDisabled("#ud-go"), true);
+  assert.match(await text("ud-progress"), /請先按「?『?啟動/);
+  await shot("5-update-popup");
+  await page.click("#ud-later");
+  assert.equal(await page.evaluate(() => document.getElementById("update-dialog").open), false, "「稍後再說」 closes it");
   await page.waitForSelector("#update-badge:not([hidden])");
   assert.match(await text("ver-latest"), /release: v9\.9\.9/);
   assert.equal(await page.evaluate(() => chrome.action.getBadgeText({})), "新");
@@ -107,6 +116,7 @@ try {
   await page.click("#update-check");
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
   assert.match(await text("update-apply"), /選擇擴充功能資料夾並更新/, "first update asks for the extension folder");
+  assert.equal(await page.evaluate(() => document.getElementById("update-dialog").open), false, "once dismissed it does not come back during this visit");
 
   // 3. A tampered download (the host file too, since Chrome downloads those and the host only verifies) is refused before anything local changes.
   tamper.add("extension/sidepanel.css");
@@ -149,6 +159,22 @@ try {
   assert.match(await text("update-progress"), /下載進行中/);
   await page.waitForSelector('.qrow[data-kind="done"]');
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
+
+  // 6. Opening the panel again offers the update again; the pop-up checks, then updates, without going into the settings.
+  await page.reload();
+  await page.waitForSelector("#update-dialog[open]");
+  await page.click("#ud-later");
+  await page.reload();
+  await page.waitForSelector("#update-dialog[open]");
+  assert.equal(await page.isVisible("#ud-go"), true);
+  await state("running");
+  await page.waitForFunction(() => /立即更新|檢查更新/.test(document.getElementById("ud-go").textContent) && !document.getElementById("ud-go").disabled);
+  if (/檢查更新/.test(await text("ud-go"))) {
+    await page.click("#ud-go");
+    await page.waitForFunction(() => document.getElementById("ud-go").textContent === "立即更新" && !document.getElementById("ud-go").disabled);
+  }
+  await page.click("#ud-go");
+  await page.waitForFunction(() => window.__reloaded === true);
 
   // Layout of the new block at the narrowest and widest side panel widths.
   for (const width of [320, 480]) {
