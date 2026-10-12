@@ -36,6 +36,14 @@ async function withoutExtension() {
     const { width, height } = page.viewportSize();
     assert.ok(Math.abs(dialogBox.x + dialogBox.width / 2 - width / 2) < 30, "centered horizontally");
     assert.ok(Math.abs(dialogBox.y + dialogBox.height / 2 - height / 2) < 30, "and vertically");
+    assert.ok(dialogBox.width >= width - 1 && dialogBox.height >= height - 1, "the install guide fills the screen");
+    // The step bar is short and in the middle: it is not stretched across the whole page.
+    const bar = await page.locator("#steps").boundingBox();
+    assert.ok(bar.width < 760, `the step bar stays short (${Math.round(bar.width)}px)`);
+    assert.ok(Math.abs(bar.x + bar.width / 2 - width / 2) < 30, "and in the middle");
+    // Each step has a picture that plays when the step is shown, and only the shown step's picture plays.
+    const playing = () => page.$$eval(".ds-art.play", (arts) => arts.map((art) => art.closest(".pane").dataset.pane));
+    assert.deepEqual(await playing(), ["1"]);
     assert.equal(await page.textContent("#default-folder"), FOLDER_NAME, "a plain folder name, not a path");
     await page.waitForSelector("#no-extension:not([hidden])");
     assert.equal(await page.isDisabled("#add-btn"), true);
@@ -70,6 +78,7 @@ async function withoutExtension() {
     // Step 2 says what the installer does.
     await page.click("#step-next");
     assert.deepEqual(await shown(), ["2"]);
+    assert.deepEqual(await playing(), ["2"], "the picture of the new step starts, the old one stops");
     assert.match(await page.textContent('[data-pane="2"]'), /選擇要把擴充功能放在哪個資料夾/);
     assert.match(await page.textContent('[data-pane="2"]'), /重新執行安裝檔就會自動檢查並修復/);
     assert.equal(await page.isDisabled("#step-prev"), false);
@@ -189,7 +198,10 @@ async function perSystem(browser) {
       assert.equal(await visible("#mac-install"), os === "mac", `${os}: the one-line command is for Macs`);
       assert.equal(await visible("#download-mac"), os === "mac", `${os}: the Mac download`);
       assert.equal(await visible("#download-win"), os === "win", `${os}: the Windows download`);
+      const artOf = (n) => page.locator(`[data-pane="${n}"] .ds-art[data-art-os]:visible`).evaluateAll((arts) => arts.map((art) => art.dataset.artOs));
+      assert.deepEqual(await artOf(1), [os], `${os}: the step 1 picture is drawn for this system`);
       await page.click("#step-next");
+      assert.deepEqual(await artOf(2), [os], `${os}: the step 2 picture is drawn for this system`);
       assert.equal(await page.locator('[data-pane="2"] p[data-os="win"]').isVisible(), os === "win", `${os}: the Windows way to run it`);
       assert.equal(await page.locator('[data-pane="2"] p[data-os="mac"]').isVisible(), os === "mac", `${os}: the Mac way to run it`);
     } finally {

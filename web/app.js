@@ -77,6 +77,8 @@ function renderWizard() {
   document.querySelectorAll(".pane").forEach((pane) => setHidden(pane, Number(pane.dataset.pane) !== cursor));
   $("step-prev").disabled = cursor === 1;
   setText($("step-next"), cursor === STEP_LABELS.length ? "完成" : "下一步");
+  setText($("sd-count"), `${cursor} / ${STEP_LABELS.length}`);
+  if (cursor !== artStep) playArt(); // (another step: its picture starts from the beginning)
 }
 
 function goToStep(n) {
@@ -189,12 +191,14 @@ function showView(name) {
   $("tab-check").setAttribute("aria-pressed", String(name === "check"));
   if (name === "check") renderCheck();
   else renderWizard();
+  playArt();
 }
 
 function openSetup(name) {
   if (name === "steps") cursor = wizard().suggested; // (the step that is next to do)
   showView(name);
   if (!dialog.open) dialog.showModal();
+  playArt();
   if (name === "check") refreshDoctor();
 }
 
@@ -207,7 +211,32 @@ function closeSetup() {
 dialog.addEventListener("close", () => {
   if (expectClose) expectClose = false;
   else dismissed = true;
+  playArt(); // (the window is shut: stops the pictures)
 });
+
+// The picture beside each step is a short animation that plays once and then again every few seconds. It starts from the
+// beginning whenever a step is shown, and without the `play` class (or with reduced motion) it rests on the finished picture.
+// (The delays are written next to the shapes as data-* and become CSS variables here: the page's CSP has no inline styles.)
+document.querySelectorAll("[data-d], [data-o], [data-pd]").forEach((node) => {
+  for (const [key, name] of [["d", "--d"], ["o", "--o"], ["pd", "--pd"]]) if (node.dataset[key]) node.style.setProperty(name, `${node.dataset[key]}s`);
+});
+const artOs = os === "mac" ? "mac" : "win"; // the pictures are drawn for Windows and for Mac; a system we do not know sees Windows
+document.querySelectorAll(".ds-art[data-art-os]").forEach((art) => { if (art.dataset.artOs !== "all") setHidden(art, art.dataset.artOs !== artOs); });
+let artTimer = 0;
+let artStep = 0;
+function playArt() {
+  clearTimeout(artTimer);
+  document.querySelectorAll(".ds-art.play").forEach((art) => art.classList.remove("play"));
+  artStep = cursor;
+  if (!dialog.open || $("view-steps").hidden) return;
+  const art = document.querySelector(`.pane[data-pane="${cursor}"] .ds-art:not([hidden])`);
+  if (!art) return;
+  const cycle = Number(art.dataset.cycle) || 9000;
+  art.style.setProperty("--end", `${(cycle - 600) / 1000}s`);
+  void art.offsetWidth; // (so removing and adding `play` restarts the animations)
+  art.classList.add("play");
+  artTimer = setTimeout(playArt, cycle);
+}
 
 function refreshDoctor() {
   if (status.state !== "running") return;
