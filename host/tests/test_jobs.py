@@ -644,6 +644,8 @@ def test_three_throttle_failures_in_a_row_stop_the_job(tmp_path):
     ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "forbidden", "403"),
     ("ERROR: [youtube] x: Sign in to confirm you're not a bot", "bot_check", "機器人"),
     ("ERROR: Unable to download webpage: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", "tls", "資訊人員"),
+    ("ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required",
+     "instagram_blocked", "Instagram"),
 ])
 def test_every_throttle_class_counts_towards_the_stop(tmp_path, stderr, code, needle):
     h = Harness(tmp_path, fail={f"v{i}": stderr for i in range(1, 5)})
@@ -875,3 +877,22 @@ def test_runner_without_a_log_still_works(tmp_path):
                        sleep=lambda s: None, delay=0)
     runner.start("j", [item()], 720, tmp_path / "out")
     runner.join(10)
+
+
+def test_an_instagram_reel_downloads_from_its_own_address_and_is_recorded_by_its_shortcode(tmp_path):
+    ig = "https://www.instagram.com/reel/Dd8pP9yS3WB/"
+    h = Harness(tmp_path)
+    seen = []
+
+    def stream(cmd, on_line, cancel):
+        seen.append(cmd[-1])
+        home, _, name = paths_of(cmd)
+        Path(home, name).write_text("x", encoding="utf-8")
+        on_line("[ytdl-done]Dd8pP9yS3WB|1920|avc1.640028")
+        return StreamResult(0, "", False)
+
+    h.runner._stream = stream
+    h.run([{"url": ig, "id": "Dd8pP9yS3WB", "title": "bluesky_1108 - 好天氣"}])
+    assert seen == [ig] and h.summary["ok"] == 1
+    assert h.of("item_done")[0]["file"].endswith("bluesky_1108 - 好天氣.mp4")
+    assert Archive(h.out).lookup("Dd8pP9yS3WB") == "bluesky_1108 - 好天氣.mp4"

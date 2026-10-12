@@ -10,6 +10,12 @@ ALLOWED = [
     "https://youtube.com/@x",
     "https://WWW.YouTube.com:443/watch?v=abc",
     "  https://youtu.be/abc  ",
+    "https://www.instagram.com/reel/Dd8pP9yS3WB/",
+    "https://instagram.com/reel/Dd8pP9yS3WB",
+    "https://www.instagram.com/reel/Dd8pP9yS3WB/?igsh=abc123&utm_source=ig_web_copy_link",
+    "https://www.instagram.com/reels/Dd8pP9yS3WB/",
+    "https://www.instagram.com/p/Dd8pP9yS3WB/",
+    "https://www.instagram.com/some.user_1/reel/Dd8pP9yS3WB/",
 ]
 DENIED = [
     "https://youtube.com.evil.com/x",
@@ -33,6 +39,21 @@ DENIED = [
     "",
     None,
     123,
+    # Instagram: only the address of one post, never a profile, the login page or another host
+    "https://www.instagram.com/",
+    "https://www.instagram.com/some.user/",
+    "https://www.instagram.com/accounts/login/",
+    "https://www.instagram.com/stories/some.user/123/",
+    "https://www.instagram.com/explore/tags/cat/",
+    "https://www.instagram.com/reel/",
+    "https://help.instagram.com/reel/Dd8pP9yS3WB/",
+    "https://instagram.com.evil.com/reel/Dd8pP9yS3WB/",
+    "https://l.instagram.com/?u=https://evil.com",
+    "https://www.instagram.com/reel/Dd8pP9yS3WB/extra/segments/",
+    "https://www.instagram.com:8443/reel/Dd8pP9yS3WB/",
+    "https://user:pw@www.instagram.com/reel/Dd8pP9yS3WB/",
+    "https://www.instagram.com/reel/Dd8pP9yS3WB/ --exec x",
+    "https://www.instagram.com/reel/../accounts/login/",
 ]
 
 
@@ -63,3 +84,12 @@ def test_python_and_javascript_allow_the_same_hosts():
     js = (Path(__file__).resolve().parents[2] / "extension/lib/urls.js").read_text(encoding="utf-8")
     listed = re.search(r"ALLOWED_HOSTS = \[([^\]]+)\]", js).group(1)
     assert set(re.findall(r'"([^"]+)"', listed)) == set(ALLOWED_HOSTS)
+
+
+def test_python_and_javascript_allow_the_same_instagram_hosts():
+    import re
+    from pathlib import Path
+    from security import INSTAGRAM_HOSTS
+    js = (Path(__file__).resolve().parents[2] / "extension/lib/urls.js").read_text(encoding="utf-8")
+    listed = re.search(r"INSTAGRAM_HOSTS = \[([^\]]+)\]", js).group(1)
+    assert set(re.findall(r'"([^"]+)"', listed)) == set(INSTAGRAM_HOSTS)

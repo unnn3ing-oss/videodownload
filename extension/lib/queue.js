@@ -1,6 +1,6 @@
 // The download list as plain data. Every function takes a state and returns a new one; nothing here
 // touches the browser, so the whole list behaviour is unit-tested. See the web-queue design spec.
-import { isYouTubeUrl } from "./urls.js";
+import { isInstagramUrl, isSupportedUrl } from "./urls.js";
 import { formatEta, formatSpeed, formatWait, parseBoundedInt } from "./format.js";
 import { SETTING_RANGES } from "./constants.js";
 import { classifyTabUrl } from "./page.js";
@@ -138,7 +138,7 @@ export function createState(saved = null) {
 }
 
 export function addPlaceholder(state, url) {
-  if (!isYouTubeUrl(url)) throw new QueueError("bad_url", "不是 YouTube 網址");
+  if (!isSupportedUrl(url)) throw new QueueError("bad_url", "不是 YouTube 或 Instagram 的網址");
   if (state.items.length >= MAX_ITEMS) throw new QueueError("queue_full", `清單已滿（上限 ${MAX_ITEMS} 筆）`);
   const uid = state.nextUid;
   const item = blankItem(uid, { url, title: url, status: "fetching" });
@@ -268,9 +268,10 @@ export function applyHostEvent(state, event, now) {
 }
 
 // 【title】 and the first three tags that are not the channel's own: text for the box under the row. `textState`:
-// "ready" (text is set), "loading" (the description has not been read yet), "failed" (textError says why), "none" (no video yet).
+// "ready" (text is set), "loading" (the description has not been read yet), "failed" (textError says why), "none" (no video
+// yet, or an Instagram post: its caption is not turned into a YouTube-style text).
 function textOf(state, item) {
-  if (!item.id || item.status === "fetching") return { text: null, textState: "none", textError: null };
+  if (!item.id || item.status === "fetching" || isInstagramUrl(item.url)) return { text: null, textState: "none", textError: null };
   const source = item.tags ? item : state.items.find((i) => i.id === item.id && i.tags) ?? item; // a repeated video shares its twin's tags
   if (source.tags) return { text: buildCopyText(item.title, pickTags(source.tags)), textState: "ready", textError: null };
   return item.textError ? { text: null, textState: "failed", textError: item.textError } : { text: null, textState: "loading", textError: null };

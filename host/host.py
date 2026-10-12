@@ -159,7 +159,7 @@ class Host:
     def _on_resolve(self, msg: dict) -> None:
         urls, limit = msg.get("urls"), msg.get("limit")
         if not isinstance(urls, list) or not urls or not all(is_allowed_url(u) for u in urls):
-            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
             return
         if limit is not None and not (isinstance(limit, int) and not isinstance(limit, bool)
                                       and 1 <= limit <= MAX_LIMIT):
@@ -186,7 +186,7 @@ class Host:
     def _on_meta(self, msg: dict) -> None:
         url = msg.get("url")
         if not is_allowed_url(url):
-            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
             return
         if not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
@@ -210,7 +210,7 @@ class Host:
         items = msg.get("items")
         if (not isinstance(items, list) or not items
                 or not all(isinstance(i, dict) and is_allowed_url(i.get("url")) for i in items)):
-            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
             return
         try:
             quality = parse_quality(msg.get("quality"))
@@ -241,7 +241,7 @@ class Host:
         items = msg.get("items")
         if (not isinstance(items, list) or not items
                 or not all(isinstance(i, dict) and is_allowed_url(i.get("url")) for i in items)):
-            self._error(msg, "bad_url", "只支援 YouTube 網址")
+            self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
             return
         if not self.runner.enqueue(items):
             self._error(msg, "not_running", "目前沒有進行中的下載工作")

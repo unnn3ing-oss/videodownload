@@ -5,7 +5,7 @@ import { addPastedUrls } from "../lib/queue-view.js";
 
 const ok = (url) => ({ url, ok: true });
 const no = (url, error) => ({ url, ok: false, error });
-const NOT_YT = "不是 YouTube 網址";
+const NOT_YT = "不是 YouTube 或 Instagram 的網址";
 
 test("summarizeAdd: everything added leaves an empty box and says nothing", () => {
   assert.deepEqual(summarizeAdd([ok("a"), ok("b")]), { remaining: "", note: "" });

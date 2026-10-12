@@ -103,3 +103,29 @@ test("isYouTubeUrl accepts only the listed hosts, with no credentials, odd ports
     assert.equal(isYouTubeUrl(bad), false, String(bad));
   }
 });
+
+test("Instagram: only the address of one post is supported, YouTube stays YouTube-only", async () => {
+  const { isInstagramUrl, isSupportedUrl, isYouTubeUrl, parseUrlLines } = await import("../lib/urls.js");
+  const ok = ["https://www.instagram.com/reel/Dd8pP9yS3WB/", "https://instagram.com/reel/Dd8pP9yS3WB", "https://www.instagram.com/reel/Dd8pP9yS3WB/?igsh=abc&utm_source=x", "https://www.instagram.com/reels/Dd8pP9yS3WB/", "https://www.instagram.com/p/Dd8pP9yS3WB/", "https://www.instagram.com/some.user_1/reel/Dd8pP9yS3WB/", " https://www.instagram.com/reel/Dd8pP9yS3WB/ "];
+  const bad = ["https://www.instagram.com/", "https://www.instagram.com/some.user/", "https://www.instagram.com/accounts/login/", "https://www.instagram.com/stories/some.user/123/", "https://www.instagram.com/reel/", "https://help.instagram.com/reel/Dd8pP9yS3WB/", "https://instagram.com.evil.com/reel/Dd8pP9yS3WB/", "https://l.instagram.com/?u=https://evil.com", "https://www.instagram.com/reel/Dd8pP9yS3WB/extra/segments/", "https://www.instagram.com:8443/reel/Dd8pP9yS3WB/", "https://u:p@www.instagram.com/reel/Dd8pP9yS3WB/", "https://www.instagram.com/reel/Dd8pP9yS3WB/ --exec x", "https://www.instagram.com/reel/../accounts/login/", "", null];
+  for (const url of ok) {
+    assert.equal(isInstagramUrl(url), true, url);
+    assert.equal(isSupportedUrl(url), true, url);
+    assert.equal(isYouTubeUrl(url), false, url);
+  }
+  for (const url of bad) {
+    assert.equal(isInstagramUrl(url), false, String(url));
+    assert.equal(isSupportedUrl(url), false, String(url));
+  }
+  assert.equal(isInstagramUrl("https://youtu.be/abc"), false);
+  assert.equal(isSupportedUrl("https://youtu.be/abc"), true);
+  const { urls, invalid } = parseUrlLines("https://youtu.be/abc\nhttps://www.instagram.com/reel/Dd8pP9yS3WB/\nhttps://www.instagram.com/some.user/");
+  assert.deepEqual(urls, ["https://youtu.be/abc", "https://www.instagram.com/reel/Dd8pP9yS3WB/"]);
+  assert.deepEqual(invalid, ["https://www.instagram.com/some.user/"]);
+});
+
+test("classifyTabUrl sees an Instagram post as one video", async () => {
+  const { classifyTabUrl } = await import("../lib/page.js");
+  assert.equal(classifyTabUrl("https://www.instagram.com/reel/Dd8pP9yS3WB/"), "video");
+  assert.equal(classifyTabUrl("https://www.instagram.com/some.user/"), null);
+});

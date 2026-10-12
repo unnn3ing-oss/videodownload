@@ -19,8 +19,8 @@ from security import VIDEO_ID, is_allowed_url, safe_output_path
 from ytdlp import (Engine, ResolveError, build_download_args, classify_error, parse_done_line,
                    parse_progress_line, resolve, stream_download)
 
-# A run of these means YouTube (or the network) is pushing back: wait longer, then give up before it gets worse.
-THROTTLE_CODES = {"network", "rate_limited", "bot_check", "forbidden", "tls"}
+# A run of these means YouTube or Instagram (or the network) is pushing back: wait longer, then give up before it gets worse.
+THROTTLE_CODES = {"network", "rate_limited", "bot_check", "forbidden", "tls", "instagram_blocked"}
 FATAL_CODES = {"disk_full"}  # every following video would fail the same way
 MAX_THROTTLE_STREAK = 3
 # failures that say something about this computer, not about one video: the same one twice in a row stops the job
@@ -30,9 +30,10 @@ MIN_BACKOFF, MAX_BACKOFF = 5.0, 120.0
 JITTER = 0.25  # the wait between two attempts gets up to a quarter extra, so the rhythm is not machine-regular
 ABORT_MESSAGES = {
     "network": "網路連線連續失敗，已先停止下載；請確認網路正常後再繼續",
-    "rate_limited": "YouTube 連續限制了請求，已先停止下載以免被封鎖；請等一個小時以上，並把「每支間隔」調高後再繼續",
+    "rate_limited": "YouTube 或 Instagram 連續限制了請求，已先停止下載以免被封鎖；請等一個小時以上，並把「每支間隔」調高後再繼續",
     "bot_check": "YouTube 連續要求驗證是否為機器人，已先停止下載；請稍後再試，或改用住宅或公司網路",
     "forbidden": "YouTube 連續拒絕了請求（403），已先停止下載；請稍後再試，並把「每支間隔」調高",
+    "instagram_blocked": "Instagram 連續要求登入或限制了請求，已先停止下載以免被封鎖；請等一個小時以上，並把「每支間隔」調高後再繼續",
     "tls": "公司網路可能攔截了加密連線（憑證驗證失敗），已先停止下載；請洽資訊人員",
     "disk_full": "磁碟空間不足，已先停止下載；請清出空間，或到設定換一個資料夾後再繼續",
     "deno_missing": "找不到 Deno（解開 YouTube 驗證需要），已先停止下載；請重新執行安裝檔，它會自動補齊後再繼續",
@@ -293,7 +294,7 @@ class JobRunner:
         if stopped:
             return stopped
         if not is_allowed_url(url):
-            fail(item_id, "bad_url", "網址不是 YouTube 的網址")
+            fail(item_id, "bad_url", "不支援這個網址（只支援 YouTube 與 Instagram 貼文）")
             return "failed"
         if not vid or not title:
             stopped = wait_turn(item_id, item_cancel)

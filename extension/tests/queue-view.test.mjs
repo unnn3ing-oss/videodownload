@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, syncTextBox, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -155,4 +155,10 @@ test("syncTextBox follows the text, but never overwrites what the person typed i
   b.value += "\n我加的一行";
   syncTextBox(b, ready("【甲】\n\n#a #b #c"), true);
   assert.equal(b.value, "【甲】\n\n#a #b\n我加的一行", "an edited box is left alone");
+});
+
+test("a row's small picture is YouTube's by id; an Instagram post, or a row without a video yet, has none", () => {
+  assert.equal(thumbSource({ id: "abc", url: "https://youtu.be/abc" }), "https://i.ytimg.com/vi/abc/mqdefault.jpg");
+  assert.equal(thumbSource({ id: "Dd8pP9yS3WB", url: "https://www.instagram.com/reel/Dd8pP9yS3WB/" }), null);
+  assert.equal(thumbSource({ id: null, url: "https://youtu.be/abc" }), null);
 });

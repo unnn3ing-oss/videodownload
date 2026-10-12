@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from hostlog import clip, tail_lines
 from quality import format_selector, format_sort
+from security import INSTAGRAM_HOSTS, is_allowed_url
 
 PROGRESS_PREFIX = "[ytdl-progress]"
 DONE_PREFIX = "[ytdl-done]"
@@ -158,14 +159,30 @@ _ERRORS = [  # order matters: first match wins
 DENO_MISSING = ("deno_missing", "找不到 Deno（解開 YouTube 驗證需要），請重新執行安裝檔，它會自動補齊")
 
 
+# Instagram's own messages come first (its text is "[Instagram] <id>: ..."); anything else falls to the table above.
+_INSTAGRAM_ERRORS = [
+    ("no_video", ("no video in this post", "no video formats found"), "這則 Instagram 貼文沒有影片（可能只有圖片）"),
+    ("rate_limited", ("http error 429", "too many requests"),
+     "Instagram 暫時限制了請求，請等一陣子再試，並調高「間隔」"),
+    ("instagram_blocked", ("login required", "rate-limit reached", "registered users", "empty media response",
+                        "requested content is not available", "private", "http error 401", "http error 403"),
+     "Instagram 要求登入才能看這則內容（可能是私人帳號，或 Instagram 暫時限制了未登入的存取），請稍後再試"),
+]
+
+
 def classify_error(stderr: str) -> tuple[str, str]:
     lines = [ln for ln in stderr.strip().splitlines() if ln.strip()]
     errors = [ln for ln in lines if ln.lstrip().startswith("ERROR:")]
     # warnings must not decide the class (or end up in the message) when yt-dlp named an error or printed anything else
     relevant = errors or [ln for ln in lines if not ln.lstrip().startswith("WARNING:")] or lines
     lowered = "\n".join(relevant).lower()
+    on_instagram = "[instagram]" in lowered
     result = None
-    for code, needles, message in _ERRORS:
+    for code, needles, message in (_INSTAGRAM_ERRORS if on_instagram else []):
+        if any(n in lowered for n in needles):
+            result = code, message
+            break
+    for code, needles, message in ([] if result else _ERRORS):
         if any(n in lowered for n in needles):
             result = code, message
             break
@@ -173,7 +190,8 @@ def classify_error(stderr: str) -> tuple[str, str]:
         last = relevant[-1] if relevant else ""
         result = "unknown", f"下載失敗（未知原因）：{last[:200]}"
     # yt-dlp reports a missing JavaScript runtime only as a WARNING, and the failure it causes looks like an old engine
-    if result[0] in ("engine_outdated", "unknown") and "no supported javascript runtime" in stderr.lower():
+    if (result[0] in ("engine_outdated", "unknown") and not on_instagram
+            and "no supported javascript runtime" in stderr.lower()):
         return DENO_MISSING
     return result
 
@@ -210,9 +228,37 @@ def _is_single_video(url: str) -> bool:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     path = parts.path.strip("/")
+    if host in INSTAGRAM_HOSTS:
+        return True  # an allowed Instagram address is always one post
     if host == "youtu.be":
         return bool(path)
     return (path == "watch" and "v" in parse_qs(parts.query)) or path.split("/")[0] in ("shorts", "live", "embed")
+
+
+MAX_CAPTION_TITLE = 60
+
+
+def _instagram_title(entry: dict, vid: str) -> str:
+    """Instagram has no title: its own one is "Video by <owner>" for every Reel. The owner and the first line of the
+    caption tell the files apart."""
+    owner = entry.get("uploader") or entry.get("channel")
+    owner = owner.strip() if isinstance(owner, str) else ""
+    caption = entry.get("description")
+    first = next((ln.strip() for ln in caption.splitlines() if ln.strip()), "") if isinstance(caption, str) else ""
+    first = first[:MAX_CAPTION_TITLE].rstrip()
+    if first:
+        return f"{owner} - {first}" if owner else first
+    return entry.get("title") or vid
+
+
+def _instagram_address(entry: dict, asked: str, only_one: bool) -> str | None:
+    for key in ("webpage_url", "url"):
+        found = entry.get(key)
+        if isinstance(found, str) and is_allowed_url(found) and (urlsplit(found).hostname or "").lower() in INSTAGRAM_HOSTS:
+            return found
+    if only_one:  # the address that was asked for, without the tracking part
+        return urlunsplit(urlsplit(asked.strip())._replace(query="", fragment=""))
+    return None
 
 
 def resolve(engine: Engine, urls: list[str], limit: int | None = None,
@@ -247,14 +293,22 @@ def resolve(engine: Engine, urls: list[str], limit: int | None = None,
             continue
         if log and err.strip():  # yt-dlp's warnings (a missing JavaScript runtime, ...) are only ever shown here
             log(f"resolve warnings url={clip(url, 120)}\n{tail_lines(err)}")
+        instagram = (urlsplit(url).hostname or "").lower() in INSTAGRAM_HOSTS
         for entry in entries:
             vid = entry.get("id")
             if not vid or vid in seen:
                 continue
+            if instagram:
+                address = _instagram_address(entry, url, len(entries) == 1)
+                if address is None:
+                    continue
+                title = _instagram_title(entry, vid)
+            else:
+                address, title = f"https://www.youtube.com/watch?v={vid}", entry.get("title") or vid
             seen.add(vid)
             duration = entry.get("duration")
             duration = int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
-            refs.append(VideoRef(vid, entry.get("title") or vid, f"https://www.youtube.com/watch?v={vid}", duration))
+            refs.append(VideoRef(vid, title, address, duration))
     if not refs and first_error:
         raise first_error
     refs = refs[:limit] if limit else refs

@@ -1,8 +1,9 @@
-import { isYouTubeUrl } from "./urls.js";
+import { isInstagramUrl, isYouTubeUrl } from "./urls.js";
 
 // What the active tab is showing, so the side panel can offer to add it.
 // A watch URL that also carries &list= counts as a video (the host resolves it as one video).
 export function classifyTabUrl(url) {
+  if (url && isInstagramUrl(url)) return "video";
   if (!url || !isYouTubeUrl(url)) return null;
   const u = new URL(url);
   const path = u.pathname.replace(/\/+$/, "");

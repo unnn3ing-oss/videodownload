@@ -373,3 +373,64 @@ def test_fetch_meta_logs_failures_and_warnings():
     fetch_meta(Engine(Path("yt-dlp")), f"{ROOT}/watch?v=v1",
                run=lambda cmd: (0, json.dumps({"id": "v1", "title": "T"}), "WARNING: careful"), log=logged.append)
     assert "WARNING: careful" in logged[-1]
+
+
+IG = "https://www.instagram.com"
+
+
+@pytest.mark.parametrize("stderr,code", [
+    ("ERROR: [Instagram] Dd8pP9yS3WB: Requested content is not available, rate-limit reached or login required. "
+     "Use --cookies-from-browser", "instagram_blocked"),
+    ("ERROR: [Instagram] x: This content is only available for registered users who follow this account", "instagram_blocked"),
+    ("ERROR: [Instagram] x: Instagram sent an empty media response. Check if this post is accessible in your "
+     "country/region", "instagram_blocked"),
+    ("ERROR: [Instagram] x: There is no video in this post", "no_video"),
+    ("ERROR: [Instagram] x: No video formats found!", "no_video"),
+    ("ERROR: [Instagram] x: Unable to download webpage: HTTP Error 429: Too Many Requests", "rate_limited"),
+    ("ERROR: [Instagram] x: Unable to download webpage: The read operation timed out", "network"),
+])
+def test_classify_instagram(stderr, code):
+    got, message = classify_error(stderr)
+    assert got == code and message
+    if code != "network":
+        assert "Instagram" in message and "YouTube" not in message
+
+
+def test_classify_instagram_login_message_says_what_to_do_and_never_mentions_cookies():
+    message = classify_error("ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login "
+                             "required. Use --cookies-from-browser")[1]
+    assert message == "Instagram 要求登入才能看這則內容（可能是私人帳號，或 Instagram 暫時限制了未登入的存取），請稍後再試"
+
+
+def test_classify_instagram_ignores_the_youtube_deno_hint():
+    code, _ = classify_error("WARNING: No supported JavaScript runtime could be found\n"
+                             "ERROR: [Instagram] x: Unable to extract shared data")
+    assert code != "deno_missing"
+
+
+def test_resolve_names_an_instagram_reel_after_its_owner_and_caption_and_keeps_its_address():
+    run, calls = fake_run([{"id": "Dd8pP9yS3WB", "title": "Video by bluesky_1108", "uploader": "bluesky_1108",
+                            "description": "好天氣\n#sky #blue", "duration": 12.5,
+                            "webpage_url": f"{IG}/reel/Dd8pP9yS3WB/"}])
+    got = resolve(Engine(Path("yt-dlp")), [f"{IG}/reel/Dd8pP9yS3WB/?igsh=abc"], run=run)
+    assert got == [VideoRef("Dd8pP9yS3WB", "bluesky_1108 - 好天氣", f"{IG}/reel/Dd8pP9yS3WB/", 12)]
+    assert "--no-playlist" in calls[0]
+
+
+def test_resolve_instagram_without_a_caption_keeps_the_generic_title_and_drops_tracking_from_the_address():
+    run, _ = fake_run([{"id": "Dd8pP9yS3WB", "title": "Video by bluesky_1108", "uploader": "bluesky_1108"}])
+    got = resolve(Engine(Path("yt-dlp")), [f"{IG}/reel/Dd8pP9yS3WB/?igsh=abc"], run=run)
+    assert got == [VideoRef("Dd8pP9yS3WB", "Video by bluesky_1108", f"{IG}/reel/Dd8pP9yS3WB/")]
+
+
+def test_resolve_instagram_never_builds_a_youtube_address_from_an_id():
+    run, _ = fake_run([{"id": "a1", "title": "x", "webpage_url": "https://evil.example/x"},
+                       {"id": "a2", "title": "y", "webpage_url": f"{IG}/p/a2abcde/"}])
+    got = resolve(Engine(Path("yt-dlp")), [f"{IG}/p/Dd8pP9yS3WB/"], run=run)
+    assert [r.url for r in got] == [f"{IG}/p/a2abcde/"]
+
+
+def test_resolve_instagram_caption_is_cut_and_has_no_line_breaks():
+    run, _ = fake_run([{"id": "Dd8pP9yS3WB", "title": "Video by u", "uploader": "u", "description": "  " + "字" * 200}])
+    got = resolve(Engine(Path("yt-dlp")), [f"{IG}/reel/Dd8pP9yS3WB/"], run=run)
+    assert got[0].title == "u - " + "字" * 60

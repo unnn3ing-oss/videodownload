@@ -106,7 +106,7 @@ test("a channel that comes back exactly as long as the limit says so on its last
 test("add rejects non-YouTube urls and a full list", async () => {
   const { ctl } = setup({ isConnected: false });
   const bad = await ctl.add("https://evil.example/x");
-  assert.deepEqual(bad, { ok: false, error: "不是 YouTube 網址" });
+  assert.deepEqual(bad, { ok: false, error: "不是 YouTube 或 Instagram 的網址" });
   for (let i = 0; i < 500; i += 1) assert.equal((await ctl.add(url(`v${i}`))).ok, true);
   const full = await ctl.add(url("one-too-many"));
   assert.equal(full.ok, false);
@@ -963,4 +963,39 @@ test("the reading waits while the host has stopped the job on purpose", async ()
   env.ctl.onHostEvent({ type: "done", jobId: "j", summary: { aborted: { code: "network", message: "x" } } });
   await addAll(env, ["b"]);
   assert.equal(env.host.of("meta").length, 1, "only the first video was read");
+});
+
+// ---- Instagram: the video is downloaded; the YouTube-only extras (cover image, description tags) are left out ----
+const IG = "https://www.instagram.com/reel/Dd8pP9yS3WB/";
+async function withReel(extra) {
+  const env = setup(undefined, extra);
+  env.host.replies.resolve = (m) => ({ type: "resolved", items: [{ id: "Dd8pP9yS3WB", title: "bluesky_1108 - 好天氣", url: m.urls[0], duration: 12 }] });
+  await env.ctl.add(IG);
+  await env.ctl.idle();
+  return env;
+}
+
+test("an Instagram reel is added like any video, as its own address", async () => {
+  const { host, ctl } = await withReel();
+  assert.deepEqual(host.of("resolve")[0].urls, [IG]);
+  assert.deepEqual([rows(ctl)[0].id, rows(ctl)[0].url, rows(ctl)[0].status], ["Dd8pP9yS3WB", IG, "waiting"]);
+});
+
+test("a finished Instagram reel gets no cover request (there is no YouTube cover for it)", async () => {
+  const { host, ctl } = await withReel();
+  finish(ctl, "Dd8pP9yS3WB");
+  await ctl.idle();
+  assert.deepEqual([host.of("save_cover"), byId(ctl, "Dd8pP9yS3WB").status, byId(ctl, "Dd8pP9yS3WB").cover], [[], "done", null]);
+  const result = await ctl.downloadCover(rows(ctl)[0].uid);
+  assert.deepEqual([result.ok, result.error], [false, "Instagram 貼文不提供封面圖片下載"]);
+  assert.deepEqual(host.of("save_cover"), []);
+});
+
+test("an Instagram reel's description is never read for tags, and its row has no text box", async () => {
+  const { host, ctl } = await withReel(prefetch());
+  assert.deepEqual(host.of("meta"), []);
+  assert.equal(describeItem(ctl.getState(), rows(ctl)[0], 0).textState, "none");
+  const result = await ctl.copyText(rows(ctl)[0].uid);
+  assert.deepEqual([result.ok, result.error], [false, "Instagram 貼文沒有可複製的內文"]);
+  assert.deepEqual(host.of("meta"), []);
 });

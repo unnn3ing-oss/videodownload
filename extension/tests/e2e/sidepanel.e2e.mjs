@@ -46,7 +46,7 @@ try {
   assert.equal(await page.isVisible("#setup"), true);
   await page.fill("#add-url", "http://evil.com/x");
   await page.click("#add-btn");
-  await page.waitForFunction(() => /不是 YouTube 網址/.test(document.getElementById("add-note").textContent));
+  await page.waitForFunction(() => /不是 YouTube 或 Instagram 的網址/.test(document.getElementById("add-note").textContent));
   // the link to the web version sits above everything and opens a new tab
   const [popup] = await Promise.all([
     page.context().waitForEvent("page", { timeout: 10000 }),

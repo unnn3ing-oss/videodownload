@@ -5,6 +5,7 @@ import { parseBoundedInt } from "./format.js";
 import { REINSTALL_ACTION, hostVersionNotice, updateButtonExtra } from "./connection.js";
 import { summarizeAdd } from "./add-flow.js";
 import { SETTING_RANGES } from "./constants.js";
+import { isInstagramUrl } from "./urls.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ICONS = {
@@ -55,6 +56,8 @@ function tipped(node, tip) {
 }
 
 const thumbUrl = (id) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+// The small picture of a row: YouTube's, by id. An Instagram post has none here (its picture needs a signed address).
+export const thumbSource = (item) => (item.id && !isInstagramUrl(item.url) ? thumbUrl(item.id) : null);
 const duration = (seconds) => {
   if (!Number.isFinite(seconds)) return "";
   const s = Math.max(0, Math.round(seconds));
@@ -175,16 +178,18 @@ function updateRow(row, state, item, index, now, showText = false) {
   q(".qhint").textContent = info.hint;
   q(".qdur").textContent = item.duration ? duration(item.duration) : "";
 
-  if (row._id !== item.id) {
-    row._id = item.id;
+  const source = thumbSource(item);
+  if (row._thumb !== source) {
+    row._thumb = source;
     const thumb = q(".qthumb");
-    thumb.hidden = !item.id;
+    thumb.hidden = !source;
     thumb.removeAttribute("src");
-    if (item.id) thumb.src = thumbUrl(item.id);
+    if (source) thumb.src = source;
   }
   q(".qglyph").textContent = item.status === "fetching" ? "" : Array.from(item.title.replace(/[\s【】\[\]／/]/g, ""))[0] ?? "";
-  q(".qcover").disabled = !item.id;
-  q(".qcopy").disabled = !item.id;
+  const youtube = !!item.id && !isInstagramUrl(item.url); // cover image and post text exist only for YouTube videos
+  q(".qcover").disabled = !youtube;
+  q(".qcopy").disabled = !youtube;
   q(".qretry").hidden = !(item.status === "failed" && item.id);
   const box = q(".qtext");
   syncTextBox(box, info, showText);

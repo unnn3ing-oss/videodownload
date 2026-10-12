@@ -7,6 +7,7 @@ import {
 import { KEEP_TAGS, MAX_TAGS, buildCopyText, extractHashtags, pickTags } from "./copytext.js";
 import { coverBaseName, coverName } from "./covername.js";
 import { findCover } from "./cover.js";
+import { isInstagramUrl } from "./urls.js";
 import { toBase64 } from "./base64.js";
 import { versionAtLeast } from "./version.js";
 import { MIN_HOST_VERSION } from "./constants.js";
@@ -74,7 +75,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   // One video at a time with a pause between (every read is a yt-dlp call to YouTube). Three failures in a row end the run:
   // the rows keep their reason and the copy button tries a row again. Rows that repeat a video are not read twice.
   let tagWorker = false;
-  const nextUnread = () => state.items.find((i) => i.id && !i.dupOf && !i.tags && !i.textError && i.status !== "fetching");
+  const nextUnread = () => state.items.find((i) => i.id && !isInstagramUrl(i.url) && !i.dupOf && !i.tags && !i.textError && i.status !== "fetching");
   function pumpTags() {
     if (!prefetchTags || tagWorker) return;
     tagWorker = true;
@@ -223,6 +224,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   async function saveCover(uid) {
     const item = find(uid);
     if (!item || !item.id) return fail("找不到這支影片");
+    if (isInstagramUrl(item.url)) return fail("Instagram 貼文不提供封面圖片下載");
     setCoverState(uid, { status: "saving" });
     let result;
     try {
@@ -370,7 +372,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       if (next !== state) commit(next);
       if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);
       if (event.type === "item_done" && !event.skipped && state.settings.autoCover) {
-        const finished = state.items.find((i) => i.id === event.itemId && !i.dupOf && i.status === "done");
+        const finished = state.items.find((i) => i.id === event.itemId && !i.dupOf && i.status === "done" && !isInstagramUrl(i.url));
         if (finished) queueCover(finished.uid);
       }
       if (event.type === "started" || event.type === "done") pumpTags(); // (it waits while the host stopped the job on purpose)
@@ -389,6 +391,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     async copyText(uid) {
       const item = find(uid);
       if (!item || !item.id) return fail("找不到這支影片");
+      if (isInstagramUrl(item.url)) return fail("Instagram 貼文沒有可複製的內文");
       let tags = item.tags;
       if (!tags) {
         const loaded = await loadTags(uid);
