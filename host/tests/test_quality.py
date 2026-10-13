@@ -99,3 +99,10 @@ def test_real_yt_dlp_selection_keeps_landscape_behaviour_with_4k_available():
     formats = [_fmt("313", "webm", "vp09.00.50.08", "none", 2160, tbr=14000), *_ALL]
     assert _pick(formats, 1080) == "137+140"
     assert _pick(formats, 720) == "136+140"
+
+
+def test_instagram_sort_puts_h264_before_resolution():
+    # Instagram's best (DASH) video is VP9, which QuickTime cannot play in an mp4: a playable file counts more than size
+    sort = format_sort(1080, h264_first=True)
+    assert sort.split(",")[0] == "vcodec:h264" and "res:1080" in sort
+    assert format_sort(1080).split(",")[0] == "res:1080", "YouTube keeps its order"

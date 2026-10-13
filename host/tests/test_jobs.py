@@ -896,3 +896,52 @@ def test_an_instagram_reel_downloads_from_its_own_address_and_is_recorded_by_its
     assert seen == [ig] and h.summary["ok"] == 1
     assert h.of("item_done")[0]["file"].endswith("bluesky_1108 - 好天氣.mp4")
     assert Archive(h.out).lookup("Dd8pP9yS3WB") == "bluesky_1108 - 好天氣.mp4"
+
+
+IG_URL = "https://www.instagram.com/reel/Dd8pP9yS3WB/"
+
+
+def instagram_run(tmp_path, codec, converted="ok"):
+    """One Reel whose download ends with `codec`; every ffmpeg call is answered with `converted`."""
+    h = Harness(tmp_path)
+    ffmpeg_calls = []
+
+    def stream(cmd, on_line, cancel):
+        if cmd[0] == "ffmpeg":
+            ffmpeg_calls.append(cmd)
+            if converted == "ok":
+                Path(cmd[-1]).write_text("h264", encoding="utf-8")
+            return StreamResult(0 if converted == "ok" else 1, "", False)
+        home, _, name = paths_of(cmd)
+        Path(home, name).write_text("vp9", encoding="utf-8")
+        on_line(f"[ytdl-done]Dd8pP9yS3WB|1920|{codec}")
+        return StreamResult(0, "", False)
+
+    h.runner._stream = stream
+    h.run([{"url": IG_URL, "id": "Dd8pP9yS3WB", "title": "名字"}])
+    return h, ffmpeg_calls
+
+
+def test_an_instagram_video_that_is_not_h264_is_converted_so_that_players_open_it(tmp_path):
+    h, calls = instagram_run(tmp_path, "vp09.00.40.08")
+    assert len(calls) == 1 and h.summary["ok"] == 1
+    assert (h.out / "名字.mp4").read_text(encoding="utf-8") == "h264"
+    assert h.of("item_done")[0]["codec"].startswith("avc1")
+    assert Archive(h.out).lookup("Dd8pP9yS3WB") == "名字.mp4"
+
+
+def test_an_instagram_video_that_is_already_h264_is_left_alone(tmp_path):
+    h, calls = instagram_run(tmp_path, "avc1.640028")
+    assert calls == [] and (h.out / "名字.mp4").read_text(encoding="utf-8") == "vp9"
+
+
+def test_a_failed_conversion_keeps_the_video_and_says_so_in_the_log(tmp_path):
+    h, calls = instagram_run(tmp_path, "vp09.00.40.08", converted="fail")
+    assert calls and h.summary["ok"] == 1 and (h.out / "名字.mp4").read_text(encoding="utf-8") == "vp9"
+    assert h.of("item_done")[0]["codec"] == "vp09.00.40.08"
+    assert any("convert" in line for line in h.logged)
+
+
+def test_a_youtube_video_is_never_converted(tmp_path):
+    h = Harness(tmp_path, codec="vp09.00.40.08").run([item()])
+    assert h.summary["ok"] == 1 and all(c[0] != "ffmpeg" for c in h.calls)

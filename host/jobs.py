@@ -14,8 +14,9 @@ from typing import Callable
 
 from hostlog import tail_lines
 from naming import PARTIAL_DIR, partial_dir, resolve_target
-from quality import parse_quality
-from security import VIDEO_ID, is_allowed_url, safe_output_path
+from quality import is_h264, parse_quality
+from security import VIDEO_ID, is_allowed_url, is_instagram_url, safe_output_path
+from transcode import convert_to_h264
 from ytdlp import (Engine, ResolveError, build_download_args, classify_error, parse_done_line,
                    parse_progress_line, resolve, stream_download)
 
@@ -365,6 +366,18 @@ class JobRunner:
             # "Title.f140.m4a" apart instead of "Title.mp4"
             fail(vid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」", result.stderr)
             return "failed"
+        codec = info.codec
+        if is_instagram_url(url) and not is_h264(codec):
+            # Instagram's best video is VP9: QuickTime, Finder previews and many editors cannot play it in an mp4
+            self._emit({"type": "progress", "jobId": job_id, "itemId": vid, "percent": None, "speed": None,
+                        "eta": None, "stage": "convert"})
+            outcome = convert_to_h264(self.engine, target, partial_dir(output_dir, vid) / "convert", item_cancel,
+                                      stream=self._stream)
+            self._log(f"convert item={vid} from={codec} result={outcome}")
+            if outcome == "cancelled":
+                return self._stopped(job_id, vid, item_cancel) or "cancelled"
+            if outcome == "ok":
+                codec = "avc1"
         if result.stderr.strip():  # yt-dlp's warnings (a missing JavaScript runtime, ...) are only ever shown here
             self._log(f"item_warnings item={vid}\n{tail_lines(result.stderr)}")
         shutil.rmtree(partial_dir(output_dir, vid), ignore_errors=True)  # kept after a failure: a retry resumes there
@@ -378,6 +391,6 @@ class JobRunner:
             pass  # file is on disk; a locked record file only means a rerun cannot skip it
         self._log(f"item_done item={vid} height={info.height if info else None}")
         self._emit({"type": "item_done", "jobId": job_id, "itemId": vid, "file": str(target),
-                    "height": info.height if info else None, "codec": info.codec if info else None,
+                    "height": info.height if info else None, "codec": codec,
                     "skipped": False})
         return "ok"

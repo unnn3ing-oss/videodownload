@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from hostlog import clip, tail_lines
 from quality import format_selector, format_sort
-from security import INSTAGRAM_HOSTS, is_allowed_url
+from security import INSTAGRAM_HOSTS, is_allowed_url, is_instagram_url
 
 PROGRESS_PREFIX = "[ytdl-progress]"
 DONE_PREFIX = "[ytdl-done]"
@@ -78,7 +78,7 @@ def build_download_args(engine: Engine, url: str, quality: int, target: Path, te
     return engine.base_args() + [
         "--no-playlist",
         "-f", format_selector(quality),
-        "-S", format_sort(quality),
+        "-S", format_sort(quality, h264_first=is_instagram_url(url)),
         "--merge-output-format", "mp4",
         # -o must be a bare name: with an absolute one yt-dlp drops every -P and writes the .part beside the video
         "-P", f"home:{target.parent}",

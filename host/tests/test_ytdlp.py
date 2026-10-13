@@ -434,3 +434,11 @@ def test_resolve_instagram_caption_is_cut_and_has_no_line_breaks():
     run, _ = fake_run([{"id": "Dd8pP9yS3WB", "title": "Video by u", "uploader": "u", "description": "  " + "字" * 200}])
     got = resolve(Engine(Path("yt-dlp")), [f"{IG}/reel/Dd8pP9yS3WB/"], run=run)
     assert got[0].title == "u - " + "字" * 60
+
+
+def test_instagram_download_prefers_h264_first_and_youtube_does_not():
+    ig = build_download_args(Engine(Path("yt-dlp")), "https://www.instagram.com/reel/Dd8pP9yS3WB/", 1080,
+                             Path("/o/t.mp4"), Path("/o/.p/x"))
+    yt = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 1080, Path("/o/t.mp4"), Path("/o/.p/x"))
+    assert ig[ig.index("-S") + 1] == format_sort(1080, h264_first=True)
+    assert yt[yt.index("-S") + 1] == format_sort(1080)
