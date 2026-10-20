@@ -17,7 +17,7 @@ export function summarizeAdd(outcomes) {
 // A box emptied after its video was added is not filled again by the same tab; going to another site forgets it.
 export function tabAutofill({ box, filled, tabUrl }) {
   const target = tabUrl ?? "";
-  if (box !== "" && box !== filled) return { box, filled };
+  if (box !== "" && box !== filled) return { box, filled: "" }; // theirs: kept, and what was filled earlier no longer counts
   if (box === "" && target !== "" && target === filled) return { box, filled };
   return { box: target, filled: target };
 }

@@ -21,11 +21,10 @@ const SETUP_HINT = {
   stopped: "準備好了就按「啟動」。第一次使用請先完成步驟 1；按了沒反應的話，重新執行安裝檔會自動檢查並修復。",
   forbidden: "Chrome 拒絕連線（擴充功能識別碼與安裝檔不符）。請重新下載部署並再執行一次安裝檔。",
 };
-const KIND_TEXT = { video: "影片", playlist: "播放清單", channel: "頻道" };
 
 let status = { state: "stopped", ready: null };
 let queue = null; // the list, held by the background script
-let currentTab = null; // { url, title, kind }
+let currentTab = null; // { url, kind } of the active tab when it is a YouTube address
 const nextId = createRequestIds();
 const waiters = new Map();
 
@@ -158,14 +157,6 @@ function renderControls() {
   }
 }
 
-function renderTabCard() {
-  const card = $("tab-card");
-  card.hidden = !currentTab;
-  if (!currentTab) return;
-  $("tab-kind").textContent = KIND_TEXT[currentTab.kind];
-  $("tab-title").textContent = currentTab.title;
-}
-
 function hasUpdate() {
   return Boolean(updateInfo) && (updateInfo.extChanged.length > 0 || hostChanged.length > 0);
 }
@@ -264,7 +255,6 @@ function render() {
   renderStatus();
   renderQueueView();
   renderControls();
-  renderTabCard();
   renderUpdate();
   renderVersionBanner();
   renderUpdateDialog();
@@ -416,8 +406,7 @@ async function refreshCurrentTab() {
     [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
   } catch { /* no access to the tab: nothing to offer */ }
   const kind = classifyTabUrl(tab?.url);
-  currentTab = kind ? { url: tab.url, kind, title: (tab.title || tab.url).replace(/ - YouTube$/, "") } : null;
-  renderTabCard();
+  currentTab = kind ? { url: tab.url, kind } : null;
   fillBoxFromTab();
 }
 
@@ -461,12 +450,6 @@ $("start").addEventListener("click", async () => {
 $("add-btn").addEventListener("click", addFromBox);
 $("add-url").addEventListener("keydown", (event) => { if (event.key === "Enter") addFromBox(); });
 $("add-url").addEventListener("input", () => addNote(""));
-$("tab-add").addEventListener("click", async () => {
-  const result = await send({ type: "queue_add", url: currentTab?.url });
-  addNote(result?.ok ? "" : result?.error ?? "無法加入", "error");
-  // the box holds the same address: it would add it a second time (boxFilled stays, so this tab does not fill it again)
-  if (result?.ok && $("add-url").value === boxFilled) $("add-url").value = "";
-});
 $("start-all").addEventListener("click", async () => {
   const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });
   note(result?.ok === false ? result.error : "", "error");

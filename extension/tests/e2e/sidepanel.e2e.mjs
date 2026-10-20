@@ -120,27 +120,32 @@ try {
   assert.match(await page.textContent('.qrow[data-kind="duplicate"]'), /重複下載/);
   assert.match(await page.textContent('.qrow[data-kind="duplicate"]'), /與第 1 筆相同/);
 
-  step("5. The current-tab card adds the page be");
-  // 5. The current-tab card adds the page being viewed.
+  step("5. The address box takes the page being viewed");
+  // 5. The address box shows the current tab's address when it is YouTube, and stays free for pasting when it is not.
+  const box = () => page.inputValue("#add-url");
+  const boxBecomes = (value) => page.waitForFunction((v) => document.getElementById("add-url").value === v, value);
   await context.route("https://www.youtube.com/**", (route) => route.fulfill({
     contentType: "text/html; charset=utf-8", body: "<title>影片 v2 - YouTube</title><h1>stub</h1>" }));
+  await context.route("https://example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>other</title>" }));
+  assert.equal(await page.locator("#tab-card").count(), 0, "the separate current-tab card is gone");
   const yt = await context.newPage();
   await yt.goto(watch("v2"));
-  await page.waitForSelector("#tab-card:not([hidden])");
-  assert.match(await page.textContent("#tab-kind"), /影片/);
-  await page.waitForFunction((u) => document.getElementById("add-url").value === u, watch("v2"));
-  await page.evaluate(() => document.getElementById("tab-add").click());
-  await page.waitForFunction(() => document.getElementById("add-url").value === "");
+  await boxBecomes(watch("v2"));
+  await yt.goto("https://example.test/");
+  await boxBecomes("");
+  await yt.goto(watch("v2"));
+  await boxBecomes(watch("v2"));
+  await page.fill("#add-url", watch("v3"));
+  await yt.goto(watch("v4"));
+  await page.waitForTimeout(500);
+  assert.equal(await box(), watch("v3"), "what was typed is not replaced by the tab");
+  await page.fill("#add-url", "");
+  await yt.goto(watch("v2"));
+  await boxBecomes(watch("v2"));
+  await page.evaluate(() => document.getElementById("add-btn").click()); // (the panel is a tab here: bringing it forward would change the active tab)
   await rowByTitle("影片 v2").first().waitFor();
+  assert.equal(await box(), "", "the box is emptied after adding");
   await yt.close();
-  await page.bringToFront();
-  // a tab that is not YouTube leaves the address box empty to paste into
-  await context.route("https://example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>other</title>" }));
-  const other = await context.newPage();
-  await other.goto("https://example.test/");
-  await page.waitForSelector("#tab-card", { state: "hidden" });
-  assert.equal(await page.inputValue("#add-url"), "", "nothing is put in the box for a tab that is not YouTube");
-  await other.close();
   await page.bringToFront();
   await shot("2-ready");
 
