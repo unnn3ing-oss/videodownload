@@ -2,7 +2,7 @@
 // The background script owns one controller; the side panel and the web page only see its state.
 import {
   addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved, createState, hostLost, markRunning,
-  canClearAll, clearAll, setTagsError, markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
+  canClearAll, clearAll, itemKey, setTagsError, markSent, outputDirLocked, pendingDownloads, removeItem, retryItem, setCover, setHostConnected, setSettings, setTags, QueueError,
 } from "./queue.js";
 import { KEEP_TAGS, MAX_TAGS, buildCopyText, extractHashtags, pickTags } from "./copytext.js";
 import { coverBaseName, coverName } from "./covername.js";
@@ -13,6 +13,7 @@ import { versionAtLeast } from "./version.js";
 import { MIN_AUDIO_HOST_VERSION, MIN_HOST_VERSION } from "./constants.js";
 
 const MAX_RESOLVES = 2; // yt-dlp processes asking YouTube at the same time
+const AUDIO_NEEDS_UPDATE = "這個版本的下載助手不支援音訊，請先更新下載助手";
 const TIMEOUT = { remove: 15000, resolve: 180000, meta: 90000, save_cover: 30000, download: 20000, enqueue: 20000 };
 const fail = (error) => ({ ok: false, error });
 
@@ -133,15 +134,13 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
   async function startRun(items) {
     // An older host would ignore the audio request and quietly download the videos, so it is not asked.
-    if (state.settings.mode === "audio" && !versionAtLeast(host.version(), MIN_AUDIO_HOST_VERSION)) {
-      return fail("這個版本的下載助手不支援音訊，請先更新下載助手");
-    }
+    if (items.some((i) => i.audio) && !versionAtLeast(host.version(), MIN_AUDIO_HOST_VERSION)) return fail(AUDIO_NEEDS_UPDATE);
     starting = true;
     stopRequested = false;
     stopAfterStart = false;
     // The rows count as handed over from the moment the request goes out: a slow playlist that answers before the
     // host's reply must not take their place as the original.
-    const ids = items.map((i) => i.id);
+    const ids = items.map((i) => i.key);
     ids.forEach((id) => sentIds.add(id));
     commit(markSent(state, ids, true));
     const unsend = () => {
@@ -153,7 +152,6 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       for (let attempt = 0; ; attempt += 1) {
         const event = await host.request({
           type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
-          ...(state.settings.mode === "audio" ? { audio: state.settings.audioFormat } : {}),
         }, TIMEOUT.download);
         if (event.type === "started") {
           jobDir = host.outputDir?.() ?? null;
@@ -250,9 +248,9 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   // While a job runs, anything that became startable (new rows, retries, promoted duplicates) joins it.
   function syncRun() {
     if (!state.running || !host.connected()) return;
-    const items = pendingDownloads(state).filter((i) => !sentIds.has(i.id));
+    const items = pendingDownloads(state).filter((i) => !sentIds.has(i.key));
     if (!items.length) return;
-    const ids = items.map((i) => i.id);
+    const ids = items.map((i) => i.key);
     ids.forEach((id) => sentIds.add(id));
     commit(markSent(state, ids, true));
     const unsend = () => {
@@ -289,6 +287,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
 
     async add(url) {
       syncHostFlag();
+      // (a helper that is not connected yet is checked when the download starts)
+      if (state.settings.mode === "audio" && host.connected() && !versionAtLeast(host.version(), MIN_AUDIO_HOST_VERSION)) {
+        return fail(AUDIO_NEEDS_UPDATE);
+      }
       let added;
       try {
         added = addPlaceholder(state, url);
@@ -305,12 +307,13 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       const item = find(uid);
       if (!item) return;
       const live = item.status === "waiting" || item.status === "downloading";
-      if (live && item.id && !item.dupOf && state.running && sentIds.has(item.id)) {
-        sentIds.delete(item.id);
+      const key = itemKey(item);
+      if (live && item.id && !item.dupOf && state.running && sentIds.has(key)) {
+        sentIds.delete(key);
         // Only a download that is already running gets an item_removed event back, and that event must not
         // be mistaken for a duplicate that has just taken this row's place.
-        track(host.request({ type: "remove", itemId: item.id }, TIMEOUT.remove).then((event) => {
-          if (event.type === "removed" && event.where === "current") expectRemoved.add(item.id);
+        track(host.request({ type: "remove", itemId: key }, TIMEOUT.remove).then((event) => {
+          if (event.type === "removed" && event.where === "current") expectRemoved.add(key);
         }));
       }
       commit(removeItem(state, uid));
@@ -327,7 +330,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     retry(uid) {
       const item = find(uid);
       commit(retryItem(state, uid));
-      if (item?.id) sentIds.delete(item.id);
+      if (item?.id) sentIds.delete(itemKey(item));
       syncRun();
     },
 
@@ -347,11 +350,6 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     },
 
     setSettings(patch) {
-      // Rows added to a running job join it as it is, so what it downloads cannot be switched underneath them.
-      if (state.running || starting) {
-        const { mode, audioFormat, ...rest } = patch ?? {};
-        patch = rest;
-      }
       commit(setSettings(state, patch));
     },
 
@@ -382,8 +380,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       if (next !== state) commit(next);
       if (event.type === "item_failed" || event.type === "item_removed") sentIds.delete(event.itemId);
       if (event.type === "item_done" && !event.skipped && state.settings.autoCover) {
-        const finished = state.items.find((i) => i.id === event.itemId && !i.dupOf && i.status === "done" && !isInstagramUrl(i.url));
-        if (finished) queueCover(finished.uid);
+        const finished = state.items.find((i) => i.id && itemKey(i) === event.itemId && !i.dupOf && i.status === "done" && !isInstagramUrl(i.url));
+        // a video that is also queued as audio has one cover: it is saved once
+        const covered = finished && state.items.some((i) => i.id === finished.id && i.uid !== finished.uid && i.cover);
+        if (finished && !covered) queueCover(finished.uid);
       }
       if (event.type === "started" || event.type === "done") pumpTags(); // (it waits while the host stopped the job on purpose)
       if (event.type === "done") {

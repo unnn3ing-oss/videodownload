@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_SETTINGS, MAX_ITEMS, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
+  DEFAULT_SETTINGS, MAX_ITEMS, itemKey, QueueError, addPlaceholder, applyHostEvent, applyResolveFailed, applyResolved,
   OUTPUT_DIR_LOCKED_TEXT, cooldownText, createState, describeItem, hostLost, markRunning, outputDirLocked, markSent, pendingDownloads, removeItem, retryItem, setHostConnected,
   setCover, setSettings, setTags, setTagsError, summarize, canClearAll, clearAll,
 } from "../lib/queue.js";
@@ -290,7 +290,7 @@ test("pendingDownloads lists waiting, non-duplicate rows in order with id, url a
   let state = stateWith(ref("a"), ref("b"), ref("c"));
   state = applyHostEvent(state, { type: "item_done", itemId: "a", file: "/x/a.mp4", height: 720 }, 0);
   assert.deepEqual(pendingDownloads(state), [
-    { id: "b", url: url("b"), title: "影片 b" }, { id: "c", url: url("c"), title: "影片 c" },
+    { id: "b", key: "b", url: url("b"), title: "影片 b" }, { id: "c", key: "c", url: url("c"), title: "影片 c" },
   ]);
 });
 
@@ -709,4 +709,95 @@ test("tags saved by an older version are dropped on load: they were cut at three
   const old = JSON.parse(JSON.stringify(state));
   delete old.items[0].tagsV;
   assert.equal(createState(old).items[0].tags, null);
+});
+
+// ---- every row is its own download: a video or one audio format, as chosen when it was added ----
+
+// Rows added one by one while `settings` is what is chosen (each add is resolved to the given video).
+function addedAs(state, settings, id) {
+  state = setSettings(state, settings);
+  const added = addPlaceholder(state, url(id));
+  return applyResolved(added.state, added.uid, [ref(id)]);
+}
+const ALL = { mode: "video" };
+const MP3 = { mode: "audio", audioFormat: "mp3" };
+const AAC = { mode: "audio", audioFormat: "aac" };
+const kinds = (state) => state.items.map((i) => [i.id, i.audio, i.dupOf]);
+
+test("a row remembers what was chosen when it was added, whatever is chosen later", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, ALL, "a");
+  state = addedAs(state, MP3, "b");
+  state = addedAs(state, AAC, "c");
+  state = setSettings(state, ALL);
+  assert.deepEqual(state.items.map((i) => i.audio), [null, "mp3", "aac"]);
+  assert.deepEqual(state.items.map(itemKey), ["a", "b~mp3", "c~aac"]);
+});
+
+test("a playlist added as audio makes every row audio", () => {
+  let state = setSettings(setHostConnected(createState(), true), AAC);
+  const added = addPlaceholder(state, "https://www.youtube.com/playlist?list=PLabc");
+  state = applyResolved(added.state, added.uid, [ref("a"), ref("b")]);
+  assert.deepEqual(state.items.map((i) => [i.id, i.audio]), [["a", "aac"], ["b", "aac"]]);
+});
+
+test("the same video as a video, as MP3 and as AAC is three downloads, and asking for one twice is a repeat", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, ALL, "a");
+  state = addedAs(state, MP3, "a");
+  state = addedAs(state, AAC, "a");
+  assert.deepEqual(kinds(state), [["a", null, null], ["a", "mp3", null], ["a", "aac", null]]);
+  state = addedAs(state, MP3, "a");
+  state = addedAs(state, ALL, "a");
+  assert.deepEqual(state.items.map((i) => i.dupOf), [null, null, null, state.items[1].uid, state.items[0].uid]);
+  assert.deepEqual(pendingDownloads(state).map((i) => i.key), ["a", "a~mp3", "a~aac"]);
+});
+
+test("what the host is given says each row's format and key, and nothing about audio for a video", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, ALL, "a");
+  state = addedAs(state, MP3, "b");
+  assert.deepEqual(pendingDownloads(state), [
+    { id: "a", key: "a", url: url("a"), title: "影片 a" },
+    { id: "b", key: "b~mp3", audio: "mp3", url: url("b"), title: "影片 b" },
+  ]);
+});
+
+test("host events reach the row they are about, even when its twin is the same video", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, ALL, "a");
+  state = addedAs(state, MP3, "a");
+  state = applyHostEvent(state, { type: "progress", itemId: "a~mp3", percent: 40 }, 0);
+  assert.deepEqual(state.items.map((i) => i.status), ["waiting", "downloading"]);
+  state = applyHostEvent(state, { type: "item_done", itemId: "a~mp3", file: "/x/a.mp3", audio: "mp3" }, 0);
+  state = applyHostEvent(state, { type: "item_done", itemId: "a", file: "/x/a.mp4", height: 720 }, 0);
+  assert.deepEqual(state.items.map((i) => [i.status, i.file]), [["done", "/x/a.mp4"], ["done", "/x/a.mp3"]]);
+  assert.deepEqual(state.items.map((i) => describeItem(state, i, 0).sub), ["720p", "MP3"]);
+});
+
+test("the cooldown chip and the sent flag follow the key, not just the video", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, ALL, "a");
+  state = addedAs(state, MP3, "a");
+  state = applyHostEvent(state, { type: "cooldown", seconds: 5, nextId: "a~mp3" }, 0);
+  assert.deepEqual(state.items.map((i) => describeItem(state, i, 0).kind), ["waiting", "cooling"]);
+  state = markSent(state, ["a~mp3"], true);
+  assert.deepEqual(state.items.map((i) => i.sent), [false, true]);
+});
+
+test("a waiting audio row says so in its detail line", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, MP3, "a");
+  state = addedAs(state, ALL, "b");
+  assert.match(describeItem(state, state.items[0], 0).sub, /MP3/);
+  assert.doesNotMatch(describeItem(state, state.items[1], 0).sub, /MP3|AAC/);
+});
+
+test("the format of a row survives a restart", () => {
+  let state = setHostConnected(createState(), true);
+  state = addedAs(state, AAC, "a");
+  const back = createState(JSON.parse(JSON.stringify(state)));
+  assert.equal(back.items[0].audio, "aac");
+  const hand = createState({ items: [{ uid: 1, id: "a", url: url("a"), title: "甲", status: "waiting", audio: "flac" }] });
+  assert.equal(hand.items[0].audio, null, "a format that does not exist is dropped");
 });

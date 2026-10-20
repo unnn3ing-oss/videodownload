@@ -69,9 +69,13 @@ function coverText(cover) {
   return `封面失敗：${cover.error ?? "未知原因"}`;
 }
 
+// What a row is called toward the host and in its events: a video and the sound of the same video are different
+// downloads, and each audio format is one too. A video is still just its id.
+export const itemKey = (item) => (item.audio ? `${item.id}~${item.audio}` : item.id);
+
 const titleKey = (title) => String(title ?? "").normalize("NFKC").trim().toLowerCase();
 
-// The earliest copy stays normal; every later row with the same video id points at it. Only the id counts: two
+// The earliest copy stays normal; every later row with the same key (video id, and the format when it is audio) points at it. Only the id counts: two
 // different videos can share a title ("Shorts", "Private video"), and the host keeps their files apart with " [id]".
 // The exception is a row that is already on its way (handed to the host, downloading, finished): it keeps its place
 // as the original even when a slow playlist later lands the same video in front of it, so a running download is never hidden.
@@ -79,9 +83,9 @@ function markDuplicates(items) {
   const byId = new Map();
   const counts = (item) => item.status !== "fetching" && (item.id || item.status !== "failed");
   const underway = (item) => item.sent || item.status === "downloading" || item.status === "done" || item.status === "skipped";
-  const find = (item) => (item.id && byId.get(item.id)) || null;
+  const find = (item) => (item.id && byId.get(itemKey(item))) || null;
   const register = (item) => {
-    if (item.id) byId.set(item.id, item.uid);
+    if (item.id) byId.set(itemKey(item), item.uid);
   };
   for (const item of items) if (counts(item) && underway(item) && !find(item)) register(item);
   return items.map((item) => {
@@ -123,7 +127,8 @@ export function createState(saved = null) {
     if (!raw || typeof raw !== "object" || !Number.isInteger(raw.uid) || !STATUSES.has(raw.status)) continue;
     const limitHit = Number.isInteger(raw.limitHit) && raw.limitHit > 0 ? raw.limitHit : null;
     const outDir = typeof raw.outDir === "string" && raw.outDir ? raw.outDir : null;
-    let item = { ...blankItem(raw.uid, raw), sent: false, cover: cleanCover(raw.cover), limitHit, outDir }; // a restart ends the host's job
+    const audio = Object.hasOwn(AUDIO_LABELS, raw.audio) ? raw.audio : null;
+    let item = { ...blankItem(raw.uid, raw), audio, sent: false, cover: cleanCover(raw.cover), limitHit, outDir }; // a restart ends the host's job
     // tags kept by an older version were cut at three, channel tags included: they are read again
     if (item.tagsV !== TAGS_VERSION || !Array.isArray(item.tags)) item = { ...item, tags: null, tagsV: null };
     item = { ...item, textError: null }; // a failed read is tried again after a restart
@@ -145,7 +150,9 @@ export function addPlaceholder(state, url) {
   if (!isSupportedUrl(url)) throw new QueueError("bad_url", "不是 YouTube 或 Instagram 的網址");
   if (state.items.length >= MAX_ITEMS) throw new QueueError("queue_full", `清單已滿（上限 ${MAX_ITEMS} 筆）`);
   const uid = state.nextUid;
-  const item = blankItem(uid, { url, title: url, status: "fetching" });
+  // a row is its own download: what is chosen now (a video, or this audio format) stays with it
+  const audio = state.settings.mode === "audio" ? state.settings.audioFormat : null;
+  const item = blankItem(uid, { url, title: url, status: "fetching", audio });
   return { state: { ...withItems(state, [...state.items, item]), nextUid: uid + 1 }, uid };
 }
 
@@ -158,12 +165,13 @@ export function applyResolved(state, uid, refs) {
   const limit = state.settings.limit;
   const chosen = refs.slice(0, Math.min(limit, room));
   let nextUid = state.nextUid;
+  const audio = state.items[at].audio ?? null; // a channel or playlist asked for as audio is all audio
   const rows = chosen.map((ref, n) => {
     const rowUid = n === 0 ? uid : nextUid++;
-    if (!ref.id) return blankItem(rowUid, { url: ref.url, title: ref.url, status: "failed", error: "無法解析這個網址" });
-    return blankItem(rowUid, { id: ref.id, url: ref.url, title: ref.title || ref.id, duration: ref.duration ?? null });
+    if (!ref.id) return blankItem(rowUid, { url: ref.url, title: ref.url, status: "failed", error: "無法解析這個網址", audio });
+    return blankItem(rowUid, { id: ref.id, url: ref.url, title: ref.title || ref.id, duration: ref.duration ?? null, audio });
   });
-  if (!rows.length) rows.push(blankItem(uid, { url: state.items[at].url, title: state.items[at].url, status: "failed", error: "找不到影片" }));
+  if (!rows.length) rows.push(blankItem(uid, { url: state.items[at].url, title: state.items[at].url, status: "failed", error: "找不到影片", audio }));
   // The host does not say when it stopped at the limit, so a list that came back exactly that long is taken to go on.
   // A single video never does; an address that is not plainly a list needs more than one video to count as one.
   const kind = classifyTabUrl(state.items[at].url);
@@ -195,12 +203,12 @@ export const setTagsError = (state, uid, message) => ({ ...state, items: state.i
 export const setHostConnected = (state, connected, outdated = false) => ({
   ...state, hostConnected: Boolean(connected), hostOutdated: Boolean(connected) && Boolean(outdated),
 });
-// Rows the host has been given: they keep their place when duplicates are worked out again.
-export const markSent = (state, ids, sent) => {
-  const wanted = new Set(ids);
+// Rows the host has been given (by key): they keep their place when duplicates are worked out again.
+export const markSent = (state, keys, sent) => {
+  const wanted = new Set(keys);
   return {
     ...state,
-    items: state.items.map((i) => (wanted.has(i.id) && i.sent !== sent && (!sent || !i.dupOf) ? { ...i, sent } : i)),
+    items: state.items.map((i) => (wanted.has(itemKey(i)) && i.sent !== sent && (!sent || !i.dupOf) ? { ...i, sent } : i)),
   };
 };
 export const markRunning = (state, running) => ({ ...state, running: Boolean(running) });
@@ -216,7 +224,7 @@ export const clearAll = (state) => (canClearAll(state) ? withItems(state, []) : 
 
 export const pendingDownloads = (state) => state.items
   .filter((i) => i.status === "waiting" && !i.dupOf && i.id)
-  .map((i) => ({ id: i.id, url: i.url, title: i.title }));
+  .map((i) => ({ id: i.id, key: itemKey(i), ...(i.audio ? { audio: i.audio } : {}), url: i.url, title: i.title }));
 
 // The host's job is over: rows it was still working on go back to waiting, and nothing counts as sent any more.
 const resetInterrupted = (items) => items.map((i) => {
@@ -229,7 +237,7 @@ export function hostLost(state) {
 }
 
 export function applyHostEvent(state, event, now) {
-  const live = (id) => state.items.find((i) => i.id === id && !i.dupOf && (i.status === "waiting" || i.status === "downloading"));
+  const live = (key) => state.items.find((i) => i.id && itemKey(i) === key && !i.dupOf && (i.status === "waiting" || i.status === "downloading"));
   const patch = (id, fields) => {
     const target = live(id);
     return target ? state.items.map((i) => (i.uid === target.uid ? { ...i, ...fields } : i)) : null;
@@ -296,8 +304,8 @@ export function describeItem(state, item, now) {
         : { ...base, kind: "waiting-host", label: "等待連線下載助手" };
     case "waiting": {
       const length = item.duration ? formatEta(item.duration) : "";
-      const cooling = state.cooldown && state.cooldown.nextId === item.id && now < state.cooldown.until;
-      const sub = [length, coverText(item.cover)].filter(Boolean).join(" · ");
+      const cooling = state.cooldown && state.cooldown.nextId === itemKey(item) && now < state.cooldown.until;
+      const sub = [item.audio ? AUDIO_LABELS[item.audio] : "", length, coverText(item.cover)].filter(Boolean).join(" · ");
       return cooling
         ? { ...base, kind: "cooling", label: `冷卻中，${formatWait((state.cooldown.until - now) / 1000)}後開始`, sub }
         : { ...base, kind: "waiting", label: "等待中", sub };

@@ -34,6 +34,7 @@ from ytdlp import Engine, ResolveError, fetch_meta, resolve, run_capture
 HANDLED = {"ping", "resolve", "download", "cancel", "get_config", "set_config", "update_engine",
            "update_check", "update_stage", "update_commit", "update_rollback", "update_ext", "update_ext_rollback", "save_cover", "meta", "enqueue", "remove", "doctor", "diagnostics"}
 MAX_LIMIT = 1000
+ITEM_KEY = re.compile(r"[A-Za-z0-9_~.-]{1,40}")  # what the extension calls a row: a video id, or `<id>~mp3`
 MAX_COOLDOWN = 300
 
 
@@ -206,21 +207,31 @@ class Host:
 
         self._background(msg, work)
 
-    def _on_download(self, msg: dict) -> None:
-        items = msg.get("items")
+    def _items_ok(self, msg: dict, items) -> bool:
+        """Every item an address we may fetch, with a valid format (`audio`) and name (`key`) when it has them."""
         if (not isinstance(items, list) or not items
                 or not all(isinstance(i, dict) and is_allowed_url(i.get("url")) for i in items)):
             self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
+            return False
+        for item in items:
+            try:
+                parse_audio(item.get("audio"))
+            except ValueError:
+                self._error(msg, "bad_audio", "音訊格式只能是 MP3 或 AAC")
+                return False
+            if "key" in item and not (isinstance(item["key"], str) and ITEM_KEY.fullmatch(item["key"])):
+                self._error(msg, "bad_key", "項目代號不正確")
+                return False
+        return True
+
+    def _on_download(self, msg: dict) -> None:
+        items = msg.get("items")
+        if not self._items_ok(msg, items):
             return
         try:
             quality = parse_quality(msg.get("quality"))
         except ValueError:
             self._error(msg, "bad_quality", "畫質只能是 720 或 1080")
-            return
-        try:
-            audio = parse_audio(msg.get("audio"))
-        except ValueError:
-            self._error(msg, "bad_audio", "音訊格式只能是 MP3 或 AAC")
             return
         if not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
@@ -238,15 +249,13 @@ class Host:
         try:
             self.runner.start(job_id, items, quality, self.config.output_dir,
                               override if isinstance(override, str) and override.strip() else None,
-                              cooldown, audio)
+                              cooldown)
         except RuntimeError:
             self._error(msg, "busy", "已有下載工作進行中")
 
     def _on_enqueue(self, msg: dict) -> None:
         items = msg.get("items")
-        if (not isinstance(items, list) or not items
-                or not all(isinstance(i, dict) and is_allowed_url(i.get("url")) for i in items)):
-            self._error(msg, "bad_url", "只支援 YouTube 與 Instagram 貼文網址")
+        if not self._items_ok(msg, items):
             return
         if not self.runner.enqueue(items):
             self._error(msg, "not_running", "目前沒有進行中的下載工作")

@@ -178,13 +178,12 @@ test("the format picker shows the options of the chosen kind and checks the save
   assert.deepEqual([checkedOf(groups.mode), groups.quality.hidden, groups.audio.hidden], [["audio"], true, false]);
 });
 
-test("the format picker locks the kind and format while a job runs, the resolution stays free", () => {
+test("the format picker stays usable while a job runs and is switched off only without a connection", () => {
   const groups = groupsOf();
-  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" }, { lockKind: true });
+  const settings = { mode: "video", quality: 1080, audioFormat: "mp3" };
   const disabled = (group) => group.inputs.every((i) => i.disabled);
-  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, false]);
-  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" }, { disabled: true });
-  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, true]);
-  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" });
+  renderFormatPicker(groups, settings);
   assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [false, false, false]);
+  renderFormatPicker(groups, settings, { disabled: true });
+  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, true]);
 });

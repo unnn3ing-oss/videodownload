@@ -1005,3 +1005,55 @@ def test_an_audio_job_of_an_instagram_reel_is_never_converted_to_h264(tmp_path):
     h.runner.start("j", [{"url": IG_URL, "id": "Dd8pP9yS3WB", "title": "名字"}], 1080, h.out, None, None, audio="mp3")
     h.runner.join(10)
     assert h.summary["ok"] == 1 and calls == ["yt-dlp"]
+
+
+def mixed_stream(seen=None):
+    """A fake yt-dlp that writes what each request asks for: the video, or the converted sound."""
+    def stream(cmd, on_line, cancel):
+        if seen is not None:
+            seen.append(cmd)
+        home, _, name = paths_of(cmd)
+        if "-x" in cmd:
+            name = name.replace(".%(ext)s", "." + ("mp3" if cmd[cmd.index("--audio-format") + 1] == "mp3" else "m4a"))
+            on_line("[ytdl-done]v1|NA|none")
+        else:
+            on_line("[ytdl-done]v1|1080|avc1")
+        Path(home, name).write_text("x", encoding="utf-8")
+        return StreamResult(0, "", False)
+    return stream
+
+
+def audio_item(vid="v1", audio="mp3", title="標題"):
+    return {**item(vid, title), "audio": audio, "key": f"{vid}~{audio}"}
+
+
+def test_each_item_carries_its_own_format_and_is_reported_under_its_key(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = mixed_stream()
+    h.runner.start("j", [audio_item("v1", "mp3", "甲"), item("v2", "乙"), audio_item("v3", "aac", "丙")], 1080, h.out, None, 0)
+    h.runner.join(10)
+    done = {e["itemId"]: e for e in h.of("item_done")}
+    assert set(done) == {"v1~mp3", "v2", "v3~aac"}
+    assert [done[k]["audio"] for k in ("v1~mp3", "v2", "v3~aac")] == ["mp3", None, "aac"]
+    assert sorted(p.name for p in h.out.iterdir() if p.suffix in (".mp3", ".m4a", ".mp4")) == ["丙.m4a", "乙.mp4", "甲.mp3"]
+
+
+def test_the_same_video_as_video_and_as_audio_is_two_separate_items_in_one_job(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = mixed_stream()
+    h.runner.start("j", [item("v1"), audio_item("v1", "mp3"), audio_item("v1", "aac"), audio_item("v1", "mp3")], 1080, h.out, None, 0)
+    h.runner.join(10)
+    assert h.summary["ok"] == 3 and h.summary["failed"] == 0
+    assert sorted(p.name for p in h.out.iterdir() if p.suffix in (".mp3", ".m4a", ".mp4")) == ["標題.m4a", "標題.mp3", "標題.mp4"]
+    assert [e["itemId"] for e in h.of("item_done")] == ["v1", "v1~mp3", "v1~aac"], "the repeated mp3 is the same download"
+
+
+def test_an_item_can_be_removed_by_its_key_and_its_twin_stays(tmp_path):
+    h = Harness(tmp_path)
+    h.runner._stream = mixed_stream()
+    with h.runner._lock:
+        h.runner._pending.extend([item("v1"), audio_item("v1", "mp3")])
+        assert h.runner.running is False
+    assert h.runner.remove("v1~mp3") == "pending"
+    assert [it.get("key") for it in h.runner._pending] == [None], "only the audio one went"
+    assert h.runner.remove("v1~mp3") is None

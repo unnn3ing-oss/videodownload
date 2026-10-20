@@ -149,7 +149,7 @@ function renderQueueArea() {
   renderAbortNote($("abort-note"), queue);
   renderClearButton($("clear-all"), queue);
 
-  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings, { lockKind: queue.running, disabled: !detected });
+  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings, { disabled: !detected });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   $("cooldown-out").textContent = `${queue.settings.cooldownSec} 秒`;
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);

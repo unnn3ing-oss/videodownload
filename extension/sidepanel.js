@@ -137,7 +137,7 @@ function renderQueueView() {
   renderHostNote($("host-note"), queue, { updateAvailable: updateOffered() });
   renderAbortNote($("abort-note"), queue);
 
-  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings, { lockKind: queue.running });
+  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings);
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);
   $("auto-cover").checked = queue.settings.autoCover !== false;

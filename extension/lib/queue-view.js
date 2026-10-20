@@ -262,19 +262,19 @@ export function renderClearButton(button, state) {
 }
 
 // The 影片|音訊 choice and the options that go with it (resolution for video, format for audio; the other kind's are
-// hidden). While a job runs the kind and format are fixed, because rows added to it join it as it is.
-export function renderFormatPicker({ mode, quality, audio }, settings, { lockKind = false, disabled = false } = {}) {
+// hidden). Only what is chosen for the rows added from now on: rows already in the list keep what they were added with.
+export function renderFormatPicker({ mode, quality, audio }, settings, { disabled = false } = {}) {
   const audioMode = settings?.mode === "audio";
-  const fill = (group, value, { hide = false, lock = false } = {}) => {
+  const fill = (group, value, hide = false) => {
     group.hidden = hide;
     group.querySelectorAll("input").forEach((radio) => {
       radio.checked = radio.value === String(value);
-      radio.disabled = disabled || lock;
+      radio.disabled = disabled;
     });
   };
-  fill(mode, audioMode ? "audio" : "video", { lock: lockKind });
-  fill(quality, settings?.quality, { hide: audioMode });
-  fill(audio, settings?.audioFormat, { hide: !audioMode, lock: lockKind });
+  fill(mode, audioMode ? "audio" : "video");
+  fill(quality, settings?.quality, audioMode);
+  fill(audio, settings?.audioFormat, !audioMode);
 }
 
 export function clearConfirmText(state) {

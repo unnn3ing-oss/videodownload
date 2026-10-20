@@ -85,6 +85,30 @@ class Archive:
         os.replace(tmp, self.path)
 
 
+def _ref(it) -> str | None:
+    """What an item is called in events and in remove: its own key (a video and its audio are separate items), else its id."""
+    if not isinstance(it, dict):
+        return None
+    key = it.get("key")
+    return key if isinstance(key, str) and key else it.get("id")
+
+
+def _item_audio(it: dict, default: str | None) -> str | None:
+    """The format this item asks for ('mp3', 'aac' or None for the video); the job's own when the item says nothing."""
+    if "audio" not in it:
+        return default
+    try:
+        return parse_audio(it["audio"])
+    except ValueError:
+        return default
+
+
+def _seen_key(it: dict, default: str | None) -> str | None:
+    vid = it.get("id")
+    audio = _item_audio(it, default)
+    return f"{vid}.{audio_extension(audio)}" if audio and vid else vid
+
+
 class JobRunner:
     def __init__(self, engine: Engine, emit: Callable[[dict], None], stream=stream_download,
                  resolve_fn=resolve, sleep=time.sleep, delay: float = 2.0, jitter=random.random,
@@ -137,7 +161,7 @@ class JobRunner:
         """Drop a waiting item, or cancel just the one being processed (downloading or cooling down)."""
         with self._lock:
             for it in list(self._pending):
-                if isinstance(it, dict) and it.get("id") == item_id:
+                if _ref(it) == item_id:
                     self._pending.remove(it)
                     return "pending"
             if self._current and self._current[0] == item_id:
@@ -217,20 +241,20 @@ class JobRunner:
                         break
                     it = self._pending.popleft()
                     item_cancel = threading.Event()
-                    self._current = (it.get("id") if isinstance(it, dict) else None, item_cancel)
+                    self._current = (_ref(it), item_cancel)
                 touched, last_code = False, None
                 try:
                     outcome = self._one(job_id, it, quality, output_dir, archive, seen, fail,
                                         count == 1 and title_override or None, wait_turn, item_cancel, audio)
                 except Exception as exc:  # one bad item must never end the batch
-                    fail(str(it.get("id") or it.get("url") or "?") if isinstance(it, dict) else "?",
+                    fail(str(_ref(it) or it.get("url") or "?") if isinstance(it, dict) else "?",
                          "unknown", f"內部錯誤：{exc}", traceback.format_exc())
                     outcome = "failed"
                 finally:
                     with self._lock:
                         self._current = None
                 if outcome in ("failed", "removed") and isinstance(it, dict):
-                    seen.discard(it.get("id"))  # a retry or a re-added copy must be allowed to run in this job
+                    seen.discard(_seen_key(it, audio))  # a retry or a re-added copy must be allowed to run in this job
                 if outcome == "ok":
                     summary["ok"] += 1
                 elif outcome == "skipped":
@@ -291,7 +315,8 @@ class JobRunner:
     def _one(self, job_id, it, quality, output_dir, archive, seen, fail, override, wait_turn, item_cancel, audio=None):
         url = it.get("url")
         vid, title = it.get("id"), it.get("title")
-        item_id = vid or url or "?"
+        audio = _item_audio(it, audio)
+        item_id = _ref(it) or url or "?"
         stopped = self._stopped(job_id, item_id, item_cancel)
         if stopped:
             return stopped
@@ -314,18 +339,19 @@ class JobRunner:
         if not isinstance(vid, str) or not VIDEO_ID.fullmatch(vid) or not isinstance(title, str):
             fail(str(item_id), "bad_id", "影片資料不正確，已略過")
             return "failed"
-        if vid in seen:
-            return "duplicate"
-        seen.add(vid)
-        placeholder = PLACEHOLDER_TITLES.get(title.strip().lower())
-        if placeholder:
-            fail(vid, *placeholder)
-            return "failed"
+        eid = it["key"] if isinstance(it.get("key"), str) and it["key"] else vid
         ext = audio_extension(audio) if audio else "mp4"
         key = f"{vid}.{ext}" if audio else vid  # a video and its audio are different downloads (the video keeps its old key)
+        if key in seen:
+            return "duplicate"
+        seen.add(key)
+        placeholder = PLACEHOLDER_TITLES.get(title.strip().lower())
+        if placeholder:
+            fail(eid, *placeholder)
+            return "failed"
         existing = archive.lookup(key)
         if existing:
-            self._emit({"type": "item_done", "jobId": job_id, "itemId": vid,
+            self._emit({"type": "item_done", "jobId": job_id, "itemId": eid,
                         "file": str(output_dir / existing), "height": None, "codec": None,
                         "audio": audio, "skipped": True})
             return "skipped"
@@ -334,9 +360,9 @@ class JobRunner:
                 output_dir, resolve_target(output_dir, override or title, vid, ext,
                                            {vid: archive.mapping()[key]} if key in archive.mapping() else {}).name)
         except ValueError as exc:
-            fail(vid, "bad_path", f"輸出路徑太長：{exc}")
+            fail(eid, "bad_path", f"輸出路徑太長：{exc}")
             return "failed"
-        stopped = wait_turn(vid, item_cancel) or self._stopped(job_id, vid, item_cancel)
+        stopped = wait_turn(eid, item_cancel) or self._stopped(job_id, eid, item_cancel)
         if stopped:
             return stopped
         info = None
@@ -345,7 +371,7 @@ class JobRunner:
             nonlocal info
             progress = parse_progress_line(line)
             if progress:
-                self._emit({"type": "progress", "jobId": job_id, "itemId": vid,
+                self._emit({"type": "progress", "jobId": job_id, "itemId": eid,
                             "percent": progress.percent, "speed": progress.speed,
                             "eta": progress.eta, "stage": "download"})
                 return
@@ -358,28 +384,28 @@ class JobRunner:
                                                       partial_dir(output_dir, vid), audio),
                                   on_line, item_cancel)
         except Exception as exc:  # engine missing, permission denied, ...
-            fail(vid, "unknown", f"無法執行下載引擎：{exc}", traceback.format_exc())
+            fail(eid, "unknown", f"無法執行下載引擎：{exc}", traceback.format_exc())
             return "failed"
         if result.cancelled:
-            return self._stopped(job_id, vid, item_cancel) or "cancelled"
+            return self._stopped(job_id, eid, item_cancel) or "cancelled"
         if result.returncode != 0:
-            fail(vid, *classify_error(result.stderr), detail=result.stderr)
+            fail(eid, *classify_error(result.stderr), detail=result.stderr)
             return "failed"
         if info is None or not _has_content(target):
             # with an unusable ffmpeg yt-dlp still exits 0 and prints its done line, but leaves "Title.f137.mp4" and
             # "Title.f140.m4a" apart instead of "Title.mp4"
-            fail(vid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」", result.stderr)
+            fail(eid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」", result.stderr)
             return "failed"
         codec = info.codec
         if not audio and is_instagram_url(url) and not is_h264(codec):
             # Instagram's best video is VP9: QuickTime, Finder previews and many editors cannot play it in an mp4
-            self._emit({"type": "progress", "jobId": job_id, "itemId": vid, "percent": None, "speed": None,
+            self._emit({"type": "progress", "jobId": job_id, "itemId": eid, "percent": None, "speed": None,
                         "eta": None, "stage": "convert"})
             outcome = convert_to_h264(self.engine, target, partial_dir(output_dir, vid) / "convert", item_cancel,
                                       stream=self._stream)
             self._log(f"convert item={vid} from={codec} result={outcome}")
             if outcome == "cancelled":
-                return self._stopped(job_id, vid, item_cancel) or "cancelled"
+                return self._stopped(job_id, eid, item_cancel) or "cancelled"
             if outcome == "ok":
                 codec = "avc1"
         if result.stderr.strip():  # yt-dlp's warnings (a missing JavaScript runtime, ...) are only ever shown here
@@ -394,7 +420,7 @@ class JobRunner:
         except OSError:
             pass  # file is on disk; a locked record file only means a rerun cannot skip it
         self._log(f"item_done item={vid} height={info.height if info else None}")
-        self._emit({"type": "item_done", "jobId": job_id, "itemId": vid, "file": str(target),
+        self._emit({"type": "item_done", "jobId": job_id, "itemId": eid, "file": str(target),
                     "height": info.height if info else None, "codec": codec,
                     "audio": audio, "skipped": False})
         return "ok"

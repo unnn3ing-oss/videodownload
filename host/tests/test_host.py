@@ -83,22 +83,28 @@ def test_bad_quality(tmp_path):
     assert events[0]["code"] == "bad_quality"
 
 
-def test_bad_audio(tmp_path):
+def test_bad_audio_on_an_item(tmp_path):
     h, events = new_host(tmp_path)
-    h.handle({"type": "download", "quality": 720, "audio": "flac", "items": [{"url": URL}]})
+    h.handle({"type": "download", "quality": 720, "items": [{"url": URL, "audio": "flac"}]})
     assert events[0]["code"] == "bad_audio"
+    h.handle({"type": "enqueue", "items": [{"url": URL, "audio": 3}]})
+    assert events[-1]["code"] == "bad_audio"
 
 
-def test_download_passes_the_audio_format_and_defaults_to_video(tmp_path):
+def test_bad_item_key(tmp_path):
+    h, events = new_host(tmp_path)
+    for key in ("", "a b", "x" * 80, 5, "../x"):
+        h.handle({"type": "download", "quality": 720, "items": [{"url": URL, "key": key}]})
+        assert events[-1]["code"] == "bad_key", key
+
+
+def test_items_keep_their_own_audio_and_key_on_the_way_to_the_job(tmp_path):
     h, events = new_host(tmp_path)
     seen = []
-    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None, audio=None: seen.append(audio)
-    for value, expected in [("mp3", "mp3"), ("aac", "aac"), (None, None), ("", None)]:
-        msg = {"type": "download", "quality": 720, "items": [{"url": URL, "id": "v1", "title": "t"}]}
-        if value is not None:
-            msg["audio"] = value
-        h.handle(msg)
-        assert seen[-1] == expected, value
+    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None, audio=None: seen.append(items)
+    items = [{"url": URL, "id": "v1", "title": "t", "audio": "mp3", "key": "v1~mp3"}, {"url": URL, "id": "v2", "title": "t"}]
+    h.handle({"type": "download", "quality": 720, "items": items})
+    assert seen == [items]
 
 
 def test_bad_url_on_resolve(tmp_path):
