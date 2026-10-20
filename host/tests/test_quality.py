@@ -106,3 +106,17 @@ def test_instagram_sort_puts_h264_before_resolution():
     sort = format_sort(1080, h264_first=True)
     assert sort.split(",")[0] == "vcodec:h264" and "res:1080" in sort
     assert format_sort(1080).split(",")[0] == "res:1080", "YouTube keeps its order"
+
+
+def test_parse_audio_accepts_nothing_mp3_and_aac_only():
+    from quality import parse_audio
+    assert parse_audio(None) is None and parse_audio("") is None
+    assert parse_audio("mp3") == "mp3" and parse_audio("aac") == "aac"
+    for bad in ("flac", "MP3", "m4a", 3, True, ["mp3"]):
+        with pytest.raises(ValueError):
+            parse_audio(bad)
+
+
+def test_audio_files_are_mp3_and_m4a():
+    from quality import audio_extension
+    assert (audio_extension("mp3"), audio_extension("aac")) == ("mp3", "m4a")

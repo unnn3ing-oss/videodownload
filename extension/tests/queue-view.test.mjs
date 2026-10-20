@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -161,4 +161,30 @@ test("a row's small picture is YouTube's by id; an Instagram post, or a row with
   assert.equal(thumbSource({ id: "abc", url: "https://youtu.be/abc" }), "https://i.ytimg.com/vi/abc/mqdefault.jpg");
   assert.equal(thumbSource({ id: "Dd8pP9yS3WB", url: "https://www.instagram.com/reel/Dd8pP9yS3WB/" }), null);
   assert.equal(thumbSource({ id: null, url: "https://youtu.be/abc" }), null);
+});
+
+// A group of radio buttons: the values it holds, and what the picker did to them.
+const radioGroup = (...values) => ({ hidden: false, inputs: values.map((value) => ({ value, checked: false, disabled: false })),
+  querySelectorAll() { return this.inputs; } });
+const groupsOf = () => ({ mode: radioGroup("video", "audio"), quality: radioGroup("1080", "720"), audio: radioGroup("mp3", "aac") });
+const checkedOf = (group) => group.inputs.filter((i) => i.checked).map((i) => i.value);
+
+test("the format picker shows the options of the chosen kind and checks the saved ones", () => {
+  const groups = groupsOf();
+  renderFormatPicker(groups, { mode: "video", quality: 720, audioFormat: "aac" });
+  assert.deepEqual([checkedOf(groups.mode), checkedOf(groups.quality), checkedOf(groups.audio)], [["video"], ["720"], ["aac"]]);
+  assert.deepEqual([groups.mode.hidden, groups.quality.hidden, groups.audio.hidden], [false, false, true]);
+  renderFormatPicker(groups, { mode: "audio", quality: 720, audioFormat: "aac" });
+  assert.deepEqual([checkedOf(groups.mode), groups.quality.hidden, groups.audio.hidden], [["audio"], true, false]);
+});
+
+test("the format picker locks the kind and format while a job runs, the resolution stays free", () => {
+  const groups = groupsOf();
+  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" }, { lockKind: true });
+  const disabled = (group) => group.inputs.every((i) => i.disabled);
+  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, false]);
+  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" }, { disabled: true });
+  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, true]);
+  renderFormatPicker(groups, { mode: "video", quality: 1080, audioFormat: "mp3" });
+  assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [false, false, false]);
 });

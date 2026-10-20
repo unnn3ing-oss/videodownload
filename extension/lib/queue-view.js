@@ -261,6 +261,22 @@ export function renderClearButton(button, state) {
   button.textContent = "清除全部";
 }
 
+// The 影片|音訊 choice and the options that go with it (resolution for video, format for audio; the other kind's are
+// hidden). While a job runs the kind and format are fixed, because rows added to it join it as it is.
+export function renderFormatPicker({ mode, quality, audio }, settings, { lockKind = false, disabled = false } = {}) {
+  const audioMode = settings?.mode === "audio";
+  const fill = (group, value, { hide = false, lock = false } = {}) => {
+    group.hidden = hide;
+    group.querySelectorAll("input").forEach((radio) => {
+      radio.checked = radio.value === String(value);
+      radio.disabled = disabled || lock;
+    });
+  };
+  fill(mode, audioMode ? "audio" : "video", { lock: lockKind });
+  fill(quality, settings?.quality, { hide: audioMode });
+  fill(audio, settings?.audioFormat, { hide: !audioMode, lock: lockKind });
+}
+
 export function clearConfirmText(state) {
   const failed = (state?.items ?? []).filter((i) => i.status === "failed").length;
   return failed ? `清單裡有 ${failed} 支失敗的影片，清除後就不能重試了。要全部清除嗎？` : null;

@@ -7,7 +7,9 @@ import { classifyTabUrl } from "./page.js";
 import { buildCopyText, pickTags } from "./copytext.js";
 
 export const MAX_ITEMS = 500;
-export const DEFAULT_SETTINGS = { quality: 1080, cooldownSec: 10, limit: 50, autoCover: true };
+// mode: what is downloaded (a video at `quality`, or only the sound in `audioFormat`, at the best bitrate the source has).
+export const DEFAULT_SETTINGS = { quality: 1080, mode: "video", audioFormat: "mp3", cooldownSec: 10, limit: 50, autoCover: true };
+export const AUDIO_LABELS = { mp3: "MP3", aac: "AAC" };
 const STATUSES = new Set(["fetching", "waiting", "downloading", "done", "skipped", "failed"]);
 
 export class QueueError extends Error {
@@ -22,6 +24,8 @@ function cleanSettings(patch, base = DEFAULT_SETTINGS) {
   const next = { ...base };
   if (patch && typeof patch === "object") {
     if ([720, 1080].includes(Number(patch.quality))) next.quality = Number(patch.quality);
+    if (patch.mode === "video" || patch.mode === "audio") next.mode = patch.mode;
+    if (Object.hasOwn(AUDIO_LABELS, patch.audioFormat)) next.audioFormat = patch.audioFormat;
     // an empty or invalid number leaves the setting as it was
     next.cooldownSec = parseBoundedInt(patch.cooldownSec, { ...SETTING_RANGES.cooldownSec, fallback: next.cooldownSec });
     next.limit = parseBoundedInt(patch.limit, { ...SETTING_RANGES.limit, fallback: next.limit });
@@ -34,7 +38,7 @@ const TAGS_VERSION = 2; // 2: every hashtag of the description (up to KEEP_TAGS)
 
 const blankItem = (uid, fields) => ({
   uid, id: null, url: "", title: "", duration: null, tags: null, tagsV: null, textError: null, status: "waiting", dupOf: null,
-  percent: null, speed: null, eta: null, file: null, height: null, error: null, sent: false, cover: null,
+  percent: null, speed: null, eta: null, file: null, height: null, audio: null, error: null, sent: false, cover: null,
   outDir: null, // the folder its video was written to (the output folder of the job it finished in)
   limitHit: null, // set on the last row of a channel or playlist that came back as long as the limit: it probably goes on
   ...fields,
@@ -245,7 +249,7 @@ export function applyHostEvent(state, event, now) {
       const outDir = typeof event.outDir === "string" && event.outDir ? event.outDir : null; // (added by the controller)
       const fields = event.skipped
         ? { status: "skipped", file: event.file ?? null, outDir, percent: null, speed: null, eta: null, sent: false }
-        : { status: "done", percent: 100, speed: null, eta: null, file: event.file ?? null, outDir, height: event.height ?? null, sent: false };
+        : { status: "done", percent: 100, speed: null, eta: null, file: event.file ?? null, outDir, height: event.height ?? null, audio: event.audio ?? null, sent: false };
       const items = patch(event.itemId, fields);
       return items ? { ...state, items, cooldown: endCooldown(event.itemId) } : state;
     }
@@ -305,7 +309,7 @@ export function describeItem(state, item, now) {
       return { ...base, label: item.percent == null ? "下載中…" : `下載中 ${Math.floor(percent)}%`, sub: [rate, left].filter(Boolean).join(" · "), percent };
     }
     case "done":
-      return { ...base, label: "完成", sub: [item.height ? `${item.height}p` : "", coverText(item.cover)].filter(Boolean).join(" · "), percent: 100 };
+      return { ...base, label: "完成", sub: [item.audio ? (AUDIO_LABELS[item.audio] ?? "") : item.height ? `${item.height}p` : "", coverText(item.cover)].filter(Boolean).join(" · "), percent: 100 };
     case "skipped":
       return { ...base, label: "略過", sub: ["已下載過，略過", coverText(item.cover)].filter(Boolean).join(" · "), percent: 100 };
     default:

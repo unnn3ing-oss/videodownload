@@ -29,3 +29,20 @@ def format_sort(quality: int, h264_first: bool = False) -> str:
 
 def is_h264(codec: str | None) -> bool:
     return bool(codec) and codec.startswith("avc1")
+
+
+AUDIO_FORMATS = ("mp3", "aac")
+
+
+def parse_audio(value: object) -> str | None:
+    """None (or "") means a video; otherwise the audio format asked for."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and value in AUDIO_FORMATS:
+        return value
+    raise ValueError("audio must be mp3 or aac")
+
+
+def audio_extension(audio: str) -> str:
+    """AAC is written as .m4a (AAC in an MP4 container, which every player opens); a raw .aac stream is not."""
+    return "m4a" if audio == "aac" else "mp3"

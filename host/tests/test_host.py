@@ -83,6 +83,24 @@ def test_bad_quality(tmp_path):
     assert events[0]["code"] == "bad_quality"
 
 
+def test_bad_audio(tmp_path):
+    h, events = new_host(tmp_path)
+    h.handle({"type": "download", "quality": 720, "audio": "flac", "items": [{"url": URL}]})
+    assert events[0]["code"] == "bad_audio"
+
+
+def test_download_passes_the_audio_format_and_defaults_to_video(tmp_path):
+    h, events = new_host(tmp_path)
+    seen = []
+    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None, audio=None: seen.append(audio)
+    for value, expected in [("mp3", "mp3"), ("aac", "aac"), (None, None), ("", None)]:
+        msg = {"type": "download", "quality": 720, "items": [{"url": URL, "id": "v1", "title": "t"}]}
+        if value is not None:
+            msg["audio"] = value
+        h.handle(msg)
+        assert seen[-1] == expected, value
+
+
 def test_bad_url_on_resolve(tmp_path):
     h, events = new_host(tmp_path)
     h.handle({"type": "resolve", "urls": ["https://evil.com/x"]})
@@ -288,7 +306,7 @@ def test_meta_without_engine_reports_engine_missing(tmp_path):
 def test_download_passes_valid_cooldown_and_ignores_invalid(tmp_path):
     h, events = new_host(tmp_path)
     seen = []
-    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None: seen.append(cooldown)
+    h.runner.start = lambda job_id, items, quality, out, override=None, cooldown=None, audio=None: seen.append(cooldown)
     for value, expected in [(7, 7), (0, 0), (2.5, 2.5), (301, None), (-1, None), ("x", None), (True, None), (None, None)]:
         msg = {"type": "download", "quality": 720, "items": [{"url": URL, "id": "v1", "title": "t"}]}
         if value is not None:

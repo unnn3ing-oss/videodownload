@@ -67,9 +67,17 @@
     <section class="card add">
       <div class="add-row">
         <input id="add-url" type="text" placeholder="貼上 YouTube 或 Instagram Reel 網址，按 Enter 或「增加」" spellcheck="false" autocomplete="off" aria-label="影片網址">
+        <div id="mode" class="segmented" role="radiogroup" aria-label="下載內容">
+          <label><input type="radio" name="mode" value="video" checked><span>影片</span></label>
+          <label><input type="radio" name="mode" value="audio"><span>音訊</span></label>
+        </div>
         <div id="quality" class="segmented" role="radiogroup" aria-label="解析度">
           <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
           <label><input type="radio" name="quality" value="720"><span>720p</span></label>
+        </div>
+        <div id="audio-format" class="segmented" role="radiogroup" aria-label="音訊格式（位元率自動取最高）" title="位元率自動取來源的最高品質" hidden>
+          <label><input type="radio" name="audio-format" value="mp3" checked><span>MP3</span></label>
+          <label><input type="radio" name="audio-format" value="aac"><span>AAC</span></label>
         </div>
         <button id="add-btn" class="btn primary" type="button">增加</button>
       </div>

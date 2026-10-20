@@ -10,7 +10,7 @@ import { findCover } from "./cover.js";
 import { isInstagramUrl } from "./urls.js";
 import { toBase64 } from "./base64.js";
 import { versionAtLeast } from "./version.js";
-import { MIN_HOST_VERSION } from "./constants.js";
+import { MIN_AUDIO_HOST_VERSION, MIN_HOST_VERSION } from "./constants.js";
 
 const MAX_RESOLVES = 2; // yt-dlp processes asking YouTube at the same time
 const TIMEOUT = { remove: 15000, resolve: 180000, meta: 90000, save_cover: 30000, download: 20000, enqueue: 20000 };
@@ -132,6 +132,10 @@ export function createController({ host, save, notify, fetchFn = fetch, download
   }
 
   async function startRun(items) {
+    // An older host would ignore the audio request and quietly download the videos, so it is not asked.
+    if (state.settings.mode === "audio" && !versionAtLeast(host.version(), MIN_AUDIO_HOST_VERSION)) {
+      return fail("這個版本的下載助手不支援音訊，請先更新下載助手");
+    }
     starting = true;
     stopRequested = false;
     stopAfterStart = false;
@@ -149,6 +153,7 @@ export function createController({ host, save, notify, fetchFn = fetch, download
       for (let attempt = 0; ; attempt += 1) {
         const event = await host.request({
           type: "download", items, quality: state.settings.quality, cooldownSec: state.settings.cooldownSec,
+          ...(state.settings.mode === "audio" ? { audio: state.settings.audioFormat } : {}),
         }, TIMEOUT.download);
         if (event.type === "started") {
           jobDir = host.outputDir?.() ?? null;
@@ -342,6 +347,11 @@ export function createController({ host, save, notify, fetchFn = fetch, download
     },
 
     setSettings(patch) {
+      // Rows added to a running job join it as it is, so what it downloads cannot be switched underneath them.
+      if (state.running || starting) {
+        const { mode, audioFormat, ...rest } = patch ?? {};
+        patch = rest;
+      }
       commit(setSettings(state, patch));
     },
 

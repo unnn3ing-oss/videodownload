@@ -141,6 +141,20 @@ try {
   assert.ok(Math.abs(group.y + group.height / 2 - (addButton.y + addButton.height / 2)) < 4 && group.x + group.width <= addButton.x, "on the same line as the add button, to its left");
   assert.equal(await page.locator(".queue-set #quality").count(), 0, "and no longer in the settings below the list");
   await page.click('label:has(input[name="quality"][value="720"])');
+  assert.equal(await page.locator("#audio-format").isHidden(), true, "the audio formats stay out of the way while video is chosen");
+  await page.click('label:has(input[name="mode"][value="audio"])');
+  await page.waitForFunction(() => document.getElementById("quality").hidden && !document.getElementById("audio-format").hidden);
+  assert.deepEqual(await page.locator("#audio-format label").allTextContents(), ["MP3", "AAC"]);
+  assert.equal(await page.locator('#audio-format input[value="mp3"]').isChecked(), true, "MP3 is the default");
+  await page.click('label:has(input[name="audio-format"][value="aac"])');
+  await page.waitForFunction(async () => {
+    const s = (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings;
+    return s.mode === "audio" && s.audioFormat === "aac";
+  });
+  await shot("2b-audio");
+  await page.click('label:has(input[name="mode"][value="video"])');
+  await page.waitForFunction(() => !document.getElementById("quality").hidden && document.getElementById("audio-format").hidden);
+  assert.equal(await page.locator('#quality input[value="720"]').isChecked(), true, "the resolution is still the one chosen before");
   await page.fill("#cooldown", "3");
   await page.dispatchEvent("#cooldown", "change");
   await page.waitForFunction(async () => {

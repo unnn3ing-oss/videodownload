@@ -315,6 +315,20 @@ async function withExtension() {
     await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 720);
     await web.click('#quality label:has(input[value="1080"])');
     await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.quality === 1080);
+    // the 影片|音訊 choice: audio swaps the resolutions for MP3 / AAC (MP3 by default) and reaches the extension
+    const webSettings = () => panel.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings);
+    assert.equal(await web.locator("#audio-format").isHidden(), true);
+    await web.click('#mode label:has(input[value="audio"])');
+    await web.waitForFunction(() => document.getElementById("quality").hidden && !document.getElementById("audio-format").hidden);
+    assert.equal(await web.isChecked('#audio-format input[value="mp3"]'), true, "MP3 is the default");
+    await web.click('#audio-format label:has(input[value="aac"])');
+    await panel.waitForFunction(async () => {
+      const s = (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings;
+      return s.mode === "audio" && s.audioFormat === "aac";
+    });
+    await web.click('#mode label:has(input[value="video"])');
+    await web.waitForFunction(() => !document.getElementById("quality").hidden && document.getElementById("audio-format").hidden);
+    assert.equal((await webSettings()).mode, "video");
     // the automatic cover setting: on by default, and the page's switch reaches the extension
     const webAutoCover = () => panel.evaluate(async () => (await chrome.runtime.sendMessage({ type: "queue_get" })).state.settings.autoCover);
     assert.equal(await web.isChecked("#auto-cover"), true);

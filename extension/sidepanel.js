@@ -6,7 +6,7 @@ import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
-import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
+import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -137,7 +137,7 @@ function renderQueueView() {
   renderHostNote($("host-note"), queue, { updateAvailable: updateOffered() });
   renderAbortNote($("abort-note"), queue);
 
-  $("quality").querySelectorAll("input").forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
+  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings, { lockKind: queue.running });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);
   $("auto-cover").checked = queue.settings.autoCover !== false;
@@ -462,6 +462,8 @@ $("clear-all").addEventListener("click", async () => {
 $("quality").addEventListener("change", (event) => {
   send({ type: "settings_set", settings: { quality: Number(event.target.value) } });
 });
+$("mode").addEventListener("change", (event) => send({ type: "settings_set", settings: { mode: event.target.value } }));
+$("audio-format").addEventListener("change", (event) => send({ type: "settings_set", settings: { audioFormat: event.target.value } }));
 $("auto-cover").addEventListener("change", () => {
   send({ type: "settings_set", settings: { autoCover: $("auto-cover").checked } });
 });

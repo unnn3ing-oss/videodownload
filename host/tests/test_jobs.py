@@ -945,3 +945,63 @@ def test_a_failed_conversion_keeps_the_video_and_says_so_in_the_log(tmp_path):
 def test_a_youtube_video_is_never_converted(tmp_path):
     h = Harness(tmp_path, codec="vp09.00.40.08").run([item()])
     assert h.summary["ok"] == 1 and all(c[0] != "ffmpeg" for c in h.calls)
+
+
+def audio_run(tmp_path, items, audio, *, h=None, job_id="j"):
+    """Run a job whose fake yt-dlp writes `<name without %(ext)s>.<mp3|m4a>` like the real one does after converting."""
+    h = h or Harness(tmp_path)
+    seen = []
+
+    def stream(cmd, on_line, cancel):
+        seen.append(cmd)
+        home, _, name = paths_of(cmd)
+        if "-x" in cmd:
+            name = name.replace(".%(ext)s", "." + ("mp3" if cmd[cmd.index("--audio-format") + 1] == "mp3" else "m4a"))
+        Path(home, name).write_text("x", encoding="utf-8")
+        on_line("[ytdl-done]v1|NA|none")
+        return StreamResult(0, "", False)
+
+    h.runner._stream = stream
+    h.runner.start(job_id, items, 1080, h.out, None, None, audio=audio)
+    h.runner.join(10)
+    return h, seen
+
+
+def test_an_audio_job_writes_mp3_files_named_by_title_and_says_which_format(tmp_path):
+    h, seen = audio_run(tmp_path, [item()], "mp3")
+    done = h.of("item_done")[0]
+    assert done["file"].endswith("標題.mp3") and done["audio"] == "mp3" and done["height"] is None
+    assert (h.out / "標題.mp3").exists() and "-x" in seen[0] and h.summary["ok"] == 1
+
+
+def test_aac_is_written_as_m4a(tmp_path):
+    h, _ = audio_run(tmp_path, [item()], "aac")
+    assert h.of("item_done")[0]["file"].endswith("標題.m4a") and (h.out / "標題.m4a").exists()
+
+
+def test_a_video_and_its_audio_are_two_downloads_that_do_not_skip_each_other(tmp_path):
+    h = Harness(tmp_path).run([item()])
+    assert h.of("item_done")[-1]["skipped"] is False
+    audio_run(tmp_path, [item()], "mp3", h=h, job_id="j2")
+    assert h.of("item_done")[-1]["skipped"] is False and (h.out / "標題.mp4").exists() and (h.out / "標題.mp3").exists()
+    audio_run(tmp_path, [item()], "mp3", h=h, job_id="j3")
+    assert h.of("item_done")[-1]["skipped"] is True
+    h.run([item()], job_id="j4")
+    assert h.of("item_done")[-1]["skipped"] is True
+
+
+def test_an_audio_job_of_an_instagram_reel_is_never_converted_to_h264(tmp_path):
+    h = Harness(tmp_path)
+    calls = []
+
+    def stream(cmd, on_line, cancel):
+        calls.append(cmd[0])
+        home, _, name = paths_of(cmd)
+        Path(home, name.replace(".%(ext)s", ".mp3")).write_text("x", encoding="utf-8")
+        on_line("[ytdl-done]Dd8pP9yS3WB|NA|none")
+        return StreamResult(0, "", False)
+
+    h.runner._stream = stream
+    h.runner.start("j", [{"url": IG_URL, "id": "Dd8pP9yS3WB", "title": "名字"}], 1080, h.out, None, None, audio="mp3")
+    h.runner.join(10)
+    assert h.summary["ok"] == 1 and calls == ["yt-dlp"]

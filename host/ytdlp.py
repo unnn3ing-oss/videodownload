@@ -72,18 +72,28 @@ class ResolveError(Exception):
         self.message = message
 
 
-def build_download_args(engine: Engine, url: str, quality: int, target: Path, temp_dir: Path) -> list[str]:
+def build_download_args(engine: Engine, url: str, quality: int, target: Path, temp_dir: Path,
+                        audio: str | None = None) -> list[str]:
     progress = (f"download:{PROGRESS_PREFIX}%(progress.downloaded_bytes)s|%(progress.total_bytes)s"
                 "|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s")
+    if audio:
+        # the best audio there is, then converted: mp3 at LAME's best quality (V0); AAC is copied when the source already
+        # is AAC and encoded at 320k otherwise. The name keeps %(ext)s: the downloaded file (webm, m4a ...) and the
+        # converted one must not share a name.
+        what = ["-f", "bestaudio/best", "-x", "--audio-format", "mp3" if audio == "mp3" else "m4a",
+                "--audio-quality", "0" if audio == "mp3" else "320"]
+        name = target.stem.replace("%", "%%") + ".%(ext)s"
+    else:
+        what = ["-f", format_selector(quality), "-S", format_sort(quality, h264_first=is_instagram_url(url)),
+                "--merge-output-format", "mp4"]
+        name = target.name.replace("%", "%%")
     return engine.base_args() + [
         "--no-playlist",
-        "-f", format_selector(quality),
-        "-S", format_sort(quality, h264_first=is_instagram_url(url)),
-        "--merge-output-format", "mp4",
+        *what,
         # -o must be a bare name: with an absolute one yt-dlp drops every -P and writes the .part beside the video
         "-P", f"home:{target.parent}",
         "-P", f"temp:{temp_dir}",
-        "-o", target.name.replace("%", "%%"),
+        "-o", name,
         "--progress", "--newline",
         "--progress-template", progress,
         "--print", f"after_move:{DONE_PREFIX}%(id)s|%(height)s|%(vcodec)s",

@@ -442,3 +442,85 @@ def test_instagram_download_prefers_h264_first_and_youtube_does_not():
     yt = build_download_args(Engine(Path("yt-dlp")), "https://youtu.be/x", 1080, Path("/o/t.mp4"), Path("/o/.p/x"))
     assert ig[ig.index("-S") + 1] == format_sort(1080, h264_first=True)
     assert yt[yt.index("-S") + 1] == format_sort(1080)
+
+
+def _audio_args(audio, url="https://youtu.be/x", target="/o/名字 100%.mp3"):
+    return build_download_args(Engine(Path("yt-dlp")), url, 1080, Path(target), Path("/o/.p/x"), audio=audio)
+
+
+def test_mp3_asks_for_the_best_audio_and_the_best_mp3_quality():
+    a = _audio_args("mp3")
+    assert a[a.index("-f") + 1] == "bestaudio/best"
+    assert "-x" in a and a[a.index("--audio-format") + 1] == "mp3" and a[a.index("--audio-quality") + 1] == "0"
+    assert "--merge-output-format" not in a and "-S" not in a
+
+
+def test_aac_is_an_m4a_file_that_copies_an_aac_source_and_otherwise_encodes_at_320k():
+    a = _audio_args("aac", target="/o/t.m4a")
+    assert a[a.index("--audio-format") + 1] == "m4a" and a[a.index("--audio-quality") + 1] == "320"
+
+
+def test_audio_output_name_leaves_the_extension_to_yt_dlp_and_escapes_percent():
+    # a fixed ".mp3" template would make the downloaded webm and the converted mp3 try to share one name
+    a = _audio_args("mp3")
+    assert a[a.index("-o") + 1] == "名字 100%%.%(ext)s"
+    assert [a[i + 1] for i, x in enumerate(a) if x == "-P"] == [f"home:{Path('/o')}", f"temp:{Path('/o/.p/x')}"]
+    assert a[-2:] == ["--", "https://youtu.be/x"] and "--no-playlist" in a
+
+
+def test_video_arguments_are_unchanged_without_audio():
+    a = _audio_args(None, target="/o/t.mp4")
+    assert a[a.index("-f") + 1] == format_selector(1080) and "-x" not in a and a[a.index("-o") + 1] == "t.mp4"
+
+
+# ---- the audio arguments against the real yt-dlp and ffmpeg, with the sources served from this computer ----
+
+def _served(tmp_path, makers):
+    """Serve generated media files over http on localhost; returns (base url, stop function)."""
+    import functools
+    import http.server
+    import shutil
+    import subprocess
+    if not (shutil.which("yt-dlp") and shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        pytest.skip("needs yt-dlp, ffmpeg and ffprobe")
+    root = tmp_path / "www"
+    root.mkdir()
+    for name, codec_args in makers.items():
+        made = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                               *codec_args, str(root / name)], capture_output=True)
+        if made.returncode != 0:
+            pytest.skip(f"this ffmpeg cannot write {name}")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    handler.log_message = lambda *a, **k: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}", server.shutdown
+
+
+def _codec(path):
+    import subprocess
+    return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                           "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
+
+
+@pytest.mark.parametrize("source,audio,extension,codec", [
+    ("a.webm", "mp3", "mp3", "mp3"),      # opus source, mp3 asked for
+    ("a.m4a", "aac", "m4a", "aac"),       # aac source copied into an m4a
+    ("a.webm", "aac", "m4a", "aac"),      # opus source encoded to aac
+])
+def test_real_audio_download_makes_the_file_that_was_asked_for(tmp_path, source, audio, extension, codec):
+    import subprocess
+    makers = {"a.webm": ["-c:a", "libopus"], "a.m4a": ["-c:a", "aac"]}
+    base, stop = _served(tmp_path, makers)
+    try:
+        out = tmp_path / "out"
+        target = out / f"名字 100%.{extension}"
+        args = build_download_args(Engine(Path("yt-dlp")), f"{base}/{source}", 1080, target, out / ".p" / "x", audio=audio)
+        done = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    finally:
+        stop()
+    assert done.returncode == 0, done.stderr
+    assert target.exists() and _codec(target) == codec
+    assert sorted(p.name for p in out.iterdir() if p.is_file()) == [target.name], "nothing else is left beside it"
+    line = next(ln for ln in done.stdout.splitlines() if ln.startswith("[ytdl-done]"))
+    assert parse_done_line(line).codec is None  # (no video)

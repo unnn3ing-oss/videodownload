@@ -34,7 +34,7 @@ test("createState starts empty with the default settings", () => {
   assert.equal(state.running, false);
   assert.equal(state.cooldown, null);
   assert.deepEqual(state.settings, DEFAULT_SETTINGS);
-  assert.deepEqual(DEFAULT_SETTINGS, { quality: 1080, cooldownSec: 10, limit: 50, autoCover: true });
+  assert.deepEqual(DEFAULT_SETTINGS, { quality: 1080, mode: "video", audioFormat: "mp3", cooldownSec: 10, limit: 50, autoCover: true });
 });
 
 test("addPlaceholder inserts a fetching row and validates the url", () => {
@@ -467,17 +467,37 @@ test("createState restores a saved queue conservatively", () => {
   assert.equal(state.items[0].percent, null);
   assert.equal(state.items[1].error, null, "a row that never got its title is resolved again, not failed");
   assert.equal(state.items[3].dupOf, 5, "duplicates are recomputed on restore");
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 50, autoCover: true }, "saved before this setting existed: on");
+  assert.deepEqual(state.settings, { quality: 720, mode: "video", audioFormat: "mp3", cooldownSec: 60, limit: 50, autoCover: true }, "saved before this setting existed: on");
   assert.equal(addPlaceholder(state, url("n")).uid, 9, "new uids continue after the saved ones");
   assert.deepEqual(createState("nope").items, []);
   assert.deepEqual(createState({ items: "x" }).items, []);
 });
 
+test("setSettings takes the download kind and the audio format, and ignores anything else", () => {
+  let state = setSettings(createState(), { mode: "audio", audioFormat: "aac" });
+  assert.deepEqual([state.settings.mode, state.settings.audioFormat], ["audio", "aac"]);
+  state = setSettings(state, { mode: "gif", audioFormat: "flac" });
+  assert.deepEqual([state.settings.mode, state.settings.audioFormat], ["audio", "aac"], "invalid values leave them as they were");
+  state = setSettings(state, { mode: "video" });
+  assert.deepEqual([state.settings.mode, state.settings.audioFormat], ["video", "aac"], "the audio format is remembered while video is chosen");
+  assert.equal(state.settings.quality, 1080);
+});
+
+test("a finished audio row says which format it is instead of a height", () => {
+  let state = stateWith(ref("a"), ref("b"), ref("c"));
+  state = applyHostEvent(state, { type: "item_done", itemId: "a", file: "/x/a.mp3", audio: "mp3" }, 0);
+  state = applyHostEvent(state, { type: "item_done", itemId: "b", file: "/x/b.mp4", height: 720 }, 0);
+  state = applyHostEvent(state, { type: "item_done", itemId: "c", file: "/x/c.m4a", audio: "aac" }, 0);
+  assert.equal(describeItem(state, byId(state, "a"), 0).sub, "MP3");
+  assert.equal(describeItem(state, byId(state, "b"), 0).sub, "720p");
+  assert.equal(describeItem(state, byId(state, "c"), 0).sub, "AAC");
+});
+
 test("setSettings clamps values and ignores the unknown", () => {
   let state = setSettings(createState(), { quality: "720", cooldownSec: 1, limit: 5000, bogus: 1 });
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 3, limit: 1000, autoCover: true });
+  assert.deepEqual(state.settings, { quality: 720, mode: "video", audioFormat: "mp3", cooldownSec: 3, limit: 1000, autoCover: true });
   state = setSettings(state, { quality: 480, cooldownSec: 61.4, limit: 0 });
-  assert.deepEqual(state.settings, { quality: 720, cooldownSec: 60, limit: 1, autoCover: true });
+  assert.deepEqual(state.settings, { quality: 720, mode: "video", audioFormat: "mp3", cooldownSec: 60, limit: 1, autoCover: true });
   state = setSettings(state, { cooldownSec: "abc" });
   assert.equal(state.settings.cooldownSec, 60);
   assert.equal("bogus" in state.settings, false);

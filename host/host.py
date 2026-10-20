@@ -23,7 +23,7 @@ from config import ConfigStore
 from covers import CoverError, save_cover
 from jobs import JobRunner
 from protocol import BadMessage, ProtocolError, read_message, write_message
-from quality import parse_quality
+from quality import parse_audio, parse_quality
 from security import VIDEO_ID, is_allowed_url
 from version import VERSION
 import doctor
@@ -217,6 +217,11 @@ class Host:
         except ValueError:
             self._error(msg, "bad_quality", "畫質只能是 720 或 1080")
             return
+        try:
+            audio = parse_audio(msg.get("audio"))
+        except ValueError:
+            self._error(msg, "bad_audio", "音訊格式只能是 MP3 或 AAC")
+            return
         if not self._engine_present():
             self._error(msg, "engine_missing", "找不到下載引擎，請重新執行安裝檔")
             return
@@ -233,7 +238,7 @@ class Host:
         try:
             self.runner.start(job_id, items, quality, self.config.output_dir,
                               override if isinstance(override, str) and override.strip() else None,
-                              cooldown)
+                              cooldown, audio)
         except RuntimeError:
             self._error(msg, "busy", "已有下載工作進行中")
 

@@ -99,9 +99,17 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
           <input id="add-url" type="text" placeholder="貼上 YouTube 或 Instagram Reel 網址，按 Enter 或「增加」" autocomplete="off" spellcheck="false" aria-label="影片網址">
         </label>
+        <div id="mode" class="segmented" role="radiogroup" aria-label="下載內容">
+          <label><input type="radio" name="mode" value="video" checked><span>影片</span></label>
+          <label><input type="radio" name="mode" value="audio"><span>音訊</span></label>
+        </div>
         <div id="quality" class="segmented" role="radiogroup" aria-label="解析度">
           <label><input type="radio" name="quality" value="1080" checked><span>1080p</span></label>
           <label><input type="radio" name="quality" value="720"><span>720p</span></label>
+        </div>
+        <div id="audio-format" class="segmented" role="radiogroup" aria-label="音訊格式（位元率自動取最高）" title="位元率自動取來源的最高品質" hidden>
+          <label><input type="radio" name="audio-format" value="mp3" checked><span>MP3</span></label>
+          <label><input type="radio" name="audio-format" value="aac"><span>AAC</span></label>
         </div>
         <button id="add-btn" class="btn primary" type="button">增加</button>
         <p id="add-note" class="add-note" role="status" aria-live="polite" hidden></p>

@@ -70,6 +70,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span { display: block; text-align: center; padding: 6px 4px; border-radius: 8px; font: 700 13px var(--mono); color: var(--muted); transition: background-color .15s, color .15s; }
 .segmented input:checked + span { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgb(20 33 61 / 18%); }
+.segmented[hidden] { display: none; }
+.segmented input:disabled + span { opacity: .55; cursor: not-allowed; }
 .segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
 .slide { display: flex; align-items: center; gap: 10px; }
 .slide input { flex: 1; min-width: 0; accent-color: var(--accent); }

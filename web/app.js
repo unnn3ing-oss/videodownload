@@ -2,7 +2,7 @@
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
 import {
-  addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
+  addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
 } from "../extension/lib/queue-view.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
@@ -111,7 +111,6 @@ function renderQueueArea() {
   $("conn-note").dataset.kind = hostText?.kind ?? "info";
   setHidden($("conn-note"), !hostText);
   for (const id of ["add-url", "add-btn", "cooldown", "limit", "auto-cover"]) $(id).disabled = !detected;
-  document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.disabled = !detected; });
   renderVersionNotes();
   const folderLocked = outputDirLocked(queue); // a running job keeps the folder it started with: a change waits for the next job
   $("outdir").disabled = !connected || folderLocked;
@@ -150,7 +149,7 @@ function renderQueueArea() {
   renderAbortNote($("abort-note"), queue);
   renderClearButton($("clear-all"), queue);
 
-  document.querySelectorAll('input[name="quality"]').forEach((radio) => { radio.checked = Number(radio.value) === queue.settings.quality; });
+  renderFormatPicker({ mode: $("mode"), quality: $("quality"), audio: $("audio-format") }, queue.settings, { lockKind: queue.running, disabled: !detected });
   if (document.activeElement !== $("cooldown")) $("cooldown").value = String(queue.settings.cooldownSec);
   $("cooldown-out").textContent = `${queue.settings.cooldownSec} 秒`;
   if (document.activeElement !== $("limit")) $("limit").value = String(queue.settings.limit);
@@ -380,6 +379,8 @@ $("clear-all").addEventListener("click", async () => {
 });
 
 $("quality").addEventListener("change", (event) => send({ type: "settings_set", settings: { quality: Number(event.target.value) } }));
+$("mode").addEventListener("change", (event) => send({ type: "settings_set", settings: { mode: event.target.value } }));
+$("audio-format").addEventListener("change", (event) => send({ type: "settings_set", settings: { audioFormat: event.target.value } }));
 $("cooldown").addEventListener("input", () => { $("cooldown-out").textContent = `${$("cooldown").value} 秒`; });
 bindNumberSetting($("cooldown"), "cooldownSec", { send, current: () => queue?.settings?.cooldownSec });
 bindNumberSetting($("limit"), "limit", { send, current: () => queue?.settings?.limit });

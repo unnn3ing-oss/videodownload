@@ -136,6 +136,8 @@ textarea:focus-visible, input:focus-visible { outline: none; border-color: var(-
 .segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
 .segmented span { display: block; text-align: center; padding: 6px 4px; border-radius: 8px; font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--muted); transition: background-color .15s, color .15s, box-shadow .15s; }
 .segmented input:checked + span { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgb(20 33 61 / 18%); }
+.segmented[hidden] { display: none; }
+.segmented input:disabled + span { opacity: .55; cursor: not-allowed; }
 .segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---------- buttons ---------- */

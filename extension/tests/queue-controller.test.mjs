@@ -123,6 +123,38 @@ test("start sends the waiting rows in order with the chosen quality and cooldown
   assert.equal(ctl.getState().running, true);
 });
 
+test("a video download does not mention audio, an audio download names its format", async () => {
+  const video = await withVideos(["a"], { ver: "0.7.0" });
+  await video.ctl.start();
+  assert.equal("audio" in video.host.of("download")[0], false);
+
+  const audio = await withVideos(["a"], { ver: "0.7.0" });
+  audio.ctl.setSettings({ mode: "audio", audioFormat: "aac", quality: 720 });
+  assert.deepEqual(await audio.ctl.start(), { ok: true });
+  assert.equal(audio.host.of("download")[0].audio, "aac");
+});
+
+test("audio needs a download helper that knows it: an older one is not asked", async () => {
+  const { host, ctl } = await withVideos(["a"], { ver: "0.6.1" });
+  ctl.setSettings({ mode: "audio" });
+  const result = await ctl.start();
+  assert.equal(result.ok, false);
+  assert.match(result.error, /更新下載助手/);
+  assert.deepEqual(host.of("download"), []);
+  assert.equal(ctl.getState().items[0].status, "waiting", "the row stays where it was");
+  ctl.setSettings({ mode: "video" });
+  assert.deepEqual(await ctl.start(), { ok: true }, "video still works with it");
+});
+
+test("the download kind and the audio format are fixed while a job runs, the rest still change", async () => {
+  const { ctl } = await withVideos(["a"], { ver: "0.7.0" });
+  await ctl.start();
+  assert.equal(ctl.getState().running, true);
+  ctl.setSettings({ mode: "audio", audioFormat: "aac", quality: 720, cooldownSec: 5 });
+  const s = ctl.getState().settings;
+  assert.deepEqual([s.mode, s.audioFormat, s.quality, s.cooldownSec], ["video", "mp3", 720, 5]);
+});
+
 test("start leaves duplicates out", async () => {
   const { host, ctl } = await withVideos(["a", "b", "a"]);
   await ctl.start();

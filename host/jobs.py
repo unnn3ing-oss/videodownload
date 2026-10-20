@@ -14,7 +14,7 @@ from typing import Callable
 
 from hostlog import tail_lines
 from naming import PARTIAL_DIR, partial_dir, resolve_target
-from quality import is_h264, parse_quality
+from quality import audio_extension, is_h264, parse_audio, parse_quality
 from security import VIDEO_ID, is_allowed_url, is_instagram_url, safe_output_path
 from transcode import convert_to_h264
 from ytdlp import (Engine, ResolveError, build_download_args, classify_error, parse_done_line,
@@ -107,8 +107,9 @@ class JobRunner:
         self.last_job: dict | None = None  # what the last finished job did (the diagnostics bundle shows it)
 
     def start(self, job_id: str, items: list[dict], quality: int, output_dir: Path,
-              title_override: str | None = None, cooldown: float | None = None) -> None:
+              title_override: str | None = None, cooldown: float | None = None, audio: str | None = None) -> None:
         quality = parse_quality(quality)
+        audio = parse_audio(audio)
         seconds = self._delay if cooldown is None else float(cooldown)
         with self._lock:
             if self.running:
@@ -120,7 +121,7 @@ class JobRunner:
             self._current = None
             self._thread = threading.Thread(
                 target=self._run,
-                args=(job_id, len(items), quality, Path(output_dir), title_override, seconds),
+                args=(job_id, len(items), quality, Path(output_dir), title_override, seconds, audio),
                 daemon=True)
             self._thread.start()
 
@@ -155,11 +156,11 @@ class JobRunner:
         if thread:
             thread.join(timeout)
 
-    def _run(self, job_id, count, quality, output_dir, title_override, cooldown) -> None:
+    def _run(self, job_id, count, quality, output_dir, title_override, cooldown, audio=None) -> None:
         summary = {"ok": 0, "skipped": 0, "failed": 0, "cancelled": False, "aborted": None}
         failures: list[dict] = []
         last_code = None  # class of the failure the current item ended with
-        self._log(f"job start id={job_id} items={count} quality={quality} cooldown={cooldown}")
+        self._log(f"job start id={job_id} items={count} quality={quality}{f' audio={audio}' if audio else ''} cooldown={cooldown}")
 
         def fail(item_id: str, code: str, reason: str, detail: str = "") -> None:
             nonlocal last_code
@@ -220,7 +221,7 @@ class JobRunner:
                 touched, last_code = False, None
                 try:
                     outcome = self._one(job_id, it, quality, output_dir, archive, seen, fail,
-                                        count == 1 and title_override or None, wait_turn, item_cancel)
+                                        count == 1 and title_override or None, wait_turn, item_cancel, audio)
                 except Exception as exc:  # one bad item must never end the batch
                     fail(str(it.get("id") or it.get("url") or "?") if isinstance(it, dict) else "?",
                          "unknown", f"內部錯誤：{exc}", traceback.format_exc())
@@ -254,7 +255,7 @@ class JobRunner:
             aborted = (summary["aborted"] or {}).get("code")
             self._log(f"job done id={job_id} ok={summary['ok']} skipped={summary['skipped']} failed={summary['failed']} "
                       f"cancelled={summary['cancelled']} aborted={aborted}")
-            self.last_job = {"jobId": job_id, "items": count, "quality": quality, "cooldown": cooldown,
+            self.last_job = {"jobId": job_id, "items": count, "quality": quality, "audio": audio, "cooldown": cooldown,
                              "summary": dict(summary), "failures": failures[-20:],
                              "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
             try:
@@ -287,7 +288,7 @@ class JobRunner:
             self._sleep(step)
             remaining -= step
 
-    def _one(self, job_id, it, quality, output_dir, archive, seen, fail, override, wait_turn, item_cancel):
+    def _one(self, job_id, it, quality, output_dir, archive, seen, fail, override, wait_turn, item_cancel, audio=None):
         url = it.get("url")
         vid, title = it.get("id"), it.get("title")
         item_id = vid or url or "?"
@@ -320,15 +321,18 @@ class JobRunner:
         if placeholder:
             fail(vid, *placeholder)
             return "failed"
-        existing = archive.lookup(vid)
+        ext = audio_extension(audio) if audio else "mp4"
+        key = f"{vid}.{ext}" if audio else vid  # a video and its audio are different downloads (the video keeps its old key)
+        existing = archive.lookup(key)
         if existing:
             self._emit({"type": "item_done", "jobId": job_id, "itemId": vid,
                         "file": str(output_dir / existing), "height": None, "codec": None,
-                        "skipped": True})
+                        "audio": audio, "skipped": True})
             return "skipped"
         try:
             target = safe_output_path(
-                output_dir, resolve_target(output_dir, override or title, vid, "mp4", archive.mapping()).name)
+                output_dir, resolve_target(output_dir, override or title, vid, ext,
+                                           {vid: archive.mapping()[key]} if key in archive.mapping() else {}).name)
         except ValueError as exc:
             fail(vid, "bad_path", f"輸出路徑太長：{exc}")
             return "failed"
@@ -351,7 +355,7 @@ class JobRunner:
 
         try:
             result = self._stream(build_download_args(self.engine, url, quality, target,
-                                                      partial_dir(output_dir, vid)),
+                                                      partial_dir(output_dir, vid), audio),
                                   on_line, item_cancel)
         except Exception as exc:  # engine missing, permission denied, ...
             fail(vid, "unknown", f"無法執行下載引擎：{exc}", traceback.format_exc())
@@ -367,7 +371,7 @@ class JobRunner:
             fail(vid, "merge_failed", "影片已下載但沒有合併成功（ffmpeg 可能無法使用），請按「檢查環境」", result.stderr)
             return "failed"
         codec = info.codec
-        if is_instagram_url(url) and not is_h264(codec):
+        if not audio and is_instagram_url(url) and not is_h264(codec):
             # Instagram's best video is VP9: QuickTime, Finder previews and many editors cannot play it in an mp4
             self._emit({"type": "progress", "jobId": job_id, "itemId": vid, "percent": None, "speed": None,
                         "eta": None, "stage": "convert"})
@@ -386,11 +390,11 @@ class JobRunner:
         except OSError:
             pass
         try:
-            archive.record(vid, target.name)
+            archive.record(key, target.name)
         except OSError:
             pass  # file is on disk; a locked record file only means a rerun cannot skip it
         self._log(f"item_done item={vid} height={info.height if info else None}")
         self._emit({"type": "item_done", "jobId": job_id, "itemId": vid, "file": str(target),
                     "height": info.height if info else None, "codec": codec,
-                    "skipped": False})
+                    "audio": audio, "skipped": False})
         return "ok"
