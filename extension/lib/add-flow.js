@@ -10,14 +10,3 @@ export function summarizeAdd(outcomes) {
   const lead = added ? `已加入 ${added} 個網址；${rejected.length} 個沒有加入` : `${rejected.length} 個網址沒有加入`;
   return { remaining: rejected.map((o) => o.url).join("\n"), note: `${lead}，已留在輸入框（${why}）。` };
 }
-
-// The address box follows the current tab: a YouTube address is put in it, any other tab leaves it empty to paste into.
-// `filled` is what was last put there by this function. The box is only touched while it is empty or still holds that:
-// whatever else is in it was typed or pasted by the person (or is a rejected address they are fixing) and stays.
-// A box emptied after its video was added is not filled again by the same tab; going to another site forgets it.
-export function tabAutofill({ box, filled, tabUrl }) {
-  const target = tabUrl ?? "";
-  if (box !== "" && box !== filled) return { box, filled: "" }; // theirs: kept, and what was filled earlier no longer counts
-  if (box === "" && target !== "" && target === filled) return { box, filled };
-  return { box: target, filled: target };
-}

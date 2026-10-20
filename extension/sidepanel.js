@@ -1,5 +1,4 @@
 import { classifyTabUrl } from "./lib/page.js";
-import { tabAutofill } from "./lib/add-flow.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runCopyDiagnostics, runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
@@ -24,7 +23,9 @@ const SETUP_HINT = {
 
 let status = { state: "stopped", ready: null };
 let queue = null; // the list, held by the background script
-let currentTab = null; // { url, kind } of the active tab when it is a YouTube address
+let currentTab = null; // { url, kind, title } of the active tab when it is a YouTube address
+let pastingFor = null; // the tab address the person chose 「改貼網址」 on: its card stays away until the tab changes
+const KIND_TEXT = { video: "影片", playlist: "播放清單", channel: "頻道" };
 const nextId = createRequestIds();
 const waiters = new Map();
 
@@ -255,6 +256,7 @@ function render() {
   renderStatus();
   renderQueueView();
   renderControls();
+  renderAddSlot();
   renderUpdate();
   renderVersionBanner();
   renderUpdateDialog();
@@ -262,6 +264,11 @@ function render() {
 
 // ---------- adding videos ----------
 async function addFromBox() {
+  if (tabCardShown()) {
+    const result = await send({ type: "queue_add", url: currentTab.url });
+    addNote(result?.ok ? "" : result?.error ?? "無法加入", "error");
+    return;
+  }
   addNote(await addPastedUrls($("add-url"), send), "error");
 }
 
@@ -406,20 +413,21 @@ async function refreshCurrentTab() {
     [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
   } catch { /* no access to the tab: nothing to offer */ }
   const kind = classifyTabUrl(tab?.url);
-  currentTab = kind ? { url: tab.url, kind } : null;
-  fillBoxFromTab();
+  currentTab = kind ? { url: tab.url, kind, title: (tab.title || tab.url).replace(/ - YouTube$/, "") } : null;
+  if (currentTab?.url !== pastingFor) pastingFor = null;
+  renderAddSlot();
 }
 
-// The address box takes the current tab's address, or stays empty for pasting when the tab is not YouTube.
-let boxFilled = "";
-function fillBoxFromTab() {
-  const box = $("add-url");
-  const next = tabAutofill({ box: box.value, filled: boxFilled, tabUrl: currentTab?.url ?? null });
-  boxFilled = next.filled;
-  if (box.value !== next.box) {
-    box.value = next.box;
-    addNote("");
-  }
+// While the active tab is a YouTube address, its card takes the place of the address box (「增加」 adds that tab).
+// Any other tab, or 「改貼網址」, shows the box to paste into.
+const tabCardShown = () => Boolean(currentTab) && currentTab.url !== pastingFor;
+function renderAddSlot() {
+  const shown = tabCardShown();
+  $("tab-card").hidden = !shown;
+  $("add-url").hidden = shown;
+  if (!shown) return;
+  $("tab-kind").textContent = KIND_TEXT[currentTab.kind];
+  $("tab-title").textContent = currentTab.title;
 }
 
 // ---------- wiring ----------
@@ -450,6 +458,11 @@ $("start").addEventListener("click", async () => {
 $("add-btn").addEventListener("click", addFromBox);
 $("add-url").addEventListener("keydown", (event) => { if (event.key === "Enter") addFromBox(); });
 $("add-url").addEventListener("input", () => addNote(""));
+$("tab-paste").addEventListener("click", () => {
+  pastingFor = currentTab?.url ?? null;
+  renderAddSlot();
+  $("add-url").focus();
+});
 $("start-all").addEventListener("click", async () => {
   const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });
   note(result?.ok === false ? result.error : "", "error");

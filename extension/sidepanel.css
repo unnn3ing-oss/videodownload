@@ -175,6 +175,15 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 /* ---------- add ---------- */
 .add-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .add-row input { flex: 1 1 100%; }
+/* the current tab, in the place of the address box while it is a YouTube address */
+.tab-slot { flex: 1 1 100%; min-width: 0; box-sizing: border-box; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 10px; background: var(--accent-soft); }
+.tab-slot[hidden] { display: none; }
+.chip { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 800; letter-spacing: .06em; background: var(--accent); color: var(--accent-ink); }
+.tab-text { display: grid; min-width: 0; line-height: 1.35; }
+.tab-label { font-size: 11px; color: var(--muted); font-weight: 700; }
+.tab-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-paste { border: 0; background: none; padding: 4px; font: inherit; font-size: 12px; font-weight: 700; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.tab-paste:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 .add-row .segmented { flex: 1 1 0; min-width: 0; }
 .add-row .segmented label { display: flex; }
 .add-row .segmented span { flex: 1; display: grid; place-items: center; }
