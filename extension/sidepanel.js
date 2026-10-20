@@ -1,4 +1,5 @@
 import { classifyTabUrl } from "./lib/page.js";
+import { tabAutofill } from "./lib/add-flow.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runCopyDiagnostics, runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
@@ -417,6 +418,19 @@ async function refreshCurrentTab() {
   const kind = classifyTabUrl(tab?.url);
   currentTab = kind ? { url: tab.url, kind, title: (tab.title || tab.url).replace(/ - YouTube$/, "") } : null;
   renderTabCard();
+  fillBoxFromTab();
+}
+
+// The address box takes the current tab's address, or stays empty for pasting when the tab is not YouTube.
+let boxFilled = "";
+function fillBoxFromTab() {
+  const box = $("add-url");
+  const next = tabAutofill({ box: box.value, filled: boxFilled, tabUrl: currentTab?.url ?? null });
+  boxFilled = next.filled;
+  if (box.value !== next.box) {
+    box.value = next.box;
+    addNote("");
+  }
 }
 
 // ---------- wiring ----------
@@ -450,6 +464,8 @@ $("add-url").addEventListener("input", () => addNote(""));
 $("tab-add").addEventListener("click", async () => {
   const result = await send({ type: "queue_add", url: currentTab?.url });
   addNote(result?.ok ? "" : result?.error ?? "無法加入", "error");
+  // the box holds the same address: it would add it a second time (boxFilled stays, so this tab does not fill it again)
+  if (result?.ok && $("add-url").value === boxFilled) $("add-url").value = "";
 });
 $("start-all").addEventListener("click", async () => {
   const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });

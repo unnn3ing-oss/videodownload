@@ -128,9 +128,19 @@ try {
   await yt.goto(watch("v2"));
   await page.waitForSelector("#tab-card:not([hidden])");
   assert.match(await page.textContent("#tab-kind"), /影片/);
+  await page.waitForFunction((u) => document.getElementById("add-url").value === u, watch("v2"));
   await page.evaluate(() => document.getElementById("tab-add").click());
+  await page.waitForFunction(() => document.getElementById("add-url").value === "");
   await rowByTitle("影片 v2").first().waitFor();
   await yt.close();
+  await page.bringToFront();
+  // a tab that is not YouTube leaves the address box empty to paste into
+  await context.route("https://example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>other</title>" }));
+  const other = await context.newPage();
+  await other.goto("https://example.test/");
+  await page.waitForSelector("#tab-card", { state: "hidden" });
+  assert.equal(await page.inputValue("#add-url"), "", "nothing is put in the box for a tab that is not YouTube");
+  await other.close();
   await page.bringToFront();
   await shot("2-ready");
 

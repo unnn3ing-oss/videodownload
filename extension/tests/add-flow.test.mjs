@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { summarizeAdd } from "../lib/add-flow.js";
+import { summarizeAdd, tabAutofill } from "../lib/add-flow.js";
 import { addPastedUrls } from "../lib/queue-view.js";
 
 const ok = (url) => ({ url, ok: true });
@@ -77,4 +77,39 @@ test("addPastedUrls: typing after the pasted urls while they are added does not 
     return m.url.includes("youtu.be") ? { ok: true } : { ok: false, error: NOT_YT };
   });
   assert.equal(input.value, "https://youtu.be/new\nhttps://evil.example/b", "the added url is gone, the rejected one appears once");
+});
+
+// ---- the address box follows the current tab while the person has not typed anything of their own ----
+const A = "https://www.youtube.com/watch?v=aaaaaaaaaaa";
+const B = "https://www.youtube.com/watch?v=bbbbbbbbbbb";
+
+test("tabAutofill: a YouTube tab fills an empty box", () => {
+  assert.deepEqual(tabAutofill({ box: "", filled: "", tabUrl: A }), { box: A, filled: A });
+});
+
+test("tabAutofill: a tab that is not YouTube leaves the box empty for pasting", () => {
+  assert.deepEqual(tabAutofill({ box: "", filled: "", tabUrl: null }), { box: "", filled: "" });
+});
+
+test("tabAutofill: moving to another video replaces what it filled before, and to another site clears it", () => {
+  assert.deepEqual(tabAutofill({ box: A, filled: A, tabUrl: B }), { box: B, filled: B });
+  assert.deepEqual(tabAutofill({ box: A, filled: A, tabUrl: null }), { box: "", filled: "" });
+});
+
+test("tabAutofill: what the person typed or pasted is never replaced", () => {
+  const mine = "https://www.youtube.com/watch?v=ccccccccccc";
+  assert.deepEqual(tabAutofill({ box: mine, filled: A, tabUrl: B }), { box: mine, filled: A });
+  assert.deepEqual(tabAutofill({ box: mine, filled: "", tabUrl: B }), { box: mine, filled: "" });
+  assert.deepEqual(tabAutofill({ box: "x", filled: A, tabUrl: null }), { box: "x", filled: A });
+  assert.deepEqual(tabAutofill({ box: `${A}\n${B}`, filled: A, tabUrl: B }), { box: `${A}\n${B}`, filled: A }, "a longer list was pasted over it");
+});
+
+test("tabAutofill: after the video was added the same tab does not fill it again, a new one does", () => {
+  assert.deepEqual(tabAutofill({ box: "", filled: A, tabUrl: A }), { box: "", filled: A });
+  assert.deepEqual(tabAutofill({ box: "", filled: A, tabUrl: B }), { box: B, filled: B });
+  assert.deepEqual(tabAutofill({ box: "", filled: A, tabUrl: null }), { box: "", filled: "" }, "and going to another site forgets it, so coming back fills it again");
+});
+
+test("tabAutofill: nothing changes when the tab did not (a title update)", () => {
+  assert.deepEqual(tabAutofill({ box: A, filled: A, tabUrl: A }), { box: A, filled: A });
 });
