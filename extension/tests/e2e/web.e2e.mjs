@@ -496,10 +496,11 @@ async function withExtension() {
     await sample.locator(".qcover").click();
     await sample.locator(".qcover[data-state='ok']").waitFor({ timeout: 20000 });
     assert.match(await sample.locator(".qflash").textContent(), /已存到下載資料夾/);
-    const fallback = await worker.evaluate(async () => ({
-      asked: self.__asked,
-      items: (await chrome.downloads.search({})).filter((d) => d.url.includes("i.ytimg.com")).map((d) => ({ state: d.state, error: d.error ?? null, filename: d.filename })),
-    }));
+    const fallback = await worker.evaluate(async () => { // (the button turns green once Chrome has taken the download on: let it finish before looking)
+      const covers = async () => (await chrome.downloads.search({})).filter((d) => d.url.includes("i.ytimg.com"));
+      for (let i = 0; i < 100 && (await covers()).some((d) => d.state === "in_progress"); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+      return { asked: self.__asked, items: (await covers()).map((d) => ({ state: d.state, error: d.error ?? null, filename: d.filename })) };
+    });
     assert.deepEqual(fallback.items.map((d) => [d.state, d.error]), [["complete", null]]);
     assert.deepEqual(fallback.asked.map((o) => [o.url, o.filename]), [["https://i.ytimg.com/vi/v1/hq720.jpg", "範例影片.jpg"]], "the original-size address, named after the title");
     const viaBrowser = fs.readFileSync(fallback.items[0].filename);
