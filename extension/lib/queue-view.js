@@ -120,15 +120,42 @@ function makeRow(item, handlers) {
   const retry = tipped(button("qretry", "重試", "retry"), "重試");
   retry.addEventListener("click", () => handlers.retry(item.uid));
   const remove = tipped(button("qx", "從清單移除", "x"), "從清單移除");
-  remove.addEventListener("click", () => handlers.remove(item.uid));
   acts.append(copy, retry, remove);
+
+  // With `handlers.askBeforeRemove` (the side panel) the X first turns the row into a question; the web page removes at once.
+  const ask = el("div", "qask");
+  ask.hidden = true;
+  const askText = el("div", "qask-t");
+  askText.setAttribute("role", "alert"); // read out when the question appears
+  const no = el("button", "qask-no", "取消");
+  const yes = el("button", "qask-yes", "移除");
+  no.type = yes.type = "button";
+  const askButtons = el("div", "qask-b");
+  askButtons.append(no, yes);
+  ask.append(askText, askButtons);
+  const closeAsk = (refocus) => {
+    ask.hidden = true;
+    row.classList.remove("asking");
+    if (refocus) remove.focus();
+  };
+  remove.addEventListener("click", () => {
+    if (!handlers.askBeforeRemove) return handlers.remove(item.uid);
+    ask.hidden = false;
+    row.classList.add("asking");
+    no.focus(); // the safe answer is the one under the keyboard
+  });
+  no.addEventListener("click", () => closeAsk(true));
+  yes.addEventListener("click", () => handlers.remove(item.uid));
+  ask.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAsk(true);
+  });
 
   const text = document.createElement("textarea");
   text.className = "qtext";
   text.rows = 4;
   text.spellcheck = false;
   text.hidden = true;
-  row.append(cover, main, acts, text);
+  row.append(cover, main, acts, ask, text);
   return row;
 }
 
@@ -173,6 +200,7 @@ function updateRow(row, state, item, index, now, showText = false) {
   for (const [selector, base] of [[".qcover", "下載封面圖片"], [".qcopy", "複製內文"], [".qretry", "重試"], [".qx", "從清單移除"]]) {
     q(selector).setAttribute("aria-label", named ? base : `${base}：${item.title}`);
   }
+  setText(q(".qask-t"), removeConfirmText(item)); // (follows the row: it says so when the download would be stopped)
   q(".qpill").textContent = info.label;
   q(".qsub").textContent = info.sub;
   q(".qhint").textContent = info.hint;
@@ -282,18 +310,12 @@ export function clearConfirmText(state) {
   return failed ? `清單裡有 ${failed} 支失敗的影片，清除後就不能重試了。要全部清除嗎？` : null;
 }
 
-// 從清單移除 on one row sits right beside 「複製內文」, so it asks first. A row that is downloading is stopped by it.
+// 從清單移除 on one row sits right beside 「複製內文」, so the side panel asks first, inside the row. A downloading row is stopped by it.
 export function removeConfirmText(item) {
   const name = item?.title || item?.url || "這支影片";
   return item?.status === "downloading"
-    ? `「${name}」正在下載，從清單移除會中斷這支的下載。要移除嗎？`
+    ? `「${name}」正在下載，移除會中斷這支的下載。要移除嗎？`
     : `要把「${name}」從清單移除嗎？`;
-}
-
-export async function removeRow(send, state, uid, ask = (text) => globalThis.confirm?.(text) !== false) {
-  const item = state?.items?.find((i) => i.uid === uid);
-  if (item && !ask(removeConfirmText(item))) return { ok: true, cancelled: true };
-  return send({ type: "queue_remove", uid });
 }
 
 export async function clearList(send, state, ask = (text) => globalThis.confirm?.(text) !== false) {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, removeConfirmText, removeRow, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, removeConfirmText, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -188,8 +188,7 @@ test("the format picker stays usable while a job runs and is switched off only w
   assert.deepEqual([disabled(groups.mode), disabled(groups.audio), disabled(groups.quality)], [true, true, true]);
 });
 
-// ---- removing one row asks first: the button sits next to 「複製內文」 ----
-const queueOf = (...items) => ({ items });
+// ---- removing one row asks first (inside the row): the button sits next to 「複製內文」 ----
 
 test("removeConfirmText names the video, and says so when its download would be stopped", () => {
   const waiting = { uid: 1, title: "颱風假放不放", status: "waiting" };
@@ -198,22 +197,4 @@ test("removeConfirmText names the video, and says so when its download would be 
   assert.doesNotMatch(removeConfirmText(waiting), /中斷|停止/);
   assert.match(removeConfirmText({ ...waiting, status: "downloading" }), /正在下載.*(中斷|停止)/);
   assert.match(removeConfirmText({ uid: 2, title: "", url: "https://www.youtube.com/watch?v=aaaaaaaaaaa", status: "failed" }), /youtube\.com/);
-});
-
-test("removeRow sends nothing until the question is answered yes", async () => {
-  const sent = [];
-  const send = async (message) => { sent.push(message); return { ok: true }; };
-  const state = queueOf({ uid: 7, title: "甲", status: "done" });
-  let asked = "";
-  assert.deepEqual(await removeRow(send, state, 7, (text) => { asked = text; return false; }), { ok: true, cancelled: true });
-  assert.deepEqual(sent, []);
-  assert.match(asked, /甲/);
-  await removeRow(send, state, 7, () => true);
-  assert.deepEqual(sent, [{ type: "queue_remove", uid: 7 }]);
-});
-
-test("removeRow for a row that is already gone just sends the request, with no question", async () => {
-  const sent = [];
-  await removeRow(async (m) => { sent.push(m); }, queueOf(), 9, () => { throw new Error("nothing to ask about"); });
-  assert.deepEqual(sent, [{ type: "queue_remove", uid: 9 }]);
 });

@@ -31,6 +31,16 @@
 .qpill { flex: none; font: 700 11px var(--mono); padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .qsub { font: 11.5px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .qsub:empty { display: none; }
+/* the question that 從清單移除 opens inside the row (side panel): it takes the place of the text and the buttons */
+.qask { grid-column: 2 / -1; display: grid; gap: 8px; min-width: 0; }
+.qask[hidden] { display: none; }
+.qrow.asking .qmain, .qrow.asking .qacts { display: none; }
+.qrow.asking { background: var(--err-soft); }
+.qask-t { font-size: 13px; font-weight: 700; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.qask-b { display: flex; gap: 8px; }
+.qask-b button { flex: 1; padding: 6px 10px; border-radius: 8px; font: 700 13px var(--font); cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.qask-b .qask-yes { border-color: transparent; background: #d93a47; color: #fff; }
+.qask-b button:hover { filter: brightness(.92); }
 .qtext { grid-column: 2 / -1; width: 100%; box-sizing: border-box; min-height: 5.5em; resize: vertical; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 13px/1.55 var(--font); }
 .qtext[hidden] { display: none; }
 .qtext::placeholder { color: var(--muted); }

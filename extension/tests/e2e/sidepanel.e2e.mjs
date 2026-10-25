@@ -268,19 +268,32 @@ try {
   assert.deepEqual([...saved.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   assert.match(saved.toString("latin1"), /v1:hq720/);
 
-  step("10. The X removes a row, after asking (the duplicate here)");
-  // 10. The X asks before it removes a row (the duplicate here): "cancel" keeps it, "OK" removes it.
-  const asked = [];
-  page.once("dialog", (dialog) => { asked.push(dialog.message()); dialog.dismiss(); });
-  await page.locator('.qrow[data-kind="duplicate"] .qx').click();
-  await page.waitForTimeout(400);
-  assert.equal(asked.length, 1);
-  assert.match(asked[0], /從清單移除/);
-  assert.equal((await queueState()).items.length, 4, "cancelled: the row is still there");
-  page.once("dialog", (dialog) => { asked.push(dialog.message()); dialog.accept(); });
-  await page.locator('.qrow[data-kind="duplicate"] .qx').click();
+  step("10. The X removes a row, after asking inside the row (the duplicate here)");
+  // 10. The X turns the row into a question inside the panel (no browser dialog): 「取消」 keeps it, 「移除」 removes it.
+  let dialogs = 0;
+  page.on("dialog", (dialog) => { dialogs += 1; dialog.dismiss(); });
+  const dup = page.locator('.qrow[data-kind="duplicate"]');
+  await dup.locator(".qx").click();
+  await dup.locator(".qask").waitFor({ state: "visible" });
+  assert.match(await dup.locator(".qask-t").textContent(), /從清單移除/);
+  assert.equal(await dup.locator(".qmain").isVisible(), false, "the question takes the place of the row's text");
+  assert.equal(await dup.locator(".qx").isVisible(), false, "and of its buttons, so 「複製內文」 cannot be hit by mistake");
+  assert.equal(await page.evaluate(() => document.activeElement?.className), "qask-no", "the safe answer has the keyboard");
+  await shot("5-remove-asks");
+  await dup.locator(".qask-no").click();
+  assert.equal(await dup.locator(".qask").isVisible(), false);
+  assert.equal(await dup.locator(".qx").isVisible(), true, "cancelled: the buttons are back");
+  assert.equal((await queueState()).items.length, 4, "and the row is still there");
+  await dup.locator(".qx").click(); // Escape also cancels
+  await dup.locator(".qask").waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  assert.equal(await dup.locator(".qask").isVisible(), false);
+  await dup.locator(".qx").click();
+  await dup.locator(".qask-yes").click();
   await page.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
   assert.equal((await queueState()).items.length, 3);
+  assert.equal(dialogs, 0, "no browser dialog was ever opened");
+  page.removeAllListeners("dialog");
 
   step("11. Screen readers");
   // 11. Every row's buttons say which video they belong to, messages are announced, the bar is a progress bar.
