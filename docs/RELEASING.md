@@ -42,7 +42,7 @@ python3 tools/release.py check          # 發版檢查表，每行 PASS／FAIL�
    只推分支而沒開 Pull Request 不會觸發 CI。需要時也可以在 Actions 頁面手動執行 `ci`（Run workflow）。
    必須全綠：`linux (3.9)`、`linux (3.12)`、`node`、`build-fresh`、`e2e`、`windows`、`macos`。
 8. **併入 `main`**：在 GitHub 合併這個 Pull Request。**從這一刻起，所有同事的擴充功能與下載助手最多 6 小時內就會開始更新**
-   （或他們按「檢查更新」立即更新）。
+   （或他們重新開啟側邊面板立即更新）。
    - 已套用 `保護 main` 的規則集之後，只能用 Pull Request 合併（直接推 `main` 會被擋下）。
    - 還沒套用規則集、而且你是唯一的維護者時，也可以在本機快轉：
      `git fetch origin && git merge-base --is-ancestor origin/main HEAD && git push origin HEAD:main`
@@ -54,7 +54,7 @@ python3 tools/release.py check          # 發版檢查表，每行 PASS／FAIL�
    git push origin vX.Y.Z
    ```
 10. **真機檢查**（CI 做不到的部分，見 docs/TESTING.md）：
-    - **Windows**：乾淨的使用者帳號（或虛擬機）用單檔安裝檔安裝一次；再在已安裝的電腦上按「檢查更新」確認能更新到新版。
+    - **Windows**：乾淨的使用者帳號（或虛擬機）用單檔安裝檔安裝一次；再在已安裝的電腦上開啟側邊面板（或網頁版按「檢查更新」）確認能更新到新版。
       留意防毒軟體與公司網路（代理、憑證攔截）。
     - **Mac**（Intel 與 Apple Silicon 各一台更好）：用一行指令或 `install-mac.zip` 安裝；確認 Chrome 能啟動下載助手、
       下載一支影片並合併成功。

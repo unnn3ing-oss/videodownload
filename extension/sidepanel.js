@@ -212,7 +212,6 @@ function renderUpdate() {
   noteEl.dataset.kind = note?.kind ?? "info";
 
   $("update-badge").hidden = !pendingUpdate();
-  $("update-check").disabled = updateWorking !== null;
 
   const reason = updateReason();
   const apply = $("update-apply");
@@ -336,6 +335,8 @@ async function runCheck() {
     folderSaved = await hasSavedFolder();
     render();
   }
+  // the local program connected while the check was running: its own files still have to be compared
+  if (status.state === "running" && updateInfo && !hostChecked) onHostRunning();
 }
 
 // Called when the host is (or becomes) available: finish what a check without the host could not know.
@@ -503,7 +504,6 @@ $("update").addEventListener("click", () => {
   simpleRequest({ type: "update_engine" }, (e) => note(`下載引擎已更新（${e.ytdlpVersion ?? "未知版本"}）`, "ok"));
 });
 
-$("update-check").addEventListener("click", runCheck);
 $("update-apply").addEventListener("click", applyUpdate);
 $("ud-go").addEventListener("click", () => (hasUpdate() ? applyUpdate() : runCheck()));
 $("ud-later").addEventListener("click", () => { updateDialogDismissed = true; $("update-dialog").close(); });
@@ -534,7 +534,7 @@ async function init() {
   render();
   startTicker(() => { if (queue?.cooldown) renderQueueView(); });
   if (status.state === "stopped") send({ type: "start" }); // connect on open; the button stays as a fallback
-  if (status.state === "running") onHostRunning();
+  runCheck(); // every time the panel opens (the host's files are compared once it runs, see runCheck / onHostRunning)
 }
 
 init();

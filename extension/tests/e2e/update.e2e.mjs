@@ -92,8 +92,7 @@ try {
   await page.click("#settings > summary");
 
   // 1. Host not started: the check works, the badge appears, applying needs the host.
-  await page.click("#update-check");
-  // the pop-up offers it by itself, says what is new, and cannot be pressed yet because the local program is not running
+  // opening the panel checks by itself, and the pop-up offers it, says what is new, and cannot be pressed yet because the local program is not running
   await page.waitForSelector("#update-dialog[open]");
   assert.match(await text("ud-what"), /擴充功能有新版本/);
   assert.match(await text("ud-versions"), /目前 .*\n?.*最新：release: v9\.9\.9/s);
@@ -113,7 +112,7 @@ try {
   // 2. Host started: the host's own files are compared too, and applying is allowed.
   await page.click("#start");
   await state("running");
-  await page.click("#update-check");
+  // the host connecting while / after the open-time check completes the comparison of its files
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
   assert.match(await text("update-apply"), /選擇擴充功能資料夾並更新/, "first update asks for the extension folder");
   assert.equal(await page.evaluate(() => document.getElementById("update-dialog").open), false, "once dismissed it does not come back during this visit");
