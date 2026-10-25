@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, removeConfirmText, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, REMOVE_CONFIRM_TEXT, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -177,11 +177,6 @@ test("the format picker stays usable while a job runs and is switched off only w
 
 // ---- removing one row asks first (inside the row): the button sits next to 「複製內文」 ----
 
-test("removeConfirmText names the video, and says so when its download would be stopped", () => {
-  const waiting = { uid: 1, title: "颱風假放不放", status: "waiting" };
-  assert.match(removeConfirmText(waiting), /颱風假放不放/);
-  assert.match(removeConfirmText(waiting), /從清單移除/);
-  assert.doesNotMatch(removeConfirmText(waiting), /中斷|停止/);
-  assert.match(removeConfirmText({ ...waiting, status: "downloading" }), /正在下載.*(中斷|停止)/);
-  assert.match(removeConfirmText({ uid: 2, title: "", url: "https://www.youtube.com/watch?v=aaaaaaaaaaa", status: "failed" }), /youtube\.com/);
+test("the question on a row's X is the plain one", () => {
+  assert.equal(REMOVE_CONFIRM_TEXT, "確認要移除影片嗎？");
 });

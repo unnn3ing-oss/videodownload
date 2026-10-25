@@ -275,7 +275,7 @@ try {
   const dup = page.locator('.qrow[data-kind="duplicate"]');
   await dup.locator(".qx").click();
   await dup.locator(".qask").waitFor({ state: "visible" });
-  assert.match(await dup.locator(".qask-t").textContent(), /從清單移除/);
+  assert.equal(await dup.locator(".qask-t").textContent(), "確認要移除影片嗎？");
   assert.equal(await dup.locator(".qmain").isVisible(), false, "the question takes the place of the row's text");
   assert.equal(await dup.locator(".qx").isVisible(), false, "and of its buttons, so 「複製內文」 cannot be hit by mistake");
   assert.equal(await page.evaluate(() => document.activeElement?.className), "qask-no", "the safe answer has the keyboard");

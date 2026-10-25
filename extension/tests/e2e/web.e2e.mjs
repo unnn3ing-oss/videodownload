@@ -369,7 +369,7 @@ async function withExtension() {
     const firstRow = web.locator("#queue-list .qrow").first();
     await firstRow.locator(".qx").click();
     await firstRow.locator(".qask").waitFor({ state: "visible" });
-    assert.match(await firstRow.locator(".qask-t").textContent(), /從清單移除/);
+    assert.equal(await firstRow.locator(".qask-t").textContent(), "確認要移除影片嗎？");
     await firstRow.locator(".qask-no").click();
     assert.equal(await firstRow.locator(".qask").isVisible(), false);
     assert.equal(await web.locator("#queue-list .qrow").count(), 2, "cancelled: both rows are still there");

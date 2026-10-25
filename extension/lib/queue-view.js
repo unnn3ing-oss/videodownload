@@ -125,7 +125,7 @@ function makeRow(item, handlers) {
   // With `handlers.askBeforeRemove` (the side panel) the X first turns the row into a question; the web page removes at once.
   const ask = el("div", "qask");
   ask.hidden = true;
-  const askText = el("div", "qask-t");
+  const askText = el("div", "qask-t", REMOVE_CONFIRM_TEXT);
   askText.setAttribute("role", "alert"); // read out when the question appears
   const no = el("button", "qask-no", "取消");
   const yes = el("button", "qask-yes", "移除");
@@ -200,7 +200,6 @@ function updateRow(row, state, item, index, now, showText = false) {
   for (const [selector, base] of [[".qcover", "下載封面圖片"], [".qcopy", "複製內文"], [".qretry", "重試"], [".qx", "從清單移除"]]) {
     q(selector).setAttribute("aria-label", named ? base : `${base}：${item.title}`);
   }
-  setText(q(".qask-t"), removeConfirmText(item)); // (follows the row: it says so when the download would be stopped)
   q(".qpill").textContent = info.label;
   q(".qsub").textContent = info.sub;
   q(".qhint").textContent = info.hint;
@@ -311,13 +310,8 @@ export function clearConfirmText(state) {
   return failed ? `清單裡有 ${failed} 支失敗的影片，清除後就不能重試了。要全部清除嗎？` : null;
 }
 
-// 從清單移除 on one row sits right beside 「複製內文」, so the side panel asks first, inside the row. A downloading row is stopped by it.
-export function removeConfirmText(item) {
-  const name = item?.title || item?.url || "這支影片";
-  return item?.status === "downloading"
-    ? `「${name}」正在下載，移除會中斷這支的下載。要移除嗎？`
-    : `要把「${name}」從清單移除嗎？`;
-}
+// 從清單移除 on one row sits right beside 「複製內文」, so it asks first, inside the row.
+export const REMOVE_CONFIRM_TEXT = "確認要移除影片嗎？";
 
 // 清除全部 with failed videos in the list asks first, in the page (not in a browser dialog): the question opens next to the
 // button (or right before `before`, e.g. the list), 「取消」 has the keyboard, Esc cancels. Nothing to lose: clears at once.
