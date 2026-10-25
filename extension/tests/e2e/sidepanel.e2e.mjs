@@ -230,6 +230,8 @@ try {
   await page.waitForFunction(() => /封面已存/.test(document.querySelector("#queue-list .qrow .qsub")?.textContent ?? ""));
   assert.match(await rowByTitle("範例影片").first().locator(".qsub").textContent(), /720p · 封面已存/);
   assert.match(fs.readFileSync(path.join(outDir, "範例影片.jpg")).toString("latin1"), /v1:hq720/, "saved before anything was clicked");
+  // (covers are fetched one after another: the second row can still say 「封面下載中…」 when the first one is done)
+  await rowByTitle("影片 v2").first().locator(".qsub").filter({ hasText: /封面失敗|封面已存/ }).waitFor({ timeout: 15000 });
   assert.match(await rowByTitle("影片 v2").first().locator(".qsub").textContent(), /封面失敗：找不到封面圖片/);
   fs.rmSync(path.join(outDir, "範例影片.jpg")); // (so the cover button below really has to save it)
   assert.match(await page.textContent("#queue-stats"), /3/);
