@@ -112,7 +112,8 @@ try {
   // 2. Host started: the host's own files are compared too, and applying is allowed.
   await page.click("#start");
   await state("running");
-  // the host connecting while / after the open-time check completes the comparison of its files
+  // the manual button still checks again, and compares the host's files now that it runs
+  await page.click("#update-check");
   await page.waitForFunction(() => !document.getElementById("update-apply").disabled);
   assert.match(await text("update-apply"), /選擇擴充功能資料夾並更新/, "first update asks for the extension folder");
   assert.equal(await page.evaluate(() => document.getElementById("update-dialog").open), false, "once dismissed it does not come back during this visit");
