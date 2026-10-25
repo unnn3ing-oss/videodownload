@@ -282,6 +282,20 @@ export function clearConfirmText(state) {
   return failed ? `清單裡有 ${failed} 支失敗的影片，清除後就不能重試了。要全部清除嗎？` : null;
 }
 
+// 從清單移除 on one row sits right beside 「複製內文」, so it asks first. A row that is downloading is stopped by it.
+export function removeConfirmText(item) {
+  const name = item?.title || item?.url || "這支影片";
+  return item?.status === "downloading"
+    ? `「${name}」正在下載，從清單移除會中斷這支的下載。要移除嗎？`
+    : `要把「${name}」從清單移除嗎？`;
+}
+
+export async function removeRow(send, state, uid, ask = (text) => globalThis.confirm?.(text) !== false) {
+  const item = state?.items?.find((i) => i.uid === uid);
+  if (item && !ask(removeConfirmText(item))) return { ok: true, cancelled: true };
+  return send({ type: "queue_remove", uid });
+}
+
 export async function clearList(send, state, ask = (text) => globalThis.confirm?.(text) !== false) {
   const text = clearConfirmText(state);
   if (text && !ask(text)) return { ok: true, cancelled: true };

@@ -266,8 +266,16 @@ try {
   assert.deepEqual([...saved.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   assert.match(saved.toString("latin1"), /v1:hq720/);
 
-  step("10. The X removes a row (the duplicate h");
-  // 10. The X removes a row (the duplicate here).
+  step("10. The X removes a row, after asking (the duplicate here)");
+  // 10. The X asks before it removes a row (the duplicate here): "cancel" keeps it, "OK" removes it.
+  const asked = [];
+  page.once("dialog", (dialog) => { asked.push(dialog.message()); dialog.dismiss(); });
+  await page.locator('.qrow[data-kind="duplicate"] .qx').click();
+  await page.waitForTimeout(400);
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /從清單移除/);
+  assert.equal((await queueState()).items.length, 4, "cancelled: the row is still there");
+  page.once("dialog", (dialog) => { asked.push(dialog.message()); dialog.accept(); });
   await page.locator('.qrow[data-kind="duplicate"] .qx').click();
   await page.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
   assert.equal((await queueState()).items.length, 3);

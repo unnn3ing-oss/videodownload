@@ -6,7 +6,7 @@ import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
-import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
+import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, removeRow, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -117,7 +117,7 @@ function renderQueueView() {
   const info = summarize(queue);
   const now = Date.now();
   renderQueue($("queue-list"), queue, now, {
-    remove: (uid) => send({ type: "queue_remove", uid }),
+    remove: (uid) => removeRow(send, queue, uid),
     retry: (uid) => send({ type: "queue_retry", uid }),
     copy: (uid, button) => copyRowText(send, uid, button),
     cover: (uid, button) => downloadRowCover(send, uid, button),
