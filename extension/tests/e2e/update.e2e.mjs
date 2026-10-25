@@ -89,7 +89,8 @@ try {
   const reloaded = () => page.evaluate(() => window.__reloaded);
   const read = (...parts) => fs.readFileSync(path.join(...parts), "utf8");
 
-  await page.click("#settings > summary");
+  // opened without a click: the panel checks on opening, and its pop-up may already cover the page by now
+  await page.evaluate(() => { document.getElementById("settings").open = true; });
 
   // 1. Host not started: the check works, the badge appears, applying needs the host.
   // opening the panel checks by itself, and the pop-up offers it, says what is new, and cannot be pressed yet because the local program is not running
