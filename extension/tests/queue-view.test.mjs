@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { REINSTALL_ACTION } from "../lib/connection.js";
-import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, clearList, removeConfirmText, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
+import { HOST_OUTDATED_TEXT, clearConfirmText, coverResultText, removeConfirmText, syncTextBox, thumbSource, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderVersionNote } from "../lib/queue-view.js";
 
 // just enough of an element for the note helpers: text and the hidden flag
 const note = () => ({ textContent: "", hidden: true });
@@ -109,19 +109,6 @@ test("the clear button shows only when everything is finished, and says so", () 
 test("clearing asks first only when failed videos would lose their retry button", () => {
   assert.equal(clearConfirmText({ items: [row("done"), row("skipped")] }), null);
   assert.match(clearConfirmText({ items: [row("done"), row("failed"), row("failed", { uid: 3 })] }), /2 支失敗.*不能重試/);
-});
-
-test("clearList sends the request at once when nothing would be lost, and waits for a yes when failed videos would", async () => {
-  const sent = [];
-  const send = async (m) => { sent.push(m.type); return { ok: true }; };
-  await clearList(send, { items: [row("done")] }, () => { throw new Error("no question needed"); });
-  assert.deepEqual(sent, ["queue_clear"]);
-  const failed = { items: [row("done"), row("failed", { uid: 2 })] };
-  const no = await clearList(send, failed, () => false);
-  assert.equal(no.cancelled, true);
-  assert.equal(sent.length, 1, "a no sends nothing");
-  await clearList(send, failed, () => true);
-  assert.equal(sent.length, 2);
 });
 
 // ---- the text box under a row ----

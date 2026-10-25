@@ -287,6 +287,7 @@ export function renderClearButton(button, state) {
   button.hidden = !show;
   button.disabled = !show;
   button.textContent = "清除全部";
+  button._ask?.update(state); // an open question follows the list (or goes away with the button)
 }
 
 // The 影片|音訊 choice and the options that go with it (resolution for video, format for audio; the other kind's are
@@ -318,10 +319,57 @@ export function removeConfirmText(item) {
     : `要把「${name}」從清單移除嗎？`;
 }
 
-export async function clearList(send, state, ask = (text) => globalThis.confirm?.(text) !== false) {
-  const text = clearConfirmText(state);
-  if (text && !ask(text)) return { ok: true, cancelled: true };
-  return send({ type: "queue_clear" });
+// 清除全部 with failed videos in the list asks first, in the page (not in a browser dialog): the question opens next to the
+// button (or right before `before`, e.g. the list), 「取消」 has the keyboard, Esc cancels. Nothing to lose: clears at once.
+// `report(message)` gets the error text of a failed request ("" when it went well).
+export function bindClearAll(button, { send, getState, report, before = null }) {
+  const panel = el("div", "clear-ask");
+  panel.hidden = true;
+  const text = el("div", "qask-t");
+  text.setAttribute("role", "alert");
+  const no = el("button", "qask-no", "取消");
+  const yes = el("button", "qask-yes", "全部清除");
+  no.type = yes.type = "button";
+  const buttons = el("div", "qask-b");
+  buttons.append(no, yes);
+  panel.append(text, buttons);
+  if (before) before.before(panel);
+  else button.after(panel);
+
+  const clear = async () => {
+    try {
+      const result = await send({ type: "queue_clear" });
+      report(result?.ok === false ? result.error : "");
+    } catch (error) {
+      report(error.message);
+    }
+  };
+  const close = (refocus) => {
+    panel.hidden = true;
+    if (refocus) button.focus();
+  };
+  button._ask = {
+    update(state) {
+      const question = clearConfirmText(state);
+      if (button.hidden || !question) panel.hidden = true;
+      else setText(text, question);
+    },
+  };
+  button.addEventListener("click", () => {
+    const question = clearConfirmText(getState());
+    if (!question) return clear();
+    setText(text, question);
+    panel.hidden = false;
+    no.focus();
+  });
+  no.addEventListener("click", () => close(true));
+  yes.addEventListener("click", () => {
+    close(false);
+    clear();
+  });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close(true);
+  });
 }
 
 // The local program and the extension are different versions: said where it is seen (top of the panel / of the page), not

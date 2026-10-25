@@ -2,7 +2,7 @@
 // the local host; this page shows the same list as the side panel and walks through the first-time setup.
 import { createBridgeClient } from "./bridge-client.js";
 import {
-  addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
+  addPastedUrls, bindClearAll, bindNumberSetting, copyRowText, downloadRowCover, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, setHidden, setText, startTicker,
 } from "../extension/lib/queue-view.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "../extension/lib/queue.js";
 import { formatEta, formatSpeed } from "../extension/lib/format.js";
@@ -128,6 +128,7 @@ function renderQueueArea() {
   const info = summarize(queue);
   const now = Date.now();
   renderQueue($("queue-list"), queue, now, {
+    askBeforeRemove: true,
     remove: (uid) => send({ type: "queue_remove", uid }),
     retry: (uid) => send({ type: "queue_retry", uid }),
     copy: (uid, button) => copyRowText(send, uid, button),
@@ -369,14 +370,7 @@ $("start-all").addEventListener("click", async () => {
   }
 });
 
-$("clear-all").addEventListener("click", async () => {
-  try {
-    const result = await clearList(send, queue);
-    setNote("note", result?.ok === false ? result.error : "", "error");
-  } catch (error) {
-    setNote("note", error.message, "error");
-  }
-});
+bindClearAll($("clear-all"), { send, getState: () => queue, report: (message) => setNote("note", message, "error"), before: $("queue-list") });
 
 $("quality").addEventListener("change", (event) => send({ type: "settings_set", settings: { quality: Number(event.target.value) } }));
 $("mode").addEventListener("change", (event) => send({ type: "settings_set", settings: { mode: event.target.value } }));

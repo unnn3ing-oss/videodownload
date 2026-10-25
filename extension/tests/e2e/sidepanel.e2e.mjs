@@ -334,6 +334,35 @@ try {
       `no horizontal overflow at ${width}px`);
     await shot(`5-width-${width}`);
   }
+  await page.setViewportSize({ width: 400, height: 860 });
+
+  step("12. 「清除全部」 with a failed video asks inside the panel");
+  // 12. With a failed video in the list 「清除全部」 asks first (no browser dialog): 取消 or Esc keeps the list, 「全部清除」 clears it.
+  let dialogs12 = 0;
+  page.on("dialog", (dialog) => { dialogs12 += 1; dialog.dismiss(); });
+  await add(watch("fail1"));
+  await page.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 4);
+  await page.click("#start-all");
+  await page.waitForSelector('.qrow[data-kind="failed"]', { timeout: 40000 });
+  await page.waitForSelector("#clear-all:not([hidden])", { timeout: 20000 });
+  await page.click("#clear-all");
+  await page.locator(".clear-ask").waitFor({ state: "visible" });
+  assert.match(await page.textContent(".clear-ask .qask-t"), /1 支失敗.*不能重試/);
+  assert.equal(await page.evaluate(() => document.activeElement?.className), "qask-no", "the safe answer has the keyboard");
+  await shot("6-clear-asks");
+  await page.click(".clear-ask .qask-no");
+  assert.equal(await page.locator(".clear-ask").isVisible(), false);
+  assert.equal((await queueState()).items.length, 4, "cancelled: nothing was cleared");
+  await page.click("#clear-all");
+  await page.locator(".clear-ask").waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".clear-ask").isVisible(), false);
+  assert.equal((await queueState()).items.length, 4);
+  await page.click("#clear-all");
+  await page.click(".clear-ask .qask-yes");
+  await page.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 0);
+  assert.equal(await page.locator(".clear-ask").isVisible(), false);
+  assert.equal(dialogs12, 0, "no browser dialog was ever opened");
   console.log("OK");
 } catch (error) {
   console.log(`FAIL: ${error.stack ?? error}`);

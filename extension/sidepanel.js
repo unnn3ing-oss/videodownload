@@ -6,7 +6,7 @@ import { PANEL_UPDATE_BUTTON, hostVersionNotice } from "./lib/connection.js";
 import { createRequestIds } from "./lib/ids.js";
 import { isExtensionPush } from "./lib/messages.js";
 import { OUTPUT_DIR_LOCKED_TEXT, cooldownText, outputDirLocked, summarize } from "./lib/queue.js";
-import { addPastedUrls, bindNumberSetting, clearList, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
+import { addPastedUrls, bindClearAll, bindNumberSetting, copyRowText, downloadRowCover, makeDemoRow, renderAbortNote, renderClearButton, renderFormatPicker, renderHostNote, renderQueue, renderVersionNote, startTicker } from "./lib/queue-view.js";
 import { UpdateError, checkLatest, proveLoadedFolder, runUpdate } from "./lib/updater.js";
 import { applyBadge, autoCheckDue, failedSummary, loadSummary, partsText, saveSummary, summarizeCheck } from "./lib/update-state.js";
 import { forgetFolder, getFolder, hasSavedFolder, pickFolder } from "./lib/folder-store.js";
@@ -468,10 +468,7 @@ $("start-all").addEventListener("click", async () => {
   const result = await send({ type: queue?.running ? "queue_stop" : "queue_start" });
   note(result?.ok === false ? result.error : "", "error");
 });
-$("clear-all").addEventListener("click", async () => {
-  const result = await clearList(send, queue);
-  note(result?.ok === false ? result.error : "", "error");
-});
+bindClearAll($("clear-all"), { send, getState: () => queue, report: (message) => note(message, "error") });
 $("quality").addEventListener("change", (event) => {
   send({ type: "settings_set", settings: { quality: Number(event.target.value) } });
 });

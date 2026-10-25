@@ -406,3 +406,6 @@ a.btn.primary { color: var(--accent-ink); }
   .qh .act { width: 100%; margin: 0; }
   .qh .act .btn { flex: 1; }
 }
+
+/* 清除全部's question sits between the card's header and the list, which run to the card's edges */
+.card > .clear-ask { margin: 8px 12px 4px; }

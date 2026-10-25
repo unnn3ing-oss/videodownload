@@ -365,6 +365,39 @@ async function withExtension() {
     for (const view of [web, panel]) await view.waitForSelector("#clear-all:not([hidden])", { timeout: 10000 }); // all done: the list can be cleared
     await shot("web-2-done");
 
+    // B3b. The X asks first on the web page too, inside the row: 取消 keeps the row.
+    const firstRow = web.locator("#queue-list .qrow").first();
+    await firstRow.locator(".qx").click();
+    await firstRow.locator(".qask").waitFor({ state: "visible" });
+    assert.match(await firstRow.locator(".qask-t").textContent(), /從清單移除/);
+    await firstRow.locator(".qask-no").click();
+    assert.equal(await firstRow.locator(".qask").isVisible(), false);
+    assert.equal(await web.locator("#queue-list .qrow").count(), 2, "cancelled: both rows are still there");
+
+    // B3c. 「清除全部」 with a failed video asks first, inside the page (right above the list): 取消 keeps everything.
+    // The failed row is then removed through its own X, the answer being yes.
+    let webDialogs = 0;
+    web.on("dialog", (dialog) => { webDialogs += 1; dialog.dismiss(); });
+    await web.fill("#add-url", watch("fail1"));
+    await web.click("#add-btn");
+    await web.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
+    await web.click("#start-all");
+    await web.waitForSelector('#queue-list .qrow[data-kind="failed"]', { timeout: 40000 });
+    await web.waitForSelector("#clear-all:not([hidden])", { timeout: 20000 });
+    await web.click("#clear-all");
+    await web.locator(".clear-ask").waitFor({ state: "visible" });
+    assert.match(await web.textContent(".clear-ask .qask-t"), /1 支失敗.*不能重試/);
+    assert.equal(await web.evaluate(() => document.querySelector(".clear-ask").nextElementSibling?.id), "queue-list", "the question sits right above the list");
+    await shot("web-2b-clear-asks");
+    await web.click(".clear-ask .qask-no");
+    assert.equal(await web.locator("#queue-list .qrow").count(), 3, "cancelled: nothing was cleared");
+    const failedRow = web.locator('#queue-list .qrow[data-kind="failed"]');
+    await failedRow.locator(".qx").click();
+    await failedRow.locator(".qask-yes").click();
+    await web.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 2);
+    assert.equal(webDialogs, 0, "no browser dialog was ever opened");
+    web.removeAllListeners("dialog");
+
     // B4. Both screens press "start" at the same moment: every video is still downloaded once.
     await web.fill("#add-url", `${watch("v3")} ${watch("v4")}`);
     await web.click("#add-btn");
@@ -394,7 +427,9 @@ async function withExtension() {
     assert.deepEqual(fs.readFileSync(path.join(work, "downloads.log"), "utf8").trim().split("\n").sort(), ["v1", "v2", "v3", "v4"], "each video was downloaded exactly once");
 
     // B5. Removing a row in the web page removes it in the panel too.
-    await web.locator(".qrow", { hasText: "影片 v4" }).locator(".qx").click();
+    const v4 = web.locator(".qrow", { hasText: "影片 v4" });
+    await v4.locator(".qx").click();
+    await v4.locator(".qask-yes").click(); // (the X asks first)
     await panel.waitForFunction(() => document.querySelectorAll("#queue-list .qrow").length === 3);
 
     // B6. The web page shows 【title】 and the tags in a box under every video (the panel does not); copy text and cover

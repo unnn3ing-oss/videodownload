@@ -40,6 +40,9 @@ elif "--dump-json" in args:
     print(json.dumps({"id": vid, "title": title_for(vid),
                       "description": "說明文字 #標籤一 #標籤二 #標籤三 #標籤四"}, ensure_ascii=False))
 else:
+    if video_id().startswith("fail"):  # a video that cannot be downloaded (tests of failed rows)
+        print("ERROR: [youtube] Video unavailable", file=sys.stderr, flush=True)
+        sys.exit(1)
     if os.environ.get("YTDL_STUB_LOG"):  # one line per video that was actually downloaded
         with open(os.environ["YTDL_STUB_LOG"], "a", encoding="utf-8") as log:
             log.write(video_id() + "\n")
