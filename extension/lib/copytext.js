@@ -15,9 +15,12 @@ export function extractHashtags(description, max = 3) {
   return tags;
 }
 
-// The channel's and its programmes' own tags are on every video: they say nothing about this one, so they are left out of
+// The channel's, its programmes' and its section tags (政治、社會…) are on every video: they say nothing about this one, so they are left out of
 // the copy text (the exact tag only: 「TVBS專題」 stays).
-export const EXCLUDED_TAGS = ["TVBS新聞", "TVBS直播", "TVBS新聞網", "TVBS戰情室", "TVBS", "少康戰情室", "少康上線啦"];
+export const EXCLUDED_TAGS = [
+  "TVBS新聞", "TVBS直播", "TVBS新聞網", "TVBS戰情室", "TVBS", "少康戰情室", "少康上線啦",
+  "即時新聞", "Live", "政治", "社會", "國際新聞", "氣象", "台灣新聞",
+];
 export const MAX_TAGS = 3; // tags in the copy text
 export const KEEP_TAGS = 16; // tags kept per video: enough to still find three after the channel's own are left out
 

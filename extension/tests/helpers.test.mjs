@@ -161,7 +161,10 @@ test("buildCopyText uses the cleaned title and leaves one empty line before the 
 });
 
 test("pickTags leaves out the channel's fixed tags and keeps the first three of the rest", () => {
-  assert.deepEqual(EXCLUDED_TAGS, ["TVBS新聞", "TVBS直播", "TVBS新聞網", "TVBS戰情室", "TVBS", "少康戰情室", "少康上線啦"]);
+  assert.deepEqual(EXCLUDED_TAGS, [
+    "TVBS新聞", "TVBS直播", "TVBS新聞網", "TVBS戰情室", "TVBS", "少康戰情室", "少康上線啦",
+    "即時新聞", "Live", "政治", "社會", "國際新聞", "氣象", "台灣新聞",
+  ]);
   assert.deepEqual(pickTags(["TVBS新聞", "航艦", "TVBS直播", "美軍", "TVBS新聞網", "林肯號", "第四"]), ["航艦", "美軍", "林肯號"]);
   assert.deepEqual(pickTags(["tvbs新聞", "航艦"]), ["航艦"], "case does not matter");
   assert.deepEqual(pickTags(["TVBS新聞", "TVBS直播"]), []);
@@ -177,4 +180,11 @@ test("extractHashtags without a limit argument returns enough tags for pickTags 
 test("pickTags also leaves out the programme tags, and still keeps tags that only contain TVBS in their name", () => {
   assert.deepEqual(pickTags(["TVBS戰情室", "TVBS", "少康戰情室", "少康上線啦", "航艦", "TVBS新聞網", "美軍", "林肯號", "第四"]), ["航艦", "美軍", "林肯號"]);
   assert.deepEqual(pickTags(["TVBS", "TVBS專題", "tvbs"]), ["TVBS專題"], "only the exact tags go, not every tag that mentions TVBS");
+});
+
+test("pickTags also leaves out the section tags of the channel's standard tag line, but not tags that merely contain them", () => {
+  const line = "#TVBS新聞 #即時新聞 #Live #政治 #社會 #國際新聞 #氣象 #台灣新聞";
+  assert.deepEqual(pickTags(extractHashtags(`${line} #颱風 #停班停課`, 16)), ["颱風", "停班停課"]);
+  assert.deepEqual(pickTags(extractHashtags(line, 16)), [], "a description with only the standard tags gets none");
+  assert.deepEqual(pickTags(["LIVE", "政治", "政治獻金", "社會案件", "國際"]), ["政治獻金", "社會案件", "國際"], "only the exact tags go");
 });
