@@ -35,7 +35,7 @@ concurrency:
 jobs:
   linux:
     name: linux (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -50,7 +50,7 @@ jobs:
       - run: python3 -m pytest -q
 
   node:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
       - run: node --test extension/tests/*.test.mjs
 
   build-fresh:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +78,7 @@ jobs:
           echo "extension/installers is current"
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       # Chromium turns a non-ASCII download name into "Invalid filename" unless the locale is UTF-8.
