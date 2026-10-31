@@ -12,6 +12,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
+from hidden import hide
 from hostlog import tail_lines
 from naming import PARTIAL_DIR, partial_dir, resolve_target
 from quality import audio_extension, is_h264, parse_audio, parse_quality
@@ -83,6 +84,17 @@ class Archive:
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self.path)
+        hide(self.path)  # the replace brought in a new file without the attribute
+
+
+def _hide_partial_root(output_dir: Path) -> None:
+    """The folder of unfinished files sits in the output folder, which may be Downloads itself."""
+    root = Path(output_dir) / PARTIAL_DIR
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return  # yt-dlp reports a folder it cannot write to
+    hide(root)
 
 
 def _ref(it) -> str | None:
@@ -379,6 +391,7 @@ class JobRunner:
             if done:
                 info = done
 
+        _hide_partial_root(output_dir)
         try:
             result = self._stream(build_download_args(self.engine, url, quality, target,
                                                       partial_dir(output_dir, vid), audio),

@@ -1093,3 +1093,23 @@ def test_an_item_can_be_removed_by_its_key_and_its_twin_stays(tmp_path):
     assert h.runner.remove("v1~mp3") == "pending"
     assert [it.get("key") for it in h.runner._pending] == [None], "only the audio one went"
     assert h.runner.remove("v1~mp3") is None
+
+
+def test_the_archive_file_is_hidden_after_every_write(tmp_path, monkeypatch):
+    import jobs
+
+    hidden = []
+    monkeypatch.setattr(jobs, "hide", hidden.append)
+    archive = Archive(tmp_path)
+    archive.record("a", "f.mp4")
+    archive.record("b", "g.mp4")
+    assert hidden == [archive.path, archive.path]  # the replace brings in a new, visible file each time
+
+
+def test_the_partial_folder_is_hidden_before_yt_dlp_writes_into_it(tmp_path, monkeypatch):
+    import jobs
+
+    seen = []
+    monkeypatch.setattr(jobs, "hide", lambda path: seen.append((path, path.is_dir())))
+    h = Harness(tmp_path).run([item()])
+    assert (h.out / ".ytdl-partial", True) in seen

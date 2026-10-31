@@ -121,3 +121,12 @@ def test_save_cover_chosen_name_still_never_overwrites_another_cover(tmp_path):
     first = save_cover(tmp_path, "v1", "標題", JPEG, name="甲")
     second = save_cover(tmp_path, "v2", "標題", JPEG, name="甲")
     assert first.name == "甲.jpg" and second.name == "甲_2.jpg"
+
+
+def test_the_registry_file_is_hidden_after_a_cover_is_saved(tmp_path, monkeypatch):
+    import covers
+
+    hidden = []
+    monkeypatch.setattr(covers, "hide", hidden.append)
+    covers.save_cover(tmp_path, "v1", "標題", b"\xff\xd8\xff" + b"x")
+    assert hidden == [tmp_path / covers.REGISTRY]

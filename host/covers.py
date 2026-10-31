@@ -6,6 +6,7 @@ import os
 import unicodedata
 from pathlib import Path
 
+from hidden import hide
 from naming import sanitize_filename
 from security import safe_output_path
 
@@ -58,6 +59,7 @@ def _record(directory: Path, video_id: str, filename: str) -> None:
     tmp = directory / (REGISTRY + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, directory / REGISTRY)
+    hide(directory / REGISTRY)
 
 
 def save_cover(directory: Path, video_id: str, title: str, data: bytes, name: str | None = None) -> Path:
