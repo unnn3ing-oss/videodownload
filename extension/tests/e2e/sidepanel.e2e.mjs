@@ -143,8 +143,17 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.id), "add-url", "the box is ready to paste into");
   await yt.goto(watch("v4"));
   await slot(true);
+  assert.equal(await page.getAttribute("#add-btn", "aria-label"), "增加目前分頁：影片 v2", "the button names the tab it adds (the stub's title)");
+  // an Instagram post is offered the same way (the host permission lets the panel read that tab's address and title)
+  await context.route("https://www.instagram.com/**", (route) => route.fulfill({
+    contentType: "text/html; charset=utf-8", body: '<title>TVBS 新聞 on Instagram: "颱風來襲"</title>' }));
+  await yt.goto("https://www.instagram.com/reel/Dd8pP9yS3WB/");
+  await page.waitForFunction(() => document.getElementById("tab-kind").textContent === "Instagram 影片");
+  assert.equal(await page.textContent("#tab-title"), "TVBS 新聞：颱風來襲");
+  assert.equal(await page.getAttribute("#add-btn", "aria-label"), "增加目前分頁：TVBS 新聞：颱風來襲");
   await yt.goto("https://example.test/");
   await slot(false);
+  assert.equal(await page.getAttribute("#add-btn", "aria-label"), null, "without a card the button is just 「增加」 again");
   await yt.close();
   await page.bringToFront();
   await shot("2-ready");

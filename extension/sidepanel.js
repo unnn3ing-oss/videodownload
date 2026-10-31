@@ -1,4 +1,4 @@
-import { classifyTabUrl } from "./lib/page.js";
+import { addButtonLabel, describeTab } from "./lib/page.js";
 import { installerPendingText } from "./lib/installer.js";
 import { runCopyDiagnostics, runDoctor } from "./lib/doctor-view.js";
 import { macInstallCommand } from "./lib/setup-flow.js";
@@ -25,7 +25,6 @@ let status = { state: "stopped", ready: null };
 let queue = null; // the list, held by the background script
 let currentTab = null; // { url, kind, title } of the active tab when it is a YouTube address
 let pastingFor = null; // the tab address the person chose 「改貼網址」 on: its card stays away until the tab changes
-const KIND_TEXT = { video: "影片", playlist: "播放清單", channel: "頻道" };
 const nextId = createRequestIds();
 const waiters = new Map();
 
@@ -415,21 +414,24 @@ async function refreshCurrentTab() {
     const win = await chrome.windows.getCurrent();
     [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
   } catch { /* no access to the tab: nothing to offer */ }
-  const kind = classifyTabUrl(tab?.url);
-  currentTab = kind ? { url: tab.url, kind, title: (tab.title || tab.url).replace(/ - YouTube$/, "") } : null;
+  currentTab = describeTab(tab?.url, tab?.title);
   if (currentTab?.url !== pastingFor) pastingFor = null;
   renderAddSlot();
 }
 
-// While the active tab is a YouTube address, its card takes the place of the address box (「增加」 adds that tab).
+// While the active tab is a YouTube or Instagram address, its card takes the place of the address box (「增加」 adds that tab).
 // Any other tab, or 「改貼網址」, shows the box to paste into.
 const tabCardShown = () => Boolean(currentTab) && currentTab.url !== pastingFor;
 function renderAddSlot() {
   const shown = tabCardShown();
   $("tab-card").hidden = !shown;
   $("add-url").hidden = shown;
-  if (!shown) return;
-  $("tab-kind").textContent = KIND_TEXT[currentTab.kind];
+  if (!shown) {
+    $("add-btn").removeAttribute("aria-label");
+    return;
+  }
+  $("add-btn").setAttribute("aria-label", addButtonLabel(currentTab));
+  $("tab-kind").textContent = currentTab.chip;
   $("tab-title").textContent = currentTab.title;
 }
 

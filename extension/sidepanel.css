@@ -10,11 +10,11 @@
   --line: #dbe2ee;
   --accent: #1f5eff;
   --accent-ink: #ffffff;
-  --accent-soft: #e3ebff;
+  --accent-soft: #edf2ff;
   --ok: #167a4d;
   --ok-soft: #dff4e9;
-  --warn: #b25e00;
-  --warn-soft: #fdecd3;
+  --warn: #a85800;
+  --warn-soft: #fff1dd;
   --err: #c42d3a;
   --err-soft: #fbe3e5;
   --shadow: 0 1px 2px rgb(20 33 61 / 6%), 0 4px 14px rgb(20 33 61 / 5%);
@@ -32,7 +32,7 @@
     --line: #26334b;
     --accent: #5b8cff;
     --accent-ink: #0a1020;
-    --accent-soft: #1c2c52;
+    --accent-soft: #182749;
     --ok: #4cc58c;
     --ok-soft: #153327;
     --warn: #f0a24a;
@@ -182,7 +182,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .tab-text { display: grid; min-width: 0; line-height: 1.35; }
 .tab-label { font-size: 11px; color: var(--muted); font-weight: 700; }
 .tab-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-paste { border: 0; background: none; padding: 4px; font: inherit; font-size: 12px; font-weight: 700; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.tab-paste { min-height: 24px; border: 0; background: none; padding: 4px; font: inherit; font-size: 12px; font-weight: 700; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .tab-paste:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 .add-row .segmented { flex: 1 1 0; min-width: 0; }
 .add-row .segmented label { display: flex; }

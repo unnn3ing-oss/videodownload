@@ -123,3 +123,9 @@ test("the side panel's 「在新分頁開啟網頁版」 link goes to the web pa
   assert.ok(tag.includes('target="_blank"'));
   assert.match(tag, /rel="noopener/);
 });
+
+test("the side panel may read the address and title of an Instagram tab, and nothing runs there", () => {
+  // without this host Chrome hides tab.url, so the 「目前分頁」 card could never see an Instagram post
+  for (const host of ["https://www.instagram.com/*", "https://instagram.com/*"]) assert.ok(manifest.host_permissions.includes(host), host);
+  for (const script of manifest.content_scripts) assert.ok(!script.matches.some((m) => m.includes("instagram")), "no script on Instagram");
+});
