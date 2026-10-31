@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 
 
+OLD_SUBFOLDER = "YT下載"  # the default up to 0.7.8
+OLD_ARCHIVE = ".ytdl-archive.json"  # equals jobs.Archive.FILENAME (a test enforces it)
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -22,7 +26,10 @@ class ConfigStore:
         value = self._load().get("outputDir")
         if isinstance(value, str) and value.strip():
             return Path(value)
-        return Path.home() / "Downloads" / "YT下載"
+        downloads = Path.home() / "Downloads"
+        old = downloads / OLD_SUBFOLDER
+        # whoever already downloaded there keeps that folder: its archive is what stops everything coming down again
+        return old if (old / OLD_ARCHIVE).is_file() else downloads
 
     def set_output_dir(self, value: object) -> Path:
         if not isinstance(value, str) or not value.strip():

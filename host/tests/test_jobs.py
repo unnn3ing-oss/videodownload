@@ -187,13 +187,49 @@ def test_archive_not_recorded_on_failure(tmp_path):
 
 def test_config_store(tmp_path):
     path = tmp_path / "config.json"
-    assert ConfigStore(path).output_dir == Path.home() / "Downloads" / "YT下載"
     target = tmp_path / "a" / "b"
     assert ConfigStore(path).set_output_dir(str(target)) == target and target.is_dir()
     assert ConfigStore(path).output_dir == target
     for bad in ("", "   ", None, 5):
         with pytest.raises(ValueError):
             ConfigStore(path).set_output_dir(bad)
+
+
+def test_default_output_dir_is_the_downloads_folder_itself(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert ConfigStore(tmp_path / "config.json").output_dir == tmp_path / "Downloads"
+
+
+def test_default_output_dir_keeps_the_old_subfolder_for_those_who_already_used_it(tmp_path, monkeypatch):
+    # its archive (what was already downloaded) lives there: moving the default would download everything again
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    old = tmp_path / "Downloads" / "YT下載"
+    old.mkdir(parents=True)
+    (old / Archive.FILENAME).write_text("{}", encoding="utf-8")
+    assert ConfigStore(tmp_path / "config.json").output_dir == old
+
+
+def test_default_output_dir_ignores_an_empty_old_subfolder(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / "Downloads" / "YT下載").mkdir(parents=True)
+    assert ConfigStore(tmp_path / "config.json").output_dir == tmp_path / "Downloads"
+
+
+def test_old_archive_name_in_config_matches_the_archive(tmp_path):
+    import config
+
+    assert config.OLD_ARCHIVE == Archive.FILENAME
+
+
+def test_a_saved_output_dir_wins_over_the_old_subfolder(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    old = tmp_path / "Downloads" / "YT下載"
+    old.mkdir(parents=True)
+    (old / Archive.FILENAME).write_text("{}", encoding="utf-8")
+    target = tmp_path / "elsewhere"
+    store = ConfigStore(tmp_path / "config.json")
+    store.set_output_dir(str(target))
+    assert store.output_dir == target
 
 
 def test_oserror_on_one_item_does_not_stop_batch(tmp_path, monkeypatch):
